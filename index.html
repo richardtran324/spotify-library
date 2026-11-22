@@ -385,8 +385,10 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   var FRESH_MS = 90 * 1000;
   var NO_DEVICE_MS = 2 * 60 * 1000;   // how long an empty device list counts as "known: nothing open"
   var WAKE_MAX_MS = 3 * 60 * 1000;    // a pending tap older than this is dropped
-  var WAKE_POLL_MS = 1500;
-  var WAKE_FOR_MS = 15000;
+  var WAKE_POLL_MS = 1000;        // after the fast phase
+  var WAKE_FAST_MS = 400;         // check this often right after you come back
+  var WAKE_FAST_FOR_MS = 6000;    // length of the fast phase
+  var WAKE_FOR_MS = 20000;
   var SHORTCUT_URL = 'shortcuts://run-shortcut?name=' + encodeURIComponent('Wake Spotify');
   var NO_DEVICE = 'Spotify needs to be open on a device first: your phone, computer or speaker.';
   var REDIRECT = location.origin + location.pathname.replace(/index\.html$/, '');
@@ -1066,7 +1068,9 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     if (!p || (p.manual && !manual)) return;
     if (manual) { p.at = Date.now(); set(K.pending, p); }
     w.running = true; w.at = p.at;
-    var until = Date.now() + WAKE_FOR_MS;
+    var started = Date.now();
+    var until = started + WAKE_FOR_MS;
+    function gap() { return (Date.now() - started < WAKE_FAST_FOR_MS) ? WAKE_FAST_MS : WAKE_POLL_MS; }
     showWake(p.item.name);
     function mine() { var cur = readPending(); return !!cur && cur.at === p.at; }
     function tick() {
@@ -1085,7 +1089,7 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
           stopWake();
           return playNow(p.item, p.opts);
         }
-        if (Date.now() + WAKE_POLL_MS > until) {
+        if (Date.now() + gap() > until) {
           stopWake();
           if (manual) {
             del(K.pending);
@@ -1096,7 +1100,7 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
           }
           return;
         }
-        w.timer = setTimeout(tick, WAKE_POLL_MS);
+        w.timer = setTimeout(tick, gap());
       }).catch(function (e) {
         stopWake();
         if (e && e.message === 'signed-out') renderSignIn();
@@ -1106,7 +1110,7 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.2 (2026-11-22)';
+  var VERSION = 'v2.3 (2026-11-22)';
   function openDiag() { $('diag').hidden = false; $('wakeShortcut').checked = wakeMode() === 'shortcut'; $('diagClose').focus(); runDiag(); }
   function closeDiag() { $('diag').hidden = true; }
   function runDiag() {
@@ -1751,6 +1755,10 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   // Coming back with the Back button can restore the page from memory without a visibility change.
   window.addEventListener('pageshow', function (e) {
     if (e.persisted && state.started && get(K.token)) { checkDevice(); schedulePoll(0); resumePending(false); }
+  });
+  // Safari can report focus a moment before the visibility change; start looking for Spotify right away.
+  window.addEventListener('focus', function () {
+    if (state.started && get(K.token) && !document.hidden) resumePending(false);
   });
 
   if (location.hash === '#detail') { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} }
