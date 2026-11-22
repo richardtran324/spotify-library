@@ -762,6 +762,25 @@ header.top.detail .schips { display: none; }
       sub: 'Podcast' + (n != null ? ' · ' + n + (n === 1 ? ' episode' : ' episodes') : (s.publisher ? ' · ' + s.publisher : ''))
     };
   }
+  // Shows ordered by their newest episode's release date (from the Latest feed), newest first.
+  // Spotify gives episode dates without a time, so same-day shows keep your saved order.
+  // Shows the feed hasn't covered yet go last, in saved order.
+  function showsByNewest(shows) {
+    maybeLoadLatest();   // fetches only when the 30-minute cache is stale
+    var c = state.latest && state.latest.cache;
+    if (!c || !c.items) return shows;
+    var newest = c.newest || {};
+    if (!c.newest) c.items.forEach(function (x) { if (x.showId && x.date && (!newest[x.showId] || x.date > newest[x.showId])) newest[x.showId] = x.date; });
+    return shows.map(function (s, i) {
+      var dt = newest[s.id] || '';
+      var o = s;
+      if (dt) { o = Object.assign({}, s); o.sub = s.sub + ' · Latest ' + (relDate(dt) || dt); }
+      return { s: o, dt: dt, i: i };
+    }).sort(function (a, b) {
+      if (a.dt !== b.dt) { if (!a.dt) return 1; if (!b.dt) return -1; return a.dt < b.dt ? 1 : -1; }
+      return a.i - b.i;
+    }).map(function (x) { return x.s; });
+  }
   function savedEpisodesItem(d) {
     return { kind: 'episodes', name: 'Saved episodes', uri: null, url: 'https://open.spotify.com/collection/your-episodes', sub: 'Podcast · ' + d.episodesTotal + (d.episodesTotal === 1 ? ' episode' : ' episodes') };
   }
@@ -1071,7 +1090,10 @@ header.top.detail .schips { display: none; }
   function onLatestView() { return state.started && !state.detail && state.filter === 'podcasts' && state.podTab === 'latest'; }
   function latestFresh(c) { return !!c && typeof c.at === 'number' && Date.now() - c.at < LATEST_MS && c.at < Date.now() + 60000; }
   function hidePlayed() { return get(K.hidePlayed) === true; }
-  function rerenderLatest() { if (onLatestView()) renderList(); }
+  function rerenderLatest() {
+    var onShows = state.started && !state.detail && state.filter === 'podcasts' && state.podTab === 'shows';
+    if (onLatestView() || onShows) renderList();
+  }
   function maybeLoadLatest() {
     var L = state.latest;
     if (!state.started || document.hidden || L.loading || latestFresh(L.cache)) return;
@@ -1107,7 +1129,9 @@ header.top.detail .schips { display: none; }
       } else {
         // Newest first; same date keeps the order of your shows, then each show's own order.
         found.sort(function (a, b) { return a.x.date < b.x.date ? 1 : a.x.date > b.x.date ? -1 : (a.si - b.si) || (a.k - b.k); });
-        L.cache = { at: Date.now(), items: found.slice(0, LATEST_KEEP).map(function (f) { return f.x; }), failed: failed };
+        var newestByShow = {};   // every show's newest episode date, kept even if it falls outside the top 50
+        found.forEach(function (f) { var x = f.x; if (x.showId && x.date && (!newestByShow[x.showId] || x.date > newestByShow[x.showId])) newestByShow[x.showId] = x.date; });
+        L.cache = { at: Date.now(), items: found.slice(0, LATEST_KEEP).map(function (f) { return f.x; }), failed: failed, newest: newestByShow };
         set(K.latest, L.cache);
       }
       setTimeout(rerenderLatest, 0);
@@ -1540,7 +1564,7 @@ header.top.detail .schips { display: none; }
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.5 (2026-11-22)';
+  var VERSION = 'v2.6 (2026-11-22)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -2061,7 +2085,7 @@ header.top.detail .schips { display: none; }
     if (f === 'albums' || f === 'all') items = items.concat(d.albums || []);
     if (f === 'artists' || f === 'all') items = items.concat(d.artists || []);
     if ((f === 'podcasts' || f === 'all') && d.episodesTotal != null) items.push(savedEpisodesItem(d));
-    if (f === 'podcasts' || f === 'all') items = items.concat(d.shows || []);
+    if (f === 'podcasts' || f === 'all') items = items.concat(f === 'podcasts' ? showsByNewest(d.shows || []) : (d.shows || []));
     if (f === 'artists' && !d.artists) {
       main.appendChild(el('p', { class: d.artists === null ? 'err' : 'empty', text: d.artists === null
         ? (missingScopes().length ? 'Followed artists need one more sign-in. Tap “Sign in again” above.' : 'Couldn’t load your followed artists. Tap Refresh to try again.')
