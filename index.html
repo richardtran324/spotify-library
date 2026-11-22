@@ -315,6 +315,11 @@ header.top.detail .schips { display: none; }
 }
 .schip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .seeall { display: block; margin: 0; padding: 10px 2px; }
+/* Sort chips: one row per view, wraps on a phone. A little smaller than the main filter chips. */
+.sortbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+.sortlbl { font-size: 0.8rem; font-weight: 600; color: var(--muted); margin-right: 2px; }
+.sortbar .chip { font-size: 0.85rem; padding: 5px 11px; min-height: 34px; }
+.snote { font-size: 0.8rem; color: var(--muted); margin: 6px 2px 0; }
 </style>
 </head>
 <body>
@@ -453,7 +458,8 @@ header.top.detail .schips { display: none; }
     pending: 'lib-pending',    // {item, opts, at, mode[, manual, retry]}: a tap waiting for Spotify to wake up
     latest: 'lib-latest',      // {at, items, failed}: newest episodes across your saved shows
     hidePlayed: 'lib-hide-played',
-    searchType: 'lib-searchtype' // Search Spotify result type: 'all' (default) or one of SEARCH_TYPES
+    searchType: 'lib-searchtype', // Search Spotify result type: 'all' (default) or one of SEARCH_TYPES
+    showSort: 'lib-showsort'     // v2.7 Shows order; read only when 'lib-sort-shows' is unset (see sortMode)
   };
   var FILTERS = ['playlists', 'albums', 'artists', 'podcasts', 'recent', 'all', 'search'];
   // Search Spotify result types. key: the page object in the /search answer; map: row mapper.
@@ -726,12 +732,16 @@ header.top.detail .schips { display: none; }
       kind: ep ? 'episode' : 'track', id: t.id, name: t.name || 'Untitled', uri: t.uri,
       url: 'https://open.spotify.com/' + (ep ? 'episode/' : 'track/') + t.id,
       img: o.noImg ? '' : img(ep ? (t.images || (t.show && t.show.images)) : (t.album && t.album.images)),
-      sub: sub, num: o.num, ctx: o.ctx
+      sub: sub, num: o.num, ctx: o.ctx,
+      artist: by   // for sorting: the song's artists, or an episode's show
     };
   }
   function mapAlbum(a) {
     if (!a || !a.id) return null;
-    return { kind: 'album', id: a.id, name: a.name, uri: a.uri, url: 'https://open.spotify.com/album/' + a.id, img: img(a.images), sub: 'Album · ' + names(a.artists) };
+    return {
+      kind: 'album', id: a.id, name: a.name, uri: a.uri, url: 'https://open.spotify.com/album/' + a.id, img: img(a.images), sub: 'Album · ' + names(a.artists),
+      artist: names(a.artists), released: a.release_date || ''   // for sorting
+    };
   }
   function mapPlaylist(p) {
     if (!p || !p.id) return null;
@@ -741,6 +751,7 @@ header.top.detail .schips { display: none; }
       url: 'https://open.spotify.com/playlist/' + p.id,
       img: img(p.images),
       ownerId: (p.owner && p.owner.id) || '', collaborative: !!p.collaborative,
+      count: count,   // number of songs, for Most songs
       sub: 'Playlist' + (p.owner && p.owner.display_name ? ' · ' + p.owner.display_name : '') + (count ? ' · ' + count + ' songs' : '')
     };
   }
@@ -780,6 +791,88 @@ header.top.detail .schips { display: none; }
       if (a.dt !== b.dt) { if (!a.dt) return 1; if (!b.dt) return -1; return a.dt < b.dt ? 1 : -1; }
       return a.i - b.i;
     }).map(function (x) { return x.s; });
+  }
+  // ---------- sorting: one chip row per view, the choice stored per view ('lib-sort-<view>') ----------
+  // The first option of each view is its default, which is always the order the page used before sorting existed.
+  // Detail views (song and episode lists) start with 'd-'. They sort only the rows loaded so far.
+  var SORTS = {
+    playlists: [['default', 'Default'], ['az', 'A–Z'], ['songs', 'Most songs']],
+    albums: [['saved', 'Recently saved'], ['az', 'A–Z'], ['artist', 'Artist A–Z'], ['released', 'Release date']],
+    artists: [['default', 'Default'], ['az', 'A–Z']],
+    all: [['default', 'Default'], ['az', 'A–Z']],
+    shows: [['updated', 'Recently updated'], ['az', 'A–Z'], ['saved', 'Recently saved']],
+    latest: [['newest', 'Newest first'], ['oldest', 'Oldest first'], ['show', 'Show A–Z']],
+    'd-album': [['track', 'Track order'], ['az', 'A–Z'], ['artist', 'Artist A–Z']],
+    'd-playlist': [['default', 'Default'], ['az', 'Title A–Z'], ['artist', 'Artist A–Z'], ['added', 'Recently added']],
+    'd-liked': [['default', 'Recently liked'], ['az', 'Title A–Z'], ['artist', 'Artist A–Z']],
+    'd-show': [['newest', 'Newest'], ['oldest', 'Oldest']],
+    'd-episodes': [['saved', 'Recently saved'], ['newest', 'Newest'], ['oldest', 'Oldest']]
+  };
+  // A–Z ignores a leading "The" and compares like a person would (case and accents aside, 2 before 10).
+  function sortText(s) { return String(s || '').replace(/^the\s+/i, ''); }
+  function cmpText(a, b) { return sortText(a).localeCompare(sortText(b), undefined, { sensitivity: 'base', numeric: true }); }
+  function byName(a, b) { return cmpText(a.name, b.name); }
+  // Dates and times as strings (ISO or YYYY[-MM[-DD]]); a missing value always goes last.
+  function cmpDesc(x, y) { if (x === y) return 0; if (!x) return 1; if (!y) return -1; return x < y ? 1 : -1; }
+  function cmpAsc(x, y) { if (x === y) return 0; if (!x) return 1; if (!y) return -1; return x < y ? -1 : 1; }
+  // Comparators per view and option; a default option has none and keeps the list as it came.
+  // Sorting is stable, so ties keep that original order.
+  var SORT_CMP = {
+    playlists: { az: byName, songs: function (a, b) { return (b.count || 0) - (a.count || 0); } },
+    albums: {
+      az: byName,
+      artist: function (a, b) { return cmpText(a.artist, b.artist) || byName(a, b); },
+      released: function (a, b) { return cmpDesc(a.released, b.released); }
+    },
+    artists: { az: byName },
+    all: { az: byName },
+    shows: { az: byName },   // 'updated' is showsByNewest; 'saved' is Spotify's order (most recently saved first)
+    latest: {
+      oldest: function (a, b) { return cmpAsc(a.date, b.date); },
+      show: function (a, b) { return cmpText(a.showName, b.showName); }   // ties stay newest first
+    },
+    'd-album': { az: byName, artist: function (a, b) { return cmpText(a.artist, b.artist); } },
+    'd-playlist': { az: byName, artist: function (a, b) { return cmpText(a.artist, b.artist); }, added: function (a, b) { return cmpDesc(a.added, b.added); } },
+    'd-liked': { az: byName, artist: function (a, b) { return cmpText(a.artist, b.artist); } },
+    'd-show': { oldest: function (a, b) { return cmpAsc(a.date, b.date); } },
+    'd-episodes': { newest: function (a, b) { return cmpDesc(a.date, b.date); }, oldest: function (a, b) { return cmpAsc(a.date, b.date); } }
+  };
+  function sortMode(view) {
+    var opts = SORTS[view];
+    if (!opts) return '';
+    var v = get('lib-sort-' + view);
+    if (v == null && view === 'shows') v = get(K.showSort);   // the Shows choice from v2.7
+    for (var i = 0; i < opts.length; i++) { if (opts[i][0] === v) return v; }
+    return opts[0][0];
+  }
+  function sortIsDefault(view) { return !SORTS[view] || sortMode(view) === SORTS[view][0][0]; }
+  function sortList(view, list) {
+    var m = sortMode(view);
+    if (view === 'shows' && m === 'updated') return showsByNewest(list);
+    var cmp = SORT_CMP[view] && SORT_CMP[view][m];
+    if (!cmp) return list.slice();
+    return list.map(function (x, i) { return { x: x, i: i }; })
+      .sort(function (a, b) { return cmp(a.x, b.x) || a.i - b.i; })
+      .map(function (w) { return w.x; });
+  }
+  // The chip row. rerender() repaints whatever the row sorts; focus then returns to the chip just pressed.
+  function sortBar(view, rerender) {
+    var cur = sortMode(view);
+    var g = el('div', { class: 'sortbar', role: 'group', 'aria-label': 'Sort', 'data-view': view }, [
+      el('span', { class: 'sortlbl', 'aria-hidden': 'true', text: 'Sort' })
+    ]);
+    SORTS[view].forEach(function (s) {
+      var b = el('button', { class: 'chip', type: 'button', 'data-sort': s[0], 'aria-pressed': String(cur === s[0]), text: s[1] });
+      b.addEventListener('click', function () {
+        if (sortMode(view) === s[0]) return;
+        set('lib-sort-' + view, s[0]);
+        rerender();
+        var nb = document.querySelector('.sortbar[data-view="' + view + '"] [data-sort="' + s[0] + '"]');
+        if (nb) nb.focus();
+      });
+      g.appendChild(b);
+    });
+    return g;
   }
   function savedEpisodesItem(d) {
     return { kind: 'episodes', name: 'Saved episodes', uri: null, url: 'https://open.spotify.com/collection/your-episodes', sub: 'Podcast · ' + d.episodesTotal + (d.episodesTotal === 1 ? ' episode' : ' episodes') };
@@ -835,7 +928,8 @@ header.top.detail .schips { display: none; }
       url: 'https://open.spotify.com/episode/' + e.id,
       img: img(e.images && e.images.length ? e.images : (e.show && e.show.images)),
       sub: ['Episode', by, when].filter(Boolean).join(' · '),
-      positionMs: pos, played: played
+      positionMs: pos, played: played,
+      date: e.release_date || ''   // for sorting
     };
   }
   function loadData() {
@@ -1210,6 +1304,7 @@ header.top.detail .schips { display: none; }
       if (nb) nb.focus();
     });
     main.appendChild(el('div', { class: 'lbar' }, [playA, hideB]));
+    if (c && c.items.length > 1) main.appendChild(sortBar('latest', renderList));
     var note = el('p', { class: 'lnote' });
     if (c) note.appendChild(el('span', { text: 'Updated ' + ago(new Date(c.at).toISOString()) + (L.loading ? ' · Updating…' : '') }));
     else if (L.loading) note.appendChild(el('span', { text: 'Loading the latest episodes…' }));
@@ -1223,7 +1318,9 @@ header.top.detail .schips { display: none; }
     else if (c && c.failed) note.appendChild(el('span', { class: 'err', text: 'Couldn’t load ' + c.failed + (c.failed === 1 ? ' show' : ' shows') }));
     main.appendChild(note);
     if (!c) return;
-    var items = matches(all.filter(function (i) { return !(hide && i.played); }));
+    // Play newest (above) always uses the newest-first order; the list follows the chosen sort.
+    var shown = sortIsDefault('latest') ? all : sortList('latest', c.items).map(latestItem);
+    var items = matches(shown.filter(function (i) { return !(hide && i.played); }));
     if (!items.length) {
       main.appendChild(el('p', { class: 'empty', text: state.query.trim() ? 'Nothing matches “' + state.query + '”.'
         : (all.length ? 'Everything here is played. Turn off Hide played to see it.' : 'No episodes yet.') }));
@@ -1564,7 +1661,7 @@ header.top.detail .schips { display: none; }
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.6 (2026-11-22)';
+  var VERSION = 'v2.8 (2026-11-22)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -2075,17 +2172,10 @@ header.top.detail .schips { display: none; }
     var d = state.data;
     if (!d) { main.appendChild(el('p', { class: 'empty', text: 'Loading your library…' })); return; }
     var f = state.filter;
-    var items = [];
     if (f === 'podcasts') {
       main.appendChild(podSeg());
       if (state.podTab === 'latest') return renderLatest(main);
     }
-    if ((f === 'playlists' || f === 'all') && d.likedTotal != null) items.push(likedItem(d));
-    if (f === 'playlists' || f === 'all') items = items.concat(d.playlists || []);
-    if (f === 'albums' || f === 'all') items = items.concat(d.albums || []);
-    if (f === 'artists' || f === 'all') items = items.concat(d.artists || []);
-    if ((f === 'podcasts' || f === 'all') && d.episodesTotal != null) items.push(savedEpisodesItem(d));
-    if (f === 'podcasts' || f === 'all') items = items.concat(f === 'podcasts' ? showsByNewest(d.shows || []) : (d.shows || []));
     if (f === 'artists' && !d.artists) {
       main.appendChild(el('p', { class: d.artists === null ? 'err' : 'empty', text: d.artists === null
         ? (missingScopes().length ? 'Followed artists need one more sign-in. Tap “Sign in again” above.' : 'Couldn’t load your followed artists. Tap Refresh to try again.')
@@ -2098,6 +2188,22 @@ header.top.detail .schips { display: none; }
         : 'Loading your podcasts…' }));
       return;
     }
+    // Liked Songs and Saved episodes stay pinned first in every order (All's default keeps its grouping).
+    var liked = ((f === 'playlists' || f === 'all') && d.likedTotal != null) ? [likedItem(d)] : [];
+    var savedEps = ((f === 'podcasts' || f === 'all') && d.episodesTotal != null) ? [savedEpisodesItem(d)] : [];
+    var view = f === 'podcasts' ? 'shows' : f;
+    var base, items;
+    if (f === 'playlists') { base = d.playlists || []; items = liked.concat(sortList(view, base)); }
+    else if (f === 'albums') { base = d.albums || []; items = sortList(view, base); }
+    else if (f === 'artists') { base = d.artists || []; items = sortList(view, base); }
+    else if (f === 'podcasts') { base = d.shows || []; items = savedEps.concat(sortList(view, base)); }
+    else {
+      base = [].concat(d.playlists || [], d.albums || [], d.artists || [], d.shows || []);
+      items = sortIsDefault(view)
+        ? liked.concat(d.playlists || [], d.albums || [], d.artists || [], savedEps, d.shows || [])
+        : liked.concat(savedEps, sortList(view, base));
+    }
+    if (base.length > 1 || (f === 'podcasts' && base.length)) main.appendChild(sortBar(view, renderList));
     items = matches(items);
     if (!items.length) { main.appendChild(el('p', { class: 'empty', text: state.query.trim() ? 'Nothing matches “' + state.query + '”.' : (f === 'artists' ? 'You don’t follow any artists yet.' : f === 'podcasts' ? 'You haven’t saved any podcasts yet.' : 'Nothing here yet.') })); return; }
     var ul = el('ul', { class: 'list' });
@@ -2150,6 +2256,7 @@ header.top.detail .schips { display: none; }
     if (!t) return null;
     var sub = t.type === 'episode' ? ((t.show && t.show.name) || 'Podcast') : names(t.artists) + (t.album && t.album.name ? ' · ' + t.album.name : '');
     var m = mapTrack(t, { sub: sub, ctx: parent.kind === 'liked' ? likedCtx() : parent.uri });
+    if (m && it.added_at) m.added = it.added_at;   // when it was added to the playlist (or liked), for sorting
     if (m && parent.kind === 'liked' && state.saved[m.uri] === undefined) state.saved[m.uri] = true;
     return m;
   }
@@ -2214,10 +2321,41 @@ header.top.detail .schips { display: none; }
       ]),
       el('div', { class: 'dbtns' }, btns)
     ]));
+    main.appendChild(el('div', { id: 'dsort' }));
     main.appendChild(el('ul', { class: 'list compact', id: 'dlist' }));
     main.appendChild(el('div', { class: 'dfoot', id: 'dfoot' }));
-    appendDetailRows(d.items);
+    paintDetailSort();
+    paintDetailList();
     paintDetailFoot();
+  }
+  function detailView(item) {
+    var v = 'd-' + item.kind;
+    return SORTS[v] ? v : '';
+  }
+  // The sort chips above a song or episode list, plus a note when a sort covers only the pages loaded so far.
+  // Tapping a song still plays it inside the album or playlist, so playback keeps Spotify's own order.
+  function paintDetailSort() {
+    var d = state.detail;
+    var box = $('dsort');
+    if (!d || !box) return;
+    var view = detailView(d.item);
+    var a = document.activeElement;
+    var had = a && box.contains(a) ? a.getAttribute('data-sort') : null;
+    box.textContent = '';
+    if (!view || d.restricted || d.items.length < 2) return;
+    box.appendChild(sortBar(view, function () { paintDetailSort(); paintDetailList(); }));
+    if (!sortIsDefault(view) && d.next) {
+      box.appendChild(el('p', { class: 'snote', text: 'Sorted within the ' + (isPod(d.item) ? 'episodes' : 'songs') + ' loaded so far' }));
+    }
+    if (had) { var nb = box.querySelector('[data-sort="' + had + '"]'); if (nb) nb.focus({ preventScroll: true }); }
+  }
+  function paintDetailList() {
+    var d = state.detail;
+    var ul = $('dlist');
+    if (!d || !ul) return;
+    ul.textContent = '';
+    var view = detailView(d.item);
+    appendDetailRows(view ? sortList(view, d.items) : d.items);
   }
   function firstUnplayed(items) {
     for (var i = 0; i < items.length; i++) { if (!items[i].played) return items[i]; }
@@ -2258,18 +2396,21 @@ header.top.detail .schips { display: none; }
   function loadDetail(url) {
     var d = state.detail;
     if (!d || d.loading) return;
-    if (!url) { d.restricted = true; paintDetailFoot(); return; }
+    if (!url) { d.restricted = true; paintDetailSort(); paintDetailFoot(); return; }
     d.loading = true; d.error = ''; d.lastUrl = url;
     paintDetailFoot();
     api(url).then(function (r) {
       if (state.detail !== d) return;
       d.loading = false;
-      if (r.status === 403 && d.item.kind === 'playlist') { d.restricted = true; paintDetailFoot(); return; }
+      if (r.status === 403 && d.item.kind === 'playlist') { d.restricted = true; paintDetailSort(); paintDetailFoot(); return; }
       if (!r.ok || !r.json) throw new Error(errMsg(r));
       var mapped = (r.json.items || []).map(function (it) { return mapDetail(d.item, it); }).filter(Boolean);
       d.items = d.items.concat(mapped);
       d.next = r.json.next || null;
-      appendDetailRows(mapped);
+      // In the default order new rows go at the end; a chosen sort re-sorts everything loaded so far.
+      if (sortIsDefault(detailView(d.item))) appendDetailRows(mapped);
+      else paintDetailList();
+      paintDetailSort();
       paintDetailFoot();
     }).catch(function (e) {
       if (state.detail !== d) return;

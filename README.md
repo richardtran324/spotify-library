@@ -57,6 +57,21 @@ Optional: Share → **Add to Home Screen**. A Home Screen icon keeps its own sto
 - **Playing now:** in any song or episode list (albums, playlists, Liked Songs, Recent, search, podcasts), the song or episode that's playing shows its name in green with a small **Playing** label. It updates with the Now Playing check.
 - **Choosing a device:** tap the device name in the status line ("Playing on iPhone · Change") to see your open Spotify devices. Picking one moves playback there and makes it the device taps play on from then on. **Refresh** in that panel looks again.
 
+### Sorting
+
+A row of **Sort** chips sits above most lists. The first chip is the order the page always used; the page remembers your choice separately for each list. The name filter works with any order.
+
+- **Playlists:** Default (your library order), A–Z, Most songs. **Liked Songs** stays first.
+- **Albums:** Recently saved, A–Z, Artist A–Z, Release date (newest first).
+- **Artists:** Default, A–Z.
+- **All:** Default (grouped by kind), A–Z (one list; **Liked Songs** and **Saved episodes** stay first).
+- **Podcasts → Shows:** Recently updated, A–Z, Recently saved. **Saved episodes** stays first.
+- **Podcasts → Latest:** Newest first, Oldest first, Show A–Z (each show's episodes newest first). The chips sit under **Play newest** / **Hide played**; **Play newest** always means the newest unplayed episode.
+- **Song lists:** albums: Track order, A–Z, Artist A–Z. Playlists: Default, Title A–Z, Artist A–Z, Recently added. Liked Songs: Recently liked, Title A–Z, Artist A–Z. Podcasts: Newest, Oldest. Saved episodes: Recently saved, Newest, Oldest.
+  - These sort only the songs loaded so far (50 per page). While more pages remain, a note says **Sorted within the songs loaded so far**; **Load more** adds the next page into the sorted list.
+  - Tapping a song still plays it inside its album or playlist, so what plays next follows Spotify's order, not the sorted list.
+- A–Z ignores a leading "The" and sorts numbers naturally (2 before 10). **Recent** and **Search Spotify** have no sort: they're a time log and a relevance order.
+
 ### Search Spotify
 
 - Type at least 2 letters; the search runs half a second after you stop typing, or right away when you press **Search** on the keyboard.
@@ -102,6 +117,7 @@ A tap is remembered for 3 minutes; after that the page forgets it. With the two 
 - **Updating to v2.2 (podcasts):** the banner appears once more. Tap **Sign in again** and approve; it adds one permission, for your podcast listening progress (so episodes resume and show "min left" or **Played**). Until then the Podcasts list still loads, but Saved episodes and resume positions may be missing.
 - **Search Spotify** searches the whole catalog (songs, artists, albums, playlists, podcasts, episodes). Spotify returns at most 10 of each kind per request; pick one kind with the chips to page through more (see **Search Spotify** above). Tap a result to play it the same way as library items.
 - **v2.5** adds the **Now playing** panel and the search chips. It needs no new permissions, so no extra sign-in.
+- **v2.8** adds the **Sort** chips (see **Sorting** above). No new permissions.
 - If Spotify doesn't let the page check which items are already saved, hearts start outlined and a tap saves the item.
 - **Refresh** reloads your library and checks for an open Spotify device. The page also checks each time you come back to it.
 - To update the page later, upload the new `index.html` to the same repo (it replaces the old one).
