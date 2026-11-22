@@ -8,7 +8,8 @@
 <meta name="theme-color" content="#101418">
 <title>My Library</title>
 <style>
-/* Layout: one column for a phone. Sticky top bar (status + search + filters), then a list of covers you tap to play. */
+/* Layout: one column for a phone. Sticky top bar (status + search + filters), then a list of covers you tap to play.
+   Rows carry small icon buttons on the right (save, queue, open). A Now Playing bar sits at the bottom while something plays. */
 :root {
   --bg: #f4f5f2;
   --surface: #ffffff;
@@ -19,6 +20,7 @@
   --accent-fg: #ffffff;
   --warn: #9a5b00;
   --chip: #e8ebe6;
+  --scrim: rgba(10, 14, 18, 0.45);
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
   color-scheme: light;
 }
@@ -33,6 +35,7 @@
     --accent-fg: #08140e;
     --warn: #e0a54a;
     --chip: #202a32;
+    --scrim: rgba(0, 0, 0, 0.6);
     color-scheme: dark;
   }
 }
@@ -46,9 +49,11 @@
   --accent-fg: #08140e;
   --warn: #e0a54a;
   --chip: #202a32;
+  --scrim: rgba(0, 0, 0, 0.6);
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; }
 body {
   background: var(--bg);
@@ -58,6 +63,7 @@ body {
   line-height: 1.4;
   padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
 }
+body.has-player { padding-bottom: calc(132px + env(safe-area-inset-bottom, 0px)); }
 .wrap {
   max-width: 640px;
   margin: 0 auto;
@@ -73,12 +79,18 @@ header.top {
   padding-bottom: 10px;
   border-bottom: 1px solid var(--line);
 }
+header.top.detail .search, header.top.detail .filters { display: none; }
 .toprow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 h1 { font-size: 1.5rem; margin: 0; letter-spacing: -0.01em; }
 .status {
   display: flex; align-items: center; gap: 8px;
   font-size: 0.85rem; color: var(--muted); margin-top: 6px;
   min-height: 1.2em;
+}
+.stext { min-width: 0; }
+.linkbtn {
+  font: inherit; font-weight: 600; color: var(--accent); background: none; border: 0;
+  padding: 10px 2px; margin: -10px 0; cursor: pointer; text-align: left; border-radius: 6px;
 }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
 .dot.on { background: var(--accent); }
@@ -92,7 +104,7 @@ h1 { font-size: 1.5rem; margin: 0; letter-spacing: -0.01em; }
 .filters { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 .chip {
   font: inherit; font-size: 0.9rem; font-weight: 600;
-  padding: 6px 14px; border-radius: 999px; border: 0;
+  padding: 6px 13px; border-radius: 999px; border: 0;
   background: var(--chip); color: var(--fg); cursor: pointer; min-height: 36px;
 }
 .chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
@@ -101,13 +113,29 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
   font: inherit; font-size: 0.85rem; background: none; border: 1px solid var(--line);
   color: var(--muted); border-radius: 8px; padding: 6px 10px; cursor: pointer;
 }
+.banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  margin-top: 10px; padding: 10px 12px; border-radius: 10px;
+  background: var(--chip); font-size: 0.9rem;
+}
 ul.list { list-style: none; margin: 8px 0 0; padding: 0; }
 ul.list li { border-bottom: 1px solid var(--line); }
+li.row { display: flex; align-items: center; gap: 4px; }
 a.item {
-  display: flex; align-items: center; gap: 12px;
+  display: flex; align-items: center; gap: 12px; flex: 1;
   padding: 10px 2px; color: inherit; text-decoration: none; min-width: 0;
 }
 a.item:active { opacity: 0.6; }
+.acts { display: flex; gap: 2px; flex: none; }
+.act {
+  width: 40px; height: 40px; flex: none; padding: 0; border: 0; border-radius: 50%;
+  display: inline-grid; place-items: center; background: none; color: var(--muted); cursor: pointer;
+}
+.act svg { width: 22px; height: 22px; display: block; }
+.act:active { background: var(--chip); }
+@media (hover: hover) { .act:hover { background: var(--chip); } }
+.act[aria-pressed="true"] { color: var(--accent); }
+.act[disabled] { opacity: 0.5; cursor: default; }
 .cover {
   width: 56px; height: 56px; border-radius: 6px; flex: none;
   background: var(--chip); object-fit: cover;
@@ -116,6 +144,12 @@ a.item:active { opacity: 0.6; }
   display: grid; place-items: center;
   background: linear-gradient(135deg, #4a3fbf, #8fb3e8); color: #fff; font-size: 26px;
 }
+.cover.num {
+  background: none; display: grid; place-items: center; color: var(--muted);
+  font-size: 0.9rem; font-variant-numeric: tabular-nums;
+}
+ul.list.compact .cover { width: 44px; height: 44px; }
+ul.list.compact .cover.num { width: 28px; }
 .meta { min-width: 0; flex: 1; }
 .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sub { font-size: 0.85rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -143,18 +177,74 @@ a.item:active { opacity: 0.6; }
   background: var(--accent); color: var(--accent-fg); text-align: center; text-decoration: none;
 }
 .btn.secondary { background: var(--chip); color: var(--fg); }
+.btn.small { padding: 8px 12px; min-height: 40px; font-size: 0.9rem; }
 .field {
   width: 100%; font: inherit; font-size: 16px; padding: 10px 12px; border-radius: 10px;
   border: 1px solid var(--line); background: var(--bg); color: var(--fg);
 }
+/* Song list (detail) view */
+.dhead { padding-top: 12px; display: flex; flex-direction: column; gap: 12px; }
+.back { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; min-height: 40px; }
+.back svg { width: 18px; height: 18px; }
+.drow { display: flex; gap: 14px; align-items: center; }
+.cover.dcover { width: 96px; height: 96px; border-radius: 8px; font-size: 40px; }
+.dname { font-size: 1.25rem; margin: 0 0 2px; line-height: 1.25; overflow-wrap: anywhere; }
+.dhead .sub { white-space: normal; }
+.dbtns { display: flex; gap: 10px; align-items: center; }
+.dbtns .btn { flex: 1; min-width: 0; }
+.dfoot { padding: 12px 0; display: flex; flex-direction: column; gap: 10px; }
+/* Now Playing bar */
+.player {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 8;
+  background: var(--surface); border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.pinner {
+  max-width: 640px; margin: 0 auto;
+  padding: 8px max(16px, env(safe-area-inset-right, 0px)) 6px max(16px, env(safe-area-inset-left, 0px));
+}
+.prow { display: flex; align-items: center; gap: 10px; }
+.pcover { width: 44px; height: 44px; border-radius: 4px; background: var(--chip); object-fit: cover; flex: none; }
+.pctl { display: flex; justify-content: center; align-items: center; gap: 20px; margin-top: 2px; }
+.act.big { width: 44px; height: 44px; background: var(--fg); color: var(--bg); }
+.act.big:active { background: var(--fg); opacity: 0.7; }
+@media (hover: hover) { .act.big:hover { background: var(--fg); opacity: 0.85; } }
+/* Device sheet */
+.sheet { position: fixed; inset: 0; z-index: 20; display: flex; align-items: flex-end; justify-content: center; }
+.sheet-back { position: absolute; inset: 0; background: var(--scrim); }
+.sheet-panel {
+  position: relative; width: 100%; max-width: 640px; max-height: 80vh; overflow: auto;
+  background: var(--surface); border-radius: 16px 16px 0 0;
+  padding: 16px max(16px, env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+  display: flex; flex-direction: column; gap: 10px;
+}
+.sheet-panel h2 { font-size: 1.15rem; margin: 0; }
+.devlist { list-style: none; margin: 0; padding: 0; }
+.devrow {
+  display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px;
+  font: inherit; color: inherit; text-align: left; background: none; border: 0;
+  border-bottom: 1px solid var(--line); padding: 12px 4px; min-height: 52px; cursor: pointer;
+}
+.devrow[aria-current="true"] .devname { color: var(--accent); }
+.devrow[disabled] { opacity: 0.55; cursor: default; }
+.devname { font-weight: 600; }
+.devrow .devname, .devrow > span > .sub { display: block; }
+.sheet-btns { display: flex; gap: 10px; }
+.sheet-btns .btn { flex: 1; }
 .toast {
   position: fixed; left: 50%; transform: translateX(-50%);
   bottom: calc(20px + env(safe-area-inset-bottom, 0px));
   background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 10px;
-  font-size: 0.9rem; max-width: calc(100% - 32px); z-index: 10;
+  font-size: 0.9rem; max-width: calc(100% - 32px); z-index: 30;
   display: flex; gap: 12px; align-items: center;
 }
+body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px)); }
 .toast a { color: var(--bg); font-weight: 700; }
+.toastbtn {
+  font: inherit; font-weight: 700; color: var(--bg); background: none;
+  border: 1px solid currentColor; border-radius: 8px; padding: 6px 12px; min-height: 40px; cursor: pointer; flex: none;
+}
+.toast .toastbtn:focus-visible { outline-color: var(--bg); }
 .err { color: var(--warn); font-size: 0.9rem; }
 </style>
 </head>
@@ -165,49 +255,102 @@ a.item:active { opacity: 0.6; }
       <h1>Library</h1>
       <button class="iconbtn" id="refreshBtn" type="button">Refresh</button>
     </div>
-    <div class="status" id="status"><span class="dot" id="dot"></span><span id="statusText">Checking for Spotify on your devices…</span></div>
-    <input class="search" id="search" type="search" placeholder="Filter by name" autocomplete="off" autocorrect="off" spellcheck="false">
+    <div class="status" id="status"><span class="dot" id="dot"></span><span class="stext"><span id="statusText">Checking for Spotify on your devices…</span> <button class="linkbtn" id="devBtn" type="button" hidden></button></span></div>
+    <input class="search" id="search" type="search" placeholder="Filter by name" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Filter by name">
     <div class="filters" role="group" aria-label="Show">
       <button class="chip" type="button" data-filter="playlists" aria-pressed="true">Playlists</button>
       <button class="chip" type="button" data-filter="albums" aria-pressed="false">Albums</button>
+      <button class="chip" type="button" data-filter="artists" aria-pressed="false">Artists</button>
+      <button class="chip" type="button" data-filter="recent" aria-pressed="false">Recent</button>
       <button class="chip" type="button" data-filter="all" aria-pressed="false">All</button>
       <button class="chip" type="button" data-filter="search" aria-pressed="false">Search Spotify</button>
     </div>
   </header>
+  <div class="banner" id="banner" role="status" hidden>
+    <span>New features need one more sign-in</span>
+    <button class="btn small" id="bannerBtn" type="button">Sign in again</button>
+  </div>
 
   <main id="main"></main>
 </div>
-<div class="toast" id="toast" hidden></div>
+
+<div class="player" id="player" hidden>
+  <div class="pinner">
+    <div class="prow">
+      <img class="pcover" id="pCover" alt="">
+      <div class="meta"><div class="name" id="pTitle"></div><div class="sub" id="pSub"></div></div>
+      <button class="act heart" id="pHeart" type="button" data-uri="" data-name="" data-kind="track" aria-pressed="false" aria-label="Like this song"></button>
+    </div>
+    <div class="pctl">
+      <button class="act" id="pShuffle" type="button" aria-label="Shuffle" aria-pressed="false"></button>
+      <button class="act" id="pPrev" type="button" aria-label="Previous"></button>
+      <button class="act big" id="pPlay" type="button" aria-label="Pause"></button>
+      <button class="act" id="pNext" type="button" aria-label="Next"></button>
+    </div>
+  </div>
+</div>
+
+<div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" hidden>
+  <div class="sheet-back" id="sheetBack"></div>
+  <div class="sheet-panel">
+    <h2 id="sheetTitle">Play on</h2>
+    <ul class="devlist" id="devList"></ul>
+    <div class="sheet-btns">
+      <button class="btn secondary" id="sheetRefresh" type="button">Refresh</button>
+      <button class="btn secondary" id="sheetClose" type="button">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
 <script>
 (function () {
   'use strict';
 
-  var SCOPES = [
+  var SCOPE_LIST = [
     'playlist-read-private',
     'playlist-read-collaborative',
+    'playlist-modify-public',
     'user-library-read',
+    'user-library-modify',
+    'user-follow-read',
     'user-read-playback-state',
-    'user-modify-playback-state'
-  ].join(' ');
+    'user-modify-playback-state',
+    'user-read-recently-played'
+  ];
+  var SCOPES = SCOPE_LIST.join(' ');
   var API = 'https://api.spotify.com/v1';
   var AUTH = 'https://accounts.spotify.com';
   var K = {
     client: 'lib-client-id',
-    token: 'lib-token',        // {access, refresh, expires}
+    token: 'lib-token',        // {access, refresh, expires, scope}
     verifier: 'lib-verifier',
     state: 'lib-state',
-    cache: 'lib-cache',        // {at, me, playlists, albums, likedTotal}
-    filter: 'lib-filter'
+    cache: 'lib-cache',        // {at, me, playlists, albums, artists, likedTotal}
+    filter: 'lib-filter',
+    device: 'lib-device'       // preferred device id, chosen in the device sheet
   };
+  var FILTERS = ['playlists', 'albums', 'artists', 'recent', 'all', 'search'];
+  var POLL_MS = 10000;
+  var FRESH_MS = 90 * 1000;
+  var NO_DEVICE = 'Spotify needs to be open on a device first: your phone, computer or speaker.';
   var REDIRECT = location.origin + location.pathname.replace(/index\.html$/, '');
 
   var state = {
-    data: null, filter: 'playlists', query: '', device: null, deviceAt: 0,
-    search: { q: '', results: null, loading: false, error: '' }
+    data: null, filter: 'playlists', query: '',
+    device: null, deviceAt: 0, deviceChecked: false, devices: [], devicesAt: 0, active: null,
+    player: null, pollTimer: null, pollSeq: 0, pollFailed: false,
+    search: { q: '', results: null, loading: false, error: '' },
+    recent: { items: null, loading: false, error: '' }, recentSeq: 0,
+    saved: {}, busy: {}, containsOff: false, checking: {}, checkQueue: [], checkTimer: null,
+    detail: null, listScroll: 0, pushed: false,
+    started: false, scopeProblem: false,
+    sheetLoading: false, sheetError: '', sheetReturn: null
   };
   var searchTimer = null;
   var searchSeq = 0;
+  var refreshing = null;
 
   // ---------- storage helpers ----------
   function get(k) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch (e) { return null; } }
@@ -218,6 +361,7 @@ a.item:active { opacity: 0.6; }
   function el(tag, attrs, kids) {
     var n = document.createElement(tag);
     if (attrs) Object.keys(attrs).forEach(function (a) {
+      if (attrs[a] == null) return;
       if (a === 'text') n.textContent = attrs[a];
       else if (a === 'class') n.className = attrs[a];
       else n.setAttribute(a, attrs[a]);
@@ -226,15 +370,48 @@ a.item:active { opacity: 0.6; }
     return n;
   }
 
+  // Inline icons (static strings only).
+  function svg(inner) { return '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">' + inner + '</svg>'; }
+  var HEART_D = 'M12 20.6l-1.3-1.2C6 15.2 3 12.4 3 8.9 3 6.1 5.2 4 7.9 4c1.6 0 3.1.7 4.1 1.9C13 4.7 14.5 4 16.1 4 18.8 4 21 6.1 21 8.9c0 3.5-3 6.3-7.7 10.5L12 20.6z';
+  var ICON = {
+    heart: svg('<path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="' + HEART_D + '"/>'),
+    heartOn: svg('<path fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="' + HEART_D + '"/>'),
+    plus: svg('<path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M12 5v14M5 12h14"/>'),
+    open: svg('<path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>'),
+    back: svg('<path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M15 5l-7 7 7 7"/>'),
+    prev: svg('<path fill="currentColor" d="M6 6h2v12H6zM9.5 12L18 18V6z"/>'),
+    next: svg('<path fill="currentColor" d="M6 18l8.5-6L6 6zM16 6h2v12h-2z"/>'),
+    play: svg('<path fill="currentColor" d="M8 5v14l11-7z"/>'),
+    pause: svg('<path fill="currentColor" d="M6 5h4v14H6zM14 5h4v14h-4z"/>'),
+    shuffle: svg('<path fill="currentColor" d="M10.6 9.2L5.4 4 4 5.4l5.2 5.2 1.4-1.4zM14.5 4l2 2L4 18.6 5.4 20 18 7.5l2 2V4h-5.5zm.3 9.4l-1.4 1.4 3.1 3.1-2 2.1H20v-5.5l-2 2-3.2-3.1z"/>')
+  };
+
   var toastTimer = null;
-  function toast(msg, link) {
+  function toast(msg, link, action) {
     var t = $('toast');
     t.textContent = '';
     t.appendChild(el('span', { text: msg }));
     if (link) t.appendChild(el('a', { href: link.href, text: link.text }));
+    if (action) {
+      var b = el('button', { class: 'toastbtn', type: 'button', text: action.text });
+      b.addEventListener('click', function () { t.hidden = true; clearTimeout(toastTimer); action.fn(); });
+      t.appendChild(b);
+    }
     t.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { t.hidden = true; }, link ? 8000 : 3000);
+    toastTimer = setTimeout(function () { t.hidden = true; }, (link || action) ? 8000 : 3000);
+  }
+  function errMsg(r) {
+    var e = r && r.json && r.json.error;
+    if (e && typeof e === 'object' && e.message) return e.message;
+    if (typeof e === 'string') return (r.json.error_description || e);
+    return 'HTTP ' + (r ? r.status : '?');
+  }
+  function onFail(prefix) {
+    return function (e) {
+      if (e && e.message === 'signed-out') return renderSignIn();
+      toast(prefix + ' (' + (e && e.message ? e.message : 'unknown error') + ').');
+    };
   }
 
   // ---------- PKCE auth ----------
@@ -267,15 +444,26 @@ a.item:active { opacity: 0.6; }
         state: st
       });
       location.assign(AUTH + '/authorize?' + p.toString());
-    });
+    }).catch(function (e) { toast('Couldn’t start sign-in (' + e.message + ').'); });
   }
-  function saveToken(j) {
+  function saveToken(j, fresh) {
     var old = get(K.token) || {};
     set(K.token, {
       access: j.access_token,
       refresh: j.refresh_token || old.refresh,   // Spotify may or may not return a new one
-      expires: Date.now() + (j.expires_in - 60) * 1000
+      expires: Date.now() + (j.expires_in - 60) * 1000,
+      scope: typeof j.scope === 'string' ? j.scope : (fresh ? '' : (old.scope || ''))
     });
+    if (fresh) state.scopeProblem = false;
+    updateBanner();
+  }
+  function missingScopes() {
+    var t = get(K.token);
+    var have = ((t && typeof t.scope === 'string') ? t.scope : '').split(/\s+/);
+    return SCOPE_LIST.filter(function (s) { return have.indexOf(s) === -1; });
+  }
+  function updateBanner() {
+    $('banner').hidden = !(state.started && (state.scopeProblem || missingScopes().length > 0));
   }
   function tokenRequest(body) {
     return fetch(AUTH + '/api/token', {
@@ -302,7 +490,7 @@ a.item:active { opacity: 0.6; }
       client_id: get(K.client),
       code_verifier: get(K.verifier)
     }).then(function (j) {
-      saveToken(j); del(K.verifier); del(K.state); return true;
+      saveToken(j, true); del(K.verifier); del(K.state); return true;
     }).catch(function (e) {
       renderSignIn('Could not finish sign-in: ' + e.message); return false;
     });
@@ -312,12 +500,14 @@ a.item:active { opacity: 0.6; }
     if (!t) return Promise.reject(new Error('signed-out'));
     if (t.access && Date.now() < t.expires) return Promise.resolve(t.access);
     if (!t.refresh) return Promise.reject(new Error('signed-out'));
-    return tokenRequest({ grant_type: 'refresh_token', refresh_token: t.refresh, client_id: get(K.client) })
-      .then(function (j) { saveToken(j); return j.access_token; })
-      .catch(function (e) {
+    if (refreshing) return refreshing;   // several calls at once share one refresh
+    refreshing = tokenRequest({ grant_type: 'refresh_token', refresh_token: t.refresh, client_id: get(K.client) })
+      .then(function (j) { refreshing = null; saveToken(j, false); return j.access_token; }, function (e) {
+        refreshing = null;
         if (e.code === 'invalid_grant') { del(K.token); throw new Error('signed-out'); }
         throw e;
       });
+    return refreshing;
   }
   function api(path, opts) {
     opts = opts || {};
@@ -332,17 +522,22 @@ a.item:active { opacity: 0.6; }
       if (r.status === 204) return { ok: true, status: 204, json: null };
       return r.text().then(function (txt) {
         var j = null; try { j = txt ? JSON.parse(txt) : null; } catch (e) {}
+        if (r.status === 403 && /scope/i.test(txt || '')) { state.scopeProblem = true; updateBanner(); }
         return { ok: r.ok, status: r.status, json: j };
       });
     });
   }
-  function pages(path, pick) {
+  // Follows `next` links. `root` picks a nested page object (e.g. /me/following returns {artists:{items,next}}).
+  function pages(path, pick, root) {
     var out = [];
+    var count = 0;
     function next(url) {
       return api(url).then(function (r) {
-        if (!r.ok) throw new Error((r.json && r.json.error && r.json.error.message) || ('HTTP ' + r.status));
-        (r.json.items || []).forEach(function (it) { var v = pick(it); if (v) out.push(v); });
-        return r.json.next ? next(r.json.next) : out;
+        if (!r.ok) throw new Error(errMsg(r));
+        var j = (root ? r.json && r.json[root] : r.json) || {};
+        (j.items || []).forEach(function (it) { var v = pick(it); if (v) out.push(v); });
+        count++;
+        return (j.next && count < 60) ? next(j.next) : out;
       });
     }
     return next(path);
@@ -355,37 +550,145 @@ a.item:active { opacity: 0.6; }
     for (var i = 0; i < images.length; i++) { if ((images[i].width || 300) <= 300) { best = images[i]; break; } }
     return best.url || '';
   }
+  function names(list) { return (list || []).map(function (x) { return x && x.name; }).filter(Boolean).join(', '); }
+  function mapTrack(t, o) {
+    o = o || {};
+    if (!t || !t.uri || !t.id) return null;
+    var ep = t.type === 'episode';
+    var by = ep ? ((t.show && t.show.name) || 'Podcast') : names(t.artists);
+    var sub = o.sub != null ? o.sub : ((ep ? 'Episode · ' : 'Song · ') + by + (!ep && t.album && t.album.name ? ' · ' + t.album.name : ''));
+    return {
+      kind: ep ? 'episode' : 'track', id: t.id, name: t.name || 'Untitled', uri: t.uri,
+      url: 'https://open.spotify.com/' + (ep ? 'episode/' : 'track/') + t.id,
+      img: o.noImg ? '' : img(ep ? (t.images || (t.show && t.show.images)) : (t.album && t.album.images)),
+      sub: sub, num: o.num, ctx: o.ctx
+    };
+  }
+  function mapAlbum(a) {
+    if (!a || !a.id) return null;
+    return { kind: 'album', id: a.id, name: a.name, uri: a.uri, url: 'https://open.spotify.com/album/' + a.id, img: img(a.images), sub: 'Album · ' + names(a.artists) };
+  }
+  function mapPlaylist(p) {
+    if (!p || !p.id) return null;
+    var count = (p.items && p.items.total) || (p.tracks && p.tracks.total) || 0;
+    return {
+      kind: 'playlist', id: p.id, name: p.name || 'Untitled', uri: p.uri,
+      url: 'https://open.spotify.com/playlist/' + p.id,
+      img: img(p.images),
+      ownerId: (p.owner && p.owner.id) || '', collaborative: !!p.collaborative,
+      sub: 'Playlist' + (p.owner && p.owner.display_name ? ' · ' + p.owner.display_name : '') + (count ? ' · ' + count + ' songs' : '')
+    };
+  }
+  function mapArtist(a) {
+    if (!a || !a.id) return null;
+    return {
+      kind: 'artist', id: a.id, name: a.name, uri: a.uri, url: 'https://open.spotify.com/artist/' + a.id, img: img(a.images),
+      sub: 'Artist' + (a.genres && a.genres[0] ? ' · ' + a.genres[0] : '')
+    };
+  }
+  function likedItem(d) {
+    return { kind: 'liked', name: 'Liked Songs', uri: null, url: 'https://open.spotify.com/collection/tracks', sub: 'Playlist · ' + d.likedTotal + ' songs' };
+  }
   function loadData() {
-    var me = api('/me').then(function (r) { return r.ok ? { id: r.json.id, name: r.json.display_name } : null; });
-    var playlists = pages('/me/playlists?limit=50', function (p) {
-      if (!p) return null;
-      var count = (p.items && p.items.total) || (p.tracks && p.tracks.total) || 0;
-      return {
-        kind: 'playlist', id: p.id, name: p.name || 'Untitled', uri: p.uri,
-        url: 'https://open.spotify.com/playlist/' + p.id,
-        img: img(p.images),
-        sub: 'Playlist' + (p.owner && p.owner.display_name ? ' · ' + p.owner.display_name : '') + (count ? ' · ' + count + ' songs' : '')
-      };
+    var me = api('/me').then(function (r) { return r.ok && r.json ? { id: r.json.id, name: r.json.display_name } : null; });
+    var playlists = pages('/me/playlists?limit=50', mapPlaylist);
+    var albums = pages('/me/albums?limit=50', function (it) { return mapAlbum(it && it.album); });
+    // Artists are optional: an older sign-in without user-follow-read must not break the library.
+    var artists = pages('/me/following?type=artist&limit=50', mapArtist, 'artists').catch(function (e) {
+      if (e.message === 'signed-out') throw e;
+      return null;
     });
-    var albums = pages('/me/albums?limit=50', function (it) {
-      var a = it && it.album; if (!a) return null;
-      return {
-        kind: 'album', id: a.id, name: a.name, uri: a.uri,
-        url: 'https://open.spotify.com/album/' + a.id,
-        img: img(a.images),
-        sub: 'Album · ' + (a.artists || []).map(function (x) { return x.name; }).join(', ')
-      };
-    });
-    var liked = api('/me/tracks?limit=1').then(function (r) { return r.ok ? r.json.total : null; });
-    return Promise.all([me, playlists, albums, liked]).then(function (v) {
-      var data = { at: Date.now(), me: v[0], playlists: v[1], albums: v[2], likedTotal: v[3] };
+    var liked = api('/me/tracks?limit=1').then(function (r) { return r.ok && r.json ? r.json.total : null; });
+    return Promise.all([me, playlists, albums, liked, artists]).then(function (v) {
+      var data = { at: Date.now(), me: v[0], playlists: v[1], albums: v[2], likedTotal: v[3], artists: v[4] };
       set(K.cache, data);
       return data;
     });
   }
+  // Library albums and other people's playlists in your list are saved by definition.
+  function seedSaved(d, force) {
+    if (!d) return;
+    var me = d.me && d.me.id;
+    function mark(uri) { if (uri && (force || state.saved[uri] === undefined)) state.saved[uri] = true; }
+    (d.albums || []).forEach(function (a) { mark(a.uri); });
+    (d.playlists || []).forEach(function (p) { if (p.ownerId && p.ownerId !== me) mark(p.uri); });
+  }
+
+  // ---------- saved state (hearts) ----------
+  function isOwn(p) { var me = state.data && state.data.me; return !!(me && p.ownerId && p.ownerId === me.id); }
+  function canSave(item) {
+    if (!item || !item.uri) return false;
+    if (item.kind === 'track' || item.kind === 'episode' || item.kind === 'album') return true;
+    if (item.kind === 'playlist') return !isOwn(item);
+    return false;
+  }
+  function canOpen(item) { return item.kind === 'album' || item.kind === 'playlist' || item.kind === 'liked'; }
+  function requestSaved(uris) {
+    if (state.containsOff) return;
+    uris.forEach(function (u) {
+      if (u && state.saved[u] === undefined && !state.checking[u]) { state.checking[u] = true; state.checkQueue.push(u); }
+    });
+    if (state.checkQueue.length && !state.checkTimer) state.checkTimer = setTimeout(flushChecks, 60);
+  }
+  function savableUris(items) { return items.filter(canSave).map(function (i) { return i.uri; }); }
+  function flushChecks() {
+    state.checkTimer = null;
+    var q = state.checkQueue;
+    state.checkQueue = [];
+    for (var i = 0; i < q.length; i += 40) checkBatch(q.slice(i, i + 40));
+  }
+  function checkBatch(batch) {
+    api('/me/library/contains?uris=' + encodeURIComponent(batch.join(','))).then(function (r) {
+      if (!r.ok || !Array.isArray(r.json)) throw new Error(errMsg(r));
+      batch.forEach(function (u, i) {
+        if (state.saved[u] === undefined) state.saved[u] = r.json[i] === true;
+        delete state.checking[u];
+      });
+      paintHearts();
+    }).catch(function () {
+      // Unavailable (e.g. not offered to Development Mode apps): stop asking this session.
+      // Hearts stay outlined and a tap saves unless we already know it's saved.
+      batch.forEach(function (u) { delete state.checking[u]; });
+      state.containsOff = true;
+      state.checkQueue = [];
+    });
+  }
+  function paintHeart(b) {
+    var uri = b.getAttribute('data-uri');
+    var on = !!uri && state.saved[uri] === true;
+    var label = (b.getAttribute('data-kind') === 'track' ? 'Like “' : 'Save “') + (b.getAttribute('data-name') || '') + '”';
+    if (b.getAttribute('aria-pressed') !== String(on) || !b.firstChild) {
+      b.setAttribute('aria-pressed', String(on));
+      b.innerHTML = on ? ICON.heartOn : ICON.heart;
+    }
+    if (b.getAttribute('aria-label') !== label) b.setAttribute('aria-label', label);
+  }
+  function paintHearts() {
+    var bs = document.querySelectorAll('.heart');
+    for (var i = 0; i < bs.length; i++) paintHeart(bs[i]);
+  }
+  function toggleSave(uri, name, kind, forceSave) {
+    if (!uri || state.busy[uri]) return;
+    var was = state.saved[uri];
+    var save = forceSave === true ? true : was !== true;
+    state.busy[uri] = true;
+    state.saved[uri] = save;
+    paintHearts();
+    api('/me/library?uris=' + encodeURIComponent(uri), { method: save ? 'PUT' : 'DELETE' }).then(function (r) {
+      delete state.busy[uri];
+      if (!r.ok) throw new Error(errMsg(r));
+      if (!save) toast('Removed “' + name + '”', null, { text: 'Undo', fn: function () { toggleSave(uri, name, kind, true); } });
+      else if (forceSave) toast('Saved “' + name + '” again');
+      else toast(kind === 'track' ? 'Added to Liked Songs' : 'Saved to your library');
+    }).catch(function (e) {
+      delete state.busy[uri];
+      state.saved[uri] = was;
+      paintHearts();
+      onFail(save ? 'Couldn’t save' : 'Couldn’t remove')(e);
+    });
+  }
 
   // ---------- catalog search ----------
-  function names(list) { return (list || []).map(function (x) { return x && x.name; }).filter(Boolean).join(', '); }
   function runSearch(q) {
     var seq = ++searchSeq;
     state.search = { q: q, results: null, loading: true, error: '' };
@@ -393,30 +696,14 @@ a.item:active { opacity: 0.6; }
     var params = new URLSearchParams({ q: q, type: 'track,artist,album,playlist', limit: '10' });
     return api('/search?' + params.toString()).then(function (r) {
       if (seq !== searchSeq) return; // a newer search started
-      if (!r.ok) throw new Error((r.json && r.json.error && r.json.error.message) || ('HTTP ' + r.status));
+      if (!r.ok) throw new Error(errMsg(r));
       var j = r.json || {};
-      function list(key) { return ((j[key] && j[key].items) || []).filter(Boolean); }
+      function list(key, fn) { return ((j[key] && j[key].items) || []).map(fn).filter(Boolean); }
       state.search.results = {
-        tracks: list('tracks').map(function (t) {
-          return {
-            kind: 'track', id: t.id, name: t.name, uri: t.uri,
-            url: 'https://open.spotify.com/track/' + t.id,
-            img: img(t.album && t.album.images),
-            sub: 'Song · ' + names(t.artists) + (t.album && t.album.name ? ' · ' + t.album.name : '')
-          };
-        }),
-        artists: list('artists').map(function (a) {
-          return { kind: 'artist', id: a.id, name: a.name, uri: a.uri, url: 'https://open.spotify.com/artist/' + a.id, img: img(a.images), sub: 'Artist' };
-        }),
-        albums: list('albums').map(function (a) {
-          return { kind: 'album', id: a.id, name: a.name, uri: a.uri, url: 'https://open.spotify.com/album/' + a.id, img: img(a.images), sub: 'Album · ' + names(a.artists) };
-        }),
-        playlists: list('playlists').map(function (p) {
-          return {
-            kind: 'playlist', id: p.id, name: p.name || 'Untitled', uri: p.uri, url: 'https://open.spotify.com/playlist/' + p.id,
-            img: img(p.images), sub: 'Playlist' + (p.owner && p.owner.display_name ? ' · ' + p.owner.display_name : '')
-          };
-        })
+        tracks: list('tracks', function (t) { return mapTrack(t); }),
+        artists: list('artists', function (a) { var m = mapArtist(a); if (m) m.sub = 'Artist'; return m; }),
+        albums: list('albums', mapAlbum),
+        playlists: list('playlists', mapPlaylist)
       };
       state.search.loading = false;
       renderList();
@@ -441,62 +728,333 @@ a.item:active { opacity: 0.6; }
     searchTimer = setTimeout(function () { runSearch(q); }, now ? 0 : 500);
   }
 
-  // ---------- devices + playback ----------
-  function checkDevice() {
-    return api('/me/player/devices').then(function (r) {
-      var list = (r.ok && r.json && r.json.devices) || [];
-      var pick = list.filter(function (d) { return d.is_active; })[0] ||
-                 list.filter(function (d) { return d.type === 'Smartphone'; })[0] || null;
-      state.device = pick; state.deviceAt = Date.now();
-      showStatus();
-      return pick;
+  // ---------- recently played ----------
+  function ago(iso) {
+    var t = Date.parse(iso);
+    if (!t) return '';
+    var m = Math.round((Date.now() - t) / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return m + ' min ago';
+    if (m < 60 * 24) return Math.round(m / 60) + ' h ago';
+    return Math.round(m / 1440) + ' d ago';
+  }
+  function loadRecent() {
+    var seq = ++state.recentSeq;
+    state.recent = { items: state.recent.items, loading: true, error: '' };
+    renderList();
+    api('/me/player/recently-played?limit=50').then(function (r) {
+      if (seq !== state.recentSeq) return;
+      if (!r.ok) throw new Error(errMsg(r));
+      var seen = {}, out = [];
+      ((r.json && r.json.items) || []).forEach(function (it) {
+        var t = it && it.track;
+        if (!t || !t.id || seen[t.id]) return;
+        seen[t.id] = true;
+        var m = mapTrack(t);
+        if (m) { var when = ago(it.played_at); if (when) m.sub += ' · ' + when; out.push(m); }
+      });
+      state.recent = { items: out, loading: false, error: '' };
+      renderList();
     }).catch(function (e) {
+      if (seq !== state.recentSeq) return;
       if (e.message === 'signed-out') return renderSignIn();
-      state.device = null; showStatus();
-    });
-  }
-  function showStatus() {
-    var d = state.device;
-    $('dot').className = 'dot ' + (d ? 'on' : 'off');
-    $('statusText').textContent = d
-      ? 'Ready: taps play on ' + d.name
-      : 'Spotify isn’t open on any device. Taps open the Spotify app.';
-  }
-  function play(item) {
-    var d = state.device;
-    var body;
-    if (item.kind === 'liked') body = state.data && state.data.me ? { context_uri: 'spotify:user:' + state.data.me.id + ':collection' } : null;
-    else if (item.kind === 'track') body = { uris: [item.uri] };
-    else body = { context_uri: item.uri };
-    if (!body) return Promise.reject(new Error('no-user'));
-    return api('/me/player/play?device_id=' + encodeURIComponent(d.id), { method: 'PUT', body: body }).then(function (r) {
-      if (r.ok) { toast('Playing “' + item.name + '” on ' + d.name); return; }
-      var msg = (r.json && r.json.error && r.json.error.message) || ('HTTP ' + r.status);
-      throw new Error(msg);
-    });
-  }
-  function onItemClick(item, ev) {
-    var fresh = state.device && (Date.now() - state.deviceAt < 90 * 1000);
-    if (!fresh) return; // let the link open the Spotify app
-    ev.preventDefault();
-    play(item).catch(function (e) {
-      state.device = null; showStatus();
-      toast('Couldn’t play (' + e.message + ').', { href: item.url, text: 'Open in Spotify' });
+      state.recent.loading = false;
+      state.recent.error = 'Couldn’t load recently played (' + e.message + ').';
+      renderList();
     });
   }
 
+  // ---------- devices + playback ----------
+  function recomputeDevice() {
+    var list = state.devices || [];
+    var pref = get(K.device);
+    var act = state.active;
+    var d = null;
+    if (pref) {
+      d = list.filter(function (x) { return x.id === pref; })[0] || null;
+      if (!d && act && act.id === pref) d = act;
+    }
+    if (!d) d = act || list.filter(function (x) { return x.is_active; })[0] ||
+                list.filter(function (x) { return x.type === 'Smartphone'; })[0] || null;
+    state.device = d;
+    showStatus();
+  }
+  var devicesReq = null;
+  function fetchDevices() {
+    if (devicesReq) return devicesReq;   // one request at a time
+    devicesReq = api('/me/player/devices').then(function (r) {
+      devicesReq = null;
+      if (!r.ok) throw new Error(errMsg(r));
+      state.devices = (r.json && r.json.devices) || [];
+      state.devicesAt = state.deviceAt = Date.now();
+      state.deviceChecked = true;
+      var a = state.devices.filter(function (x) { return x.is_active; })[0];
+      state.active = a || null;
+      recomputeDevice();
+      return state.devices;
+    }, function (e) { devicesReq = null; throw e; });
+    return devicesReq;
+  }
+  function checkDevice() {
+    return fetchDevices().catch(function (e) {
+      if (e.message === 'signed-out') return renderSignIn();
+      state.devices = []; state.deviceChecked = true; recomputeDevice();
+    });
+  }
+  function showStatus() {
+    if (!state.started) return;
+    var d = state.device;
+    var p = state.player;
+    var btn = $('devBtn');
+    if (!state.deviceChecked && !d) return;   // still showing "Checking…"
+    $('dot').className = 'dot ' + (d ? 'on' : 'off');
+    if (d) {
+      var here = p && p.is_playing && p.device && p.device.id === d.id;
+      $('statusText').textContent = here ? 'Playing on' : 'Ready: taps play on';
+      btn.textContent = d.name + ' · Change';
+      btn.setAttribute('aria-label', d.name + ' · Change device');
+    } else {
+      $('statusText').textContent = 'Spotify isn’t open on any device. Taps open the Spotify app.';
+      btn.textContent = 'Devices';
+      btn.setAttribute('aria-label', 'Choose a device');
+    }
+    btn.hidden = false;
+  }
+  function likedCtx() { var me = state.data && state.data.me; return me && me.id ? 'spotify:user:' + me.id + ':collection' : null; }
+  function playBody(item) {
+    if (item.kind === 'liked') return likedCtx() ? { context_uri: likedCtx() } : null;
+    if (item.ctx) return { context_uri: item.ctx, offset: { uri: item.uri } };
+    if (item.kind === 'track' || item.kind === 'episode') return { uris: [item.uri] };
+    return { context_uri: item.uri };
+  }
+  function play(item, opts) {
+    opts = opts || {};
+    var d = state.device;
+    var body = playBody(item);
+    if (!body) return Promise.reject(new Error('your account details haven’t loaded yet'));
+    var q = '?device_id=' + encodeURIComponent(d.id);
+    function send(b) { return api('/me/player/play' + q, { method: 'PUT', body: b }); }
+    function shuffle() { return api('/me/player/shuffle?state=true&device_id=' + encodeURIComponent(d.id), { method: 'PUT' }); }
+    var shuffleOk = true;
+    var pre = opts.shuffle ? shuffle().then(function (r) { shuffleOk = r.ok; }, function () { shuffleOk = false; }) : Promise.resolve();
+    function done() {
+      toast((opts.shuffle ? 'Shuffling “' : 'Playing “') + item.name + '” on ' + d.name);
+      // Shuffle on a device that wasn't active yet can fail; try again now that it plays.
+      if (opts.shuffle && !shuffleOk) shuffle().catch(function () {});
+      schedulePoll(600);
+    }
+    return pre.then(function () { return send(body); }).then(function (r) {
+      if (r.ok) return done();
+      // Context play (e.g. Liked Songs collection) can be refused; retry once with just the song.
+      if (body.offset && [401, 404, 429].indexOf(r.status) === -1) {
+        return send({ uris: [item.uri] }).then(function (r2) {
+          if (r2.ok) return done();
+          throw new Error(errMsg(r2));
+        });
+      }
+      throw new Error(errMsg(r));
+    });
+  }
+  function deviceFresh() { return state.device && (Date.now() - state.deviceAt < FRESH_MS); }
+  function onItemClick(item, ev, opts) {
+    if (!deviceFresh()) return; // let the link open the Spotify app
+    ev.preventDefault();
+    play(item, opts).catch(function (e) {
+      if (e.message === 'signed-out') return renderSignIn();
+      state.device = null; state.deviceAt = 0; showStatus();
+      toast('Couldn’t play (' + e.message + ').', { href: item.url, text: 'Open in Spotify' });
+    });
+  }
+  function controlDevice() {
+    var p = state.player;
+    return (p && p.device && p.device.id) ? p.device : state.device;
+  }
+  function addToQueue(item) {
+    var d = controlDevice();
+    if (!d) { toast(NO_DEVICE); return; }
+    api('/me/player/queue?uri=' + encodeURIComponent(item.uri) + '&device_id=' + encodeURIComponent(d.id), { method: 'POST' }).then(function (r) {
+      if (r.ok) { toast('Added to queue'); return; }
+      if (r.status === 404) { toast(NO_DEVICE); return; }
+      throw new Error(errMsg(r));
+    }).catch(onFail('Couldn’t add to queue'));
+  }
+
+  // ---------- Now Playing bar ----------
+  function schedulePoll(ms) {
+    clearTimeout(state.pollTimer);
+    state.pollTimer = null;
+    if (!state.started || document.hidden) return;
+    state.pollTimer = setTimeout(pollPlayer, ms);
+  }
+  function pollPlayer() {
+    state.pollTimer = null;
+    if (!state.started || document.hidden) return;
+    var seq = ++state.pollSeq;
+    var next = POLL_MS;
+    api('/me/player').then(function (r) {
+      if (seq !== state.pollSeq) return 'stale';
+      if (r.status === 204 || (r.ok && !r.json)) setPlayer(null);
+      else if (r.ok) setPlayer(r.json);
+      else {
+        if (r.status === 429) next = 30000;
+        throw new Error(errMsg(r));
+      }
+      state.pollFailed = false;
+    }).catch(function (e) {
+      if (e.message === 'signed-out') { renderSignIn(); return 'stop'; }
+      if (!state.pollFailed) toast('Couldn’t check what’s playing (' + e.message + ').');
+      state.pollFailed = true;
+    }).then(function (how) {
+      // A command made this answer stale and scheduled its own check; don't override it.
+      if (how !== 'stale' && how !== 'stop') schedulePoll(next);
+    });
+  }
+  function setPlayer(p) {
+    state.player = p && p.item ? p : null;
+    if (p && p.device && p.device.id) { state.active = p.device; state.deviceAt = Date.now(); }
+    else {
+      state.active = null;
+      // Nothing playing: keep the device list from going stale so taps still play directly.
+      if (Date.now() - state.devicesAt > FRESH_MS) checkDevice();
+    }
+    recomputeDevice();
+    paintPlayer();
+  }
+  function paintPlayer() {
+    var p = state.player;
+    var bar = $('player');
+    var item = p && p.item;
+    if (!item || !state.started) {
+      bar.hidden = true;
+      document.body.classList.remove('has-player');
+      return;
+    }
+    var ep = item.type === 'episode';
+    var src = img(ep ? (item.images || (item.show && item.show.images)) : (item.album && item.album.images));
+    var cover = $('pCover');
+    if (src) { if (cover.getAttribute('src') !== src) cover.setAttribute('src', src); }
+    else cover.removeAttribute('src');
+    $('pTitle').textContent = item.name || '';
+    $('pSub').textContent = (ep ? ((item.show && item.show.name) || 'Podcast') : names(item.artists)) + (p.device && p.device.name ? ' · ' + p.device.name : '');
+    var pb = $('pPlay');
+    var lab = p.is_playing ? 'Pause' : 'Play';
+    if (pb.getAttribute('aria-label') !== lab || !pb.firstChild) { pb.setAttribute('aria-label', lab); pb.innerHTML = p.is_playing ? ICON.pause : ICON.play; }
+    $('pShuffle').setAttribute('aria-pressed', String(!!p.shuffle_state));
+    var h = $('pHeart');
+    h.setAttribute('data-uri', item.uri || '');
+    h.setAttribute('data-name', item.name || '');
+    h.setAttribute('data-kind', ep ? 'episode' : 'track');
+    h.hidden = !item.uri;
+    paintHeart(h);
+    if (item.uri) requestSaved([item.uri]);
+    bar.hidden = false;
+    document.body.classList.add('has-player');
+  }
+  function command(method, path, optimistic) {
+    var p = state.player;
+    var dev = p && p.device && p.device.id;
+    var url = path + (dev ? (path.indexOf('?') === -1 ? '?' : '&') + 'device_id=' + encodeURIComponent(dev) : '');
+    if (optimistic && p) { optimistic(p); paintPlayer(); showStatus(); }
+    state.pollSeq++;   // ignore any check that started before this command
+    return api(url, { method: method }).then(function (r) {
+      if (r.ok) return;
+      if (r.status === 404) throw new Error('Spotify isn’t open on a device');
+      throw new Error(errMsg(r));
+    }).catch(onFail('Couldn’t control playback')).then(function () { schedulePoll(500); });
+  }
+
+  // ---------- device sheet ----------
+  function openSheet() {
+    state.sheetReturn = document.activeElement;
+    $('sheet').hidden = false;
+    renderSheet();
+    loadSheetDevices();
+    $('sheetClose').focus();
+  }
+  function closeSheet() {
+    if ($('sheet').hidden) return;
+    $('sheet').hidden = true;
+    var r = state.sheetReturn;
+    state.sheetReturn = null;
+    if (r && r.focus && document.body.contains(r)) r.focus();
+  }
+  function loadSheetDevices() {
+    state.sheetLoading = true; state.sheetError = '';
+    renderSheet();
+    fetchDevices().catch(function (e) {
+      if (e.message === 'signed-out') { closeSheet(); return renderSignIn(); }
+      state.sheetError = 'Couldn’t load devices (' + e.message + ').';
+    }).then(function () { state.sheetLoading = false; renderSheet(); });
+  }
+  function renderSheet() {
+    var ul = $('devList');
+    ul.textContent = '';
+    if (state.sheetError) { ul.appendChild(el('li', null, [el('p', { class: 'err', text: state.sheetError })])); return; }
+    var list = state.devices || [];
+    if (state.sheetLoading && !list.length) { ul.appendChild(el('li', null, [el('p', { class: 'empty', text: 'Looking for devices…' })])); return; }
+    if (!list.length) { ul.appendChild(el('li', null, [el('p', { class: 'empty', text: 'Open Spotify on your phone, computer or speaker, then refresh.' })])); return; }
+    var cur = state.device && state.device.id;
+    list.forEach(function (d) {
+      var note = d.is_restricted ? 'Can’t be controlled' : (d.is_active ? 'Active' : '');
+      var b = el('button', { class: 'devrow', type: 'button', 'aria-current': d.id === cur ? 'true' : 'false' }, [
+        el('span', null, [el('span', { class: 'devname', text: d.name }), el('span', { class: 'sub', text: (d.type || 'Device') + (note ? ' · ' + note : '') })]),
+        d.id === cur ? el('span', { class: 'sub', text: 'Selected' }) : null
+      ]);
+      if (d.is_restricted || !d.id) b.disabled = true;
+      b.addEventListener('click', function () { transferTo(d); });
+      ul.appendChild(el('li', null, [b]));
+    });
+  }
+  function transferTo(d) {
+    var wasPlaying = !!(state.player && state.player.is_playing);
+    state.pollSeq++;
+    api('/me/player', { method: 'PUT', body: { device_ids: [d.id], play: wasPlaying } }).then(function (r) {
+      if (!r.ok) throw new Error(r.status === 404 ? 'device not found; refresh the list' : errMsg(r));
+      set(K.device, d.id);
+      state.active = d; state.deviceAt = Date.now();
+      recomputeDevice();
+      closeSheet();
+      toast('Now using ' + d.name);
+    }).catch(onFail('Couldn’t switch to ' + d.name)).then(function () { schedulePoll(600); });
+  }
+
   // ---------- rendering ----------
-  function itemRow(item) {
+  function heartBtn(item) {
+    var b = el('button', { class: 'act heart', type: 'button', 'data-uri': item.uri, 'data-name': item.name, 'data-kind': item.kind, 'aria-pressed': 'false' });
+    paintHeart(b);
+    b.addEventListener('click', function () { toggleSave(item.uri, item.name, item.kind); });
+    return b;
+  }
+  function iconBtn(icon, label, fn) {
+    var b = el('button', { class: 'act', type: 'button', 'aria-label': label });
+    b.innerHTML = icon;
+    b.addEventListener('click', fn);
+    return b;
+  }
+  function actionButtons(item) {
+    var out = [];
+    if (canSave(item)) out.push(heartBtn(item));
+    if (item.kind === 'track' || item.kind === 'episode') out.push(iconBtn(ICON.plus, 'Add “' + item.name + '” to queue', function () { addToQueue(item); }));
+    if (canOpen(item)) out.push(iconBtn(ICON.open, 'Open songs in “' + item.name + '”', function () { openDetail(item); }));
+    return out;
+  }
+  function coverFor(item, extra) {
     var round = item.kind === 'artist' ? ' round' : '';
-    var cover = item.kind === 'liked'
-      ? el('div', { class: 'cover liked', 'aria-hidden': 'true', text: '♥' })
-      : (item.img ? el('img', { class: 'cover' + round, src: item.img, alt: '', loading: 'lazy' }) : el('div', { class: 'cover' + round, 'aria-hidden': 'true' }));
+    var cls = 'cover' + round + (extra ? ' ' + extra : '');
+    if (item.kind === 'liked') return el('div', { class: 'cover liked' + (extra ? ' ' + extra : ''), 'aria-hidden': 'true', text: '♥' });
+    if (item.num != null) return el('div', { class: 'cover num', 'aria-hidden': 'true', text: String(item.num) });
+    return item.img ? el('img', { class: cls, src: item.img, alt: '', loading: 'lazy' }) : el('div', { class: cls, 'aria-hidden': 'true' });
+  }
+  function itemRow(item) {
     var a = el('a', { class: 'item', href: item.url }, [
-      cover,
+      coverFor(item),
       el('div', { class: 'meta' }, [el('div', { class: 'name', text: item.name }), el('div', { class: 'sub', text: item.sub })])
     ]);
     a.addEventListener('click', function (ev) { onItemClick(item, ev); });
-    return el('li', null, [a]);
+    var li = el('li', { class: 'row' }, [a]);
+    var acts = actionButtons(item);
+    if (acts.length) li.appendChild(el('div', { class: 'acts' }, acts));
+    return li;
   }
   function renderSearch(main) {
     var s = state.search;
@@ -507,31 +1065,57 @@ a.item:active { opacity: 0.6; }
     if (!r) return;
     var groups = [['Songs', r.tracks], ['Artists', r.artists], ['Albums', r.albums], ['Playlists', r.playlists]];
     var any = false;
+    var all = [];
     groups.forEach(function (g) {
       if (!g[1].length) return;
       any = true;
+      all = all.concat(g[1]);
       main.appendChild(el('h2', { class: 'sect', text: g[0] }));
       var ul = el('ul', { class: 'list' });
       g[1].forEach(function (i) { ul.appendChild(itemRow(i)); });
       main.appendChild(ul);
     });
     if (!any) main.appendChild(el('p', { class: 'empty', text: 'No results for “' + s.q + '”.' }));
+    requestSaved(savableUris(all));
+  }
+  function matches(items) {
+    var q = state.query.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter(function (i) { return (i.name + ' ' + i.sub).toLowerCase().indexOf(q) !== -1; });
+  }
+  function renderRecent(main) {
+    var r = state.recent;
+    if (r.error) main.appendChild(el('p', { class: 'err', text: r.error }));
+    if (!r.items) { if (r.loading) main.appendChild(el('p', { class: 'empty', text: 'Loading recently played…' })); return; }
+    var items = matches(r.items);
+    if (!items.length) { main.appendChild(el('p', { class: 'empty', text: state.query.trim() ? 'Nothing matches “' + state.query + '”.' : 'Nothing played recently.' })); return; }
+    var ul = el('ul', { class: 'list' });
+    items.forEach(function (i) { ul.appendChild(itemRow(i)); });
+    main.appendChild(ul);
+    requestSaved(savableUris(items));
   }
   function renderList() {
+    if (state.detail) return;   // the song list view owns the page
     var main = $('main');
     main.textContent = '';
     if (state.filter === 'search') return renderSearch(main);
+    if (state.filter === 'recent') return renderRecent(main);
     var d = state.data;
     if (!d) { main.appendChild(el('p', { class: 'empty', text: 'Loading your library…' })); return; }
-    var q = state.query.trim().toLowerCase();
+    var f = state.filter;
     var items = [];
-    if (state.filter !== 'albums' && d.likedTotal != null) {
-      items.push({ kind: 'liked', name: 'Liked Songs', uri: null, url: 'https://open.spotify.com/collection/tracks', sub: 'Playlist · ' + d.likedTotal + ' songs' });
+    if ((f === 'playlists' || f === 'all') && d.likedTotal != null) items.push(likedItem(d));
+    if (f === 'playlists' || f === 'all') items = items.concat(d.playlists || []);
+    if (f === 'albums' || f === 'all') items = items.concat(d.albums || []);
+    if (f === 'artists' || f === 'all') items = items.concat(d.artists || []);
+    if (f === 'artists' && !d.artists) {
+      main.appendChild(el('p', { class: d.artists === null ? 'err' : 'empty', text: d.artists === null
+        ? (missingScopes().length ? 'Followed artists need one more sign-in. Tap “Sign in again” above.' : 'Couldn’t load your followed artists. Tap Refresh to try again.')
+        : 'Loading your artists…' }));
+      return;
     }
-    if (state.filter !== 'albums') items = items.concat(d.playlists || []);
-    if (state.filter !== 'playlists') items = items.concat(d.albums || []);
-    if (q) items = items.filter(function (i) { return (i.name + ' ' + i.sub).toLowerCase().indexOf(q) !== -1; });
-    if (!items.length) { main.appendChild(el('p', { class: 'empty', text: q ? 'Nothing matches “' + state.query + '”.' : 'Nothing here yet.' })); return; }
+    items = matches(items);
+    if (!items.length) { main.appendChild(el('p', { class: 'empty', text: state.query.trim() ? 'Nothing matches “' + state.query + '”.' : (f === 'artists' ? 'You don’t follow any artists yet.' : 'Nothing here yet.') })); return; }
     var ul = el('ul', { class: 'list' });
     items.forEach(function (i) { ul.appendChild(itemRow(i)); });
     main.appendChild(ul);
@@ -543,21 +1127,162 @@ a.item:active { opacity: 0.6; }
     var box = $('search');
     if (f === 'search') {
       box.placeholder = 'Search all of Spotify';
+      box.setAttribute('aria-label', 'Search all of Spotify');
       box.setAttribute('enterkeyhint', 'search');
       if (!wasSearch) { box.value = state.search.q; }
       if (focus) box.focus();
     } else {
       box.placeholder = 'Filter by name';
+      box.setAttribute('aria-label', 'Filter by name');
       box.setAttribute('enterkeyhint', 'done');
       if (wasSearch) { box.value = state.query; }
     }
-    renderList();
+    if (f === 'recent') loadRecent();   // always fresh when chosen
+    else renderList();
   }
 
-  function renderSetup(errMsg) {
+  // ---------- song list (detail) view ----------
+  function canList(p) { return isOwn(p) || p.collaborative; }
+  function detailUrl(item) {
+    if (item.kind === 'album') return '/albums/' + encodeURIComponent(item.id) + '/tracks?limit=50&offset=0';
+    if (item.kind === 'liked') return '/me/tracks?limit=50&offset=0';
+    if (item.kind === 'playlist' && canList(item)) return '/playlists/' + encodeURIComponent(item.id) + '/items?limit=50&offset=0';
+    return null;
+  }
+  function mapDetail(parent, it) {
+    if (!it) return null;
+    if (parent.kind === 'album') return mapTrack(it, { num: it.track_number, noImg: true, sub: names(it.artists), ctx: parent.uri });
+    if (it.is_local) return null;
+    var t = it.item || it.track;
+    if (!t) return null;
+    var sub = t.type === 'episode' ? ((t.show && t.show.name) || 'Podcast') : names(t.artists) + (t.album && t.album.name ? ' · ' + t.album.name : '');
+    var m = mapTrack(t, { sub: sub, ctx: parent.kind === 'liked' ? likedCtx() : parent.uri });
+    if (m && parent.kind === 'liked' && state.saved[m.uri] === undefined) state.saved[m.uri] = true;
+    return m;
+  }
+  function openDetail(item) {
+    state.listScroll = window.pageYOffset || document.documentElement.scrollTop || 0;
+    state.detail = { item: item, items: [], next: null, loading: false, error: '', restricted: false, lastUrl: null };
+    try { history.pushState({ detail: true }, '', '#detail'); state.pushed = true; } catch (e) { state.pushed = false; }
+    renderDetail();
+    window.scrollTo(0, 0);
+    if (canSave(item)) requestSaved([item.uri]);
+    loadDetail(detailUrl(item));
+  }
+  function goBack() {
+    if (state.pushed && location.hash === '#detail') history.back();   // popstate closes the view
+    else closeDetail();
+  }
+  function closeDetail() {
+    if (!state.detail) return;
+    state.detail = null;
+    state.pushed = false;
+    $('top').classList.remove('detail');
+    if (location.hash === '#detail') { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} }
+    renderList();
+    window.scrollTo(0, state.listScroll);
+  }
+  function renderDetail() {
+    var d = state.detail;
+    var it = d.item;
+    $('top').classList.add('detail');
+    var main = $('main');
+    main.textContent = '';
+    var back = el('button', { class: 'iconbtn back', type: 'button', 'aria-label': 'Back to list' });
+    back.innerHTML = ICON.back;
+    back.appendChild(el('span', { text: 'Back' }));
+    back.addEventListener('click', goBack);
+    var playA = el('a', { class: 'btn', href: it.url, text: 'Play' });
+    playA.addEventListener('click', function (ev) { onItemClick(it, ev); });
+    var shufA = el('a', { class: 'btn secondary', href: it.url, text: 'Shuffle' });
+    shufA.addEventListener('click', function (ev) { onItemClick(it, ev, { shuffle: true }); });
+    var btns = [playA, shufA];
+    if (canSave(it)) btns.push(heartBtn(it));
+    main.appendChild(el('section', { class: 'dhead' }, [
+      back,
+      el('div', { class: 'drow' }, [
+        coverFor(it, 'dcover'),
+        el('div', { class: 'meta' }, [el('h2', { class: 'dname', text: it.name }), el('div', { class: 'sub', text: it.sub })])
+      ]),
+      el('div', { class: 'dbtns' }, btns)
+    ]));
+    main.appendChild(el('ul', { class: 'list compact', id: 'dlist' }));
+    main.appendChild(el('div', { class: 'dfoot', id: 'dfoot' }));
+    appendDetailRows(d.items);
+    paintDetailFoot();
+  }
+  function appendDetailRows(items) {
+    var ul = $('dlist');
+    if (!ul) return;
+    items.forEach(function (i) { ul.appendChild(itemRow(i)); });
+    requestSaved(savableUris(items));
+  }
+  function paintDetailFoot() {
+    var d = state.detail;
+    var f = $('dfoot');
+    if (!d || !f) return;
+    f.textContent = '';
+    if (d.restricted) {
+      f.appendChild(el('p', { class: 'empty', text: 'Spotify only lets personal apps list songs in your own playlists. Tap Play to hear this one.' }));
+      return;
+    }
+    if (d.error) {
+      f.appendChild(el('p', { class: 'err', text: d.error }));
+      var retry = el('button', { class: 'btn secondary', type: 'button', text: 'Try again' });
+      retry.addEventListener('click', function () { loadDetail(d.lastUrl); });
+      f.appendChild(retry);
+      return;
+    }
+    if (d.loading) { f.appendChild(el('p', { class: 'empty', text: 'Loading songs…' })); return; }
+    if (d.next) {
+      var more = el('button', { class: 'btn secondary', type: 'button', text: 'Load more' });
+      more.addEventListener('click', function () { loadDetail(d.next); });
+      f.appendChild(more);
+    } else if (!d.items.length) {
+      f.appendChild(el('p', { class: 'empty', text: 'No songs here.' }));
+    }
+  }
+  function loadDetail(url) {
+    var d = state.detail;
+    if (!d || d.loading) return;
+    if (!url) { d.restricted = true; paintDetailFoot(); return; }
+    d.loading = true; d.error = ''; d.lastUrl = url;
+    paintDetailFoot();
+    api(url).then(function (r) {
+      if (state.detail !== d) return;
+      d.loading = false;
+      if (r.status === 403 && d.item.kind === 'playlist') { d.restricted = true; paintDetailFoot(); return; }
+      if (!r.ok || !r.json) throw new Error(errMsg(r));
+      var mapped = (r.json.items || []).map(function (it) { return mapDetail(d.item, it); }).filter(Boolean);
+      d.items = d.items.concat(mapped);
+      d.next = r.json.next || null;
+      appendDetailRows(mapped);
+      paintDetailFoot();
+    }).catch(function (e) {
+      if (state.detail !== d) return;
+      d.loading = false;
+      if (e.message === 'signed-out') return renderSignIn();
+      d.error = 'Couldn’t load songs (' + e.message + ').';
+      paintDetailFoot();
+    });
+  }
+
+  // ---------- screens ----------
+  function stopApp() {
+    state.started = false;
+    clearTimeout(state.pollTimer); state.pollTimer = null;
+    state.player = null;
+    state.detail = null; state.pushed = false;
+    $('top').classList.remove('detail');
     $('top').hidden = true;
+    $('banner').hidden = true;
+    closeSheet();
+    paintPlayer();
+  }
+  function renderSetup(errMsgText) {
+    stopApp();
     var main = $('main'); main.textContent = '';
-    var input = el('input', { class: 'field', id: 'clientId', type: 'text', placeholder: 'Paste your Client ID', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' });
+    var input = el('input', { class: 'field', id: 'clientId', type: 'text', placeholder: 'Paste your Client ID', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'aria-label': 'Client ID' });
     var save = el('button', { class: 'btn', type: 'button', text: 'Save and sign in with Spotify' });
     var copy = el('button', { class: 'btn secondary', type: 'button', text: 'Copy this address' });
     var addr = el('div', { class: 'mono', id: 'redirect', text: REDIRECT });
@@ -571,7 +1296,7 @@ a.item:active { opacity: 0.6; }
       if (!/^[0-9a-f]{32}$/i.test(v)) { err.textContent = 'That doesn’t look like a Client ID. It’s 32 letters and numbers, from your app’s Settings page.'; return; }
       set(K.client, v); login();
     });
-    var err = el('p', { class: 'err', text: errMsg || '' });
+    var err = el('p', { class: 'err', text: errMsgText || '' });
     main.appendChild(el('section', { class: 'card' }, [
       el('h2', { text: 'One-time setup' }),
       el('p', { text: 'In your Spotify developer app, set the Redirect URI to this exact address:' }),
@@ -581,7 +1306,7 @@ a.item:active { opacity: 0.6; }
     ]));
   }
   function renderSignIn(msg) {
-    $('top').hidden = true;
+    stopApp();
     var main = $('main'); main.textContent = '';
     var go = el('button', { class: 'btn', type: 'button', text: 'Sign in with Spotify' });
     go.addEventListener('click', login);
@@ -596,19 +1321,30 @@ a.item:active { opacity: 0.6; }
   }
 
   function refresh() {
-    return loadData().then(function (d) { state.data = d; renderList(); }).catch(function (e) {
+    return loadData().then(function (d) {
+      state.data = d;
+      seedSaved(d, true);
+      renderList();
+      paintHearts();
+    }).catch(function (e) {
       if (e.message === 'signed-out') return renderSignIn();
-      if (!state.data) { $('main').textContent = ''; $('main').appendChild(el('p', { class: 'err', text: 'Couldn’t load your library: ' + e.message })); }
-      else toast('Couldn’t refresh: ' + e.message);
+      if (!state.data && !state.detail && state.filter !== 'search' && state.filter !== 'recent') {
+        $('main').textContent = ''; $('main').appendChild(el('p', { class: 'err', text: 'Couldn’t load your library: ' + e.message }));
+      } else toast('Couldn’t refresh: ' + e.message);
     });
   }
   function startApp() {
+    state.started = true;
     $('top').hidden = false;
-    state.filter = get(K.filter) || 'playlists';
+    var f = get(K.filter);
+    state.filter = FILTERS.indexOf(f) !== -1 ? f : 'playlists';
     state.data = get(K.cache);
+    seedSaved(state.data, false);
+    updateBanner();
     setFilter(state.filter);
     checkDevice();
     refresh();
+    schedulePoll(0);
   }
 
   // ---------- wiring ----------
@@ -623,9 +1359,45 @@ a.item:active { opacity: 0.6; }
     e.target.blur(); // hides the iPhone keyboard so results are visible
   });
   document.querySelectorAll('.chip').forEach(function (c) { c.addEventListener('click', function () { setFilter(c.dataset.filter, true); }); });
-  $('refreshBtn').addEventListener('click', function () { checkDevice(); refresh(); toast('Refreshing…'); });
-  document.addEventListener('visibilitychange', function () { if (!document.hidden && get(K.token)) checkDevice(); });
+  $('refreshBtn').addEventListener('click', function () { checkDevice(); refresh(); schedulePoll(0); toast('Refreshing…'); });
+  $('bannerBtn').addEventListener('click', login);
+  $('devBtn').addEventListener('click', openSheet);
+  $('sheetClose').addEventListener('click', closeSheet);
+  $('sheetBack').addEventListener('click', closeSheet);
+  $('sheetRefresh').addEventListener('click', loadSheetDevices);
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeSheet(); });
+  $('pPrev').innerHTML = ICON.prev;
+  $('pNext').innerHTML = ICON.next;
+  $('pShuffle').innerHTML = ICON.shuffle;
+  $('pPlay').innerHTML = ICON.pause;
+  $('pPrev').addEventListener('click', function () { command('POST', '/me/player/previous'); });
+  $('pNext').addEventListener('click', function () { command('POST', '/me/player/next'); });
+  $('pPlay').addEventListener('click', function () {
+    var p = state.player;
+    if (p && p.is_playing) command('PUT', '/me/player/pause', function (x) { x.is_playing = false; });
+    else command('PUT', '/me/player/play', function (x) { x.is_playing = true; });
+  });
+  $('pShuffle').addEventListener('click', function () {
+    var on = !(state.player && state.player.shuffle_state);
+    command('PUT', '/me/player/shuffle?state=' + on, function (x) { x.shuffle_state = on; });
+  });
+  $('pHeart').addEventListener('click', function () {
+    var h = $('pHeart');
+    toggleSave(h.getAttribute('data-uri'), h.getAttribute('data-name'), h.getAttribute('data-kind'));
+  });
+  window.addEventListener('popstate', function () {
+    if (location.hash === '#detail') {
+      if (!state.detail) { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} }
+      return;
+    }
+    closeDetail();
+  });
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) { clearTimeout(state.pollTimer); state.pollTimer = null; return; }
+    if (state.started && get(K.token)) { checkDevice(); schedulePoll(0); }
+  });
 
+  if (location.hash === '#detail') { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} }
   var params = new URLSearchParams(location.search);
   if (params.has('code') || params.has('error')) {
     handleCallback(params).then(function (ok) { if (ok) startApp(); });
