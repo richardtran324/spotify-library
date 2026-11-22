@@ -209,6 +209,13 @@ ul.list.compact .cover.num { width: 28px; }
 .act.big { width: 44px; height: 44px; background: var(--fg); color: var(--bg); }
 .act.big:active { background: var(--fg); opacity: 0.7; }
 @media (hover: hover) { .act.big:hover { background: var(--fg); opacity: 0.85; } }
+.topbtns { display: flex; gap: 8px; }
+.diagpre {
+  margin: 0; max-height: 55vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.78rem; line-height: 1.45;
+  background: var(--chip); color: var(--fg); border-radius: 8px; padding: 10px;
+  user-select: text; -webkit-user-select: text;
+}
 /* Device sheet */
 .sheet { position: fixed; inset: 0; z-index: 20; display: flex; align-items: flex-end; justify-content: center; }
 .sheet-back { position: absolute; inset: 0; background: var(--scrim); }
@@ -253,7 +260,10 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   <header class="top" id="top" hidden>
     <div class="toprow">
       <h1>Library</h1>
-      <button class="iconbtn" id="refreshBtn" type="button">Refresh</button>
+      <span class="topbtns">
+        <button class="iconbtn" id="diagBtn" type="button">Diagnostics</button>
+        <button class="iconbtn" id="refreshBtn" type="button">Refresh</button>
+      </span>
     </div>
     <div class="status" id="status"><span class="dot" id="dot"></span><span class="stext"><span id="statusText">Checking for Spotify on your devices…</span> <button class="linkbtn" id="devBtn" type="button" hidden></button></span></div>
     <input class="search" id="search" type="search" placeholder="Filter by name" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Filter by name">
@@ -298,6 +308,19 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     <div class="sheet-btns">
       <button class="btn secondary" id="sheetRefresh" type="button">Refresh</button>
       <button class="btn secondary" id="sheetClose" type="button">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="sheet" id="diag" role="dialog" aria-modal="true" aria-labelledby="diagTitle" hidden>
+  <div class="sheet-back" id="diagBack"></div>
+  <div class="sheet-panel">
+    <h2 id="diagTitle">Diagnostics</h2>
+    <pre class="diagpre" id="diagOut">Checking…</pre>
+    <div class="sheet-btns">
+      <button class="btn secondary" id="diagCopy" type="button">Copy</button>
+      <button class="btn secondary" id="diagRun" type="button">Run again</button>
+      <button class="btn secondary" id="diagClose" type="button">Close</button>
     </div>
   </div>
 </div>
@@ -523,9 +546,19 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
       return r.text().then(function (txt) {
         var j = null; try { j = txt ? JSON.parse(txt) : null; } catch (e) {}
         if (r.status === 403 && /scope/i.test(txt || '')) { state.scopeProblem = true; updateBanner(); }
-        return { ok: r.ok, status: r.status, json: j };
+        var res = { ok: r.ok, status: r.status, json: j };
+        if (!r.ok) logError((opts.method || 'GET') + ' ' + path.replace(API, '').split('?')[0], r.status, errMsg(res));
+        return res;
       });
+    }, function (e) {
+      if (e && e.message !== 'signed-out') logError((opts.method || 'GET') + ' ' + path.replace(API, '').split('?')[0], 'network', e.message);
+      throw e;
     });
+  }
+  var errorLog = [];
+  function logError(what, status, msg) {
+    errorLog.push(new Date().toLocaleTimeString() + '  ' + what + ' → ' + status + ' ' + msg);
+    if (errorLog.length > 12) errorLog.shift();
   }
   // Follows `next` links. `root` picks a nested page object (e.g. /me/following returns {artists:{items,next}}).
   function pages(path, pick, root) {
@@ -796,8 +829,9 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     return devicesReq;
   }
   function checkDevice() {
-    return fetchDevices().catch(function (e) {
+    return fetchDevices().then(function (list) { state.deviceError = ''; showStatus(); return list; }, function (e) {
       if (e.message === 'signed-out') return renderSignIn();
+      state.deviceError = e.message;
       state.devices = []; state.deviceChecked = true; recomputeDevice();
     });
   }
@@ -813,8 +847,10 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
       $('statusText').textContent = here ? 'Playing on' : 'Ready: taps play on';
       btn.textContent = d.name + ' · Change';
       btn.setAttribute('aria-label', d.name + ' · Change device');
+    } else if (state.deviceError) {
+      $('statusText').textContent = 'Couldn’t check your devices (' + state.deviceError + ').';
     } else {
-      $('statusText').textContent = 'Spotify isn’t open on any device. Taps open the Spotify app.';
+      $('statusText').textContent = 'Spotify isn’t open on any device. Start a song in Spotify, then come back.';
       btn.textContent = 'Devices';
       btn.setAttribute('aria-label', 'Choose a device');
     }
@@ -857,13 +893,83 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   }
   function deviceFresh() { return state.device && (Date.now() - state.deviceAt < FRESH_MS); }
   function onItemClick(item, ev, opts) {
-    if (!deviceFresh()) return; // let the link open the Spotify app
+    // Never jump to the Spotify app by surprise: look for a device first,
+    // and only offer "Open in Spotify" if none is available.
     ev.preventDefault();
-    play(item, opts).catch(function (e) {
-      if (e.message === 'signed-out') return renderSignIn();
-      state.device = null; state.deviceAt = 0; showStatus();
-      toast('Couldn’t play (' + e.message + ').', { href: item.url, text: 'Open in Spotify' });
+    var ready = deviceFresh() ? Promise.resolve(state.device) : checkDevice().then(function () { return state.device; });
+    ready.then(function (d) {
+      if (!d) {
+        toast(state.deviceError ? 'Couldn’t check your devices (' + state.deviceError + ').' : 'Spotify isn’t open on any device.', { href: item.url, text: 'Open in Spotify' });
+        return;
+      }
+      return play(item, opts).catch(function (e) {
+        if (e.message === 'signed-out') return renderSignIn();
+        state.device = null; state.deviceAt = 0; showStatus();
+        toast('Couldn’t play (' + e.message + ').', { href: item.url, text: 'Open in Spotify' });
+      });
     });
+  }
+
+  // ---------- diagnostics ----------
+  var VERSION = 'v2.1 (2026-11-21)';
+  function openDiag() { $('diag').hidden = false; $('diagClose').focus(); runDiag(); }
+  function closeDiag() { $('diag').hidden = true; }
+  function runDiag() {
+    var out = [];
+    var pre = $('diagOut');
+    function line(s) { out.push(s); pre.textContent = out.join('\n'); }
+    pre.textContent = 'Checking…';
+    var t = get(K.token) || {};
+    line('Page ' + VERSION);
+    line('Address: ' + location.origin + location.pathname);
+    line('Signed in: ' + (t.access ? 'yes' : 'no') + (t.expires ? ', token ' + (t.expires > Date.now() ? 'valid ' + Math.round((t.expires - Date.now()) / 60000) + ' min' : 'expired (will renew)') : ''));
+    var miss = missingScopes();
+    line('Permissions missing: ' + (miss.length ? miss.join(', ') : 'none'));
+    line('Device picked: ' + (state.device ? state.device.name + ' (' + state.device.type + ')' : 'none') + (state.deviceError ? ' · error: ' + state.deviceError : ''));
+    line('');
+    function probe(label, path, show) {
+      return api(path).then(function (r) {
+        var body = '';
+        try { body = r.ok ? show(r.json) : errMsg(r); } catch (e) { body = 'unreadable answer'; }
+        line(label + ' → ' + r.status + (body ? '  ' + body : ''));
+      }, function (e) { line(label + ' → failed: ' + e.message); });
+    }
+    probe('Account (/me)', '/me', function (j) { return j ? 'user ' + j.id : 'empty'; })
+      .then(function () {
+        return probe('Devices', '/me/player/devices', function (j) {
+          var d = (j && j.devices) || [];
+          if (!d.length) return '0 devices';
+          return d.length + ' device(s): ' + d.map(function (x) {
+            return x.name + ' [' + x.type + (x.is_active ? ', active' : '') + (x.is_restricted ? ', restricted' : '') + ']';
+          }).join('; ');
+        });
+      })
+      .then(function () {
+        return probe('Now playing (/me/player)', '/me/player', function (j) {
+          if (!j) return 'nothing playing';
+          return (j.is_playing ? 'playing' : 'paused') + (j.item ? ' "' + j.item.name + '"' : '') + (j.device ? ' on ' + j.device.name : '');
+        });
+      })
+      .then(function () { return probe('Playlists', '/me/playlists?limit=1', function (j) { return (j && j.total != null ? j.total : '?') + ' total'; }); })
+      .then(function () {
+        line('');
+        line('Recent errors:' + (errorLog.length ? '' : ' none'));
+        errorLog.forEach(function (e) { line('  ' + e); });
+        line('');
+        line('Browser: ' + navigator.userAgent);
+      });
+  }
+  function copyDiag() {
+    var txt = $('diagOut').textContent;
+    var b = $('diagCopy');
+    function sel() {
+      var r = document.createRange(); r.selectNodeContents($('diagOut'));
+      var s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+      b.textContent = 'Selected, tap Copy';
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(txt).then(function () { b.textContent = 'Copied'; setTimeout(function () { b.textContent = 'Copy'; }, 2000); }, sel);
+    } else sel();
   }
   function controlDevice() {
     var p = state.player;
@@ -1365,7 +1471,12 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   $('sheetClose').addEventListener('click', closeSheet);
   $('sheetBack').addEventListener('click', closeSheet);
   $('sheetRefresh').addEventListener('click', loadSheetDevices);
-  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeSheet(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { closeSheet(); closeDiag(); } });
+  $('diagBtn').addEventListener('click', openDiag);
+  $('diagClose').addEventListener('click', closeDiag);
+  $('diagBack').addEventListener('click', closeDiag);
+  $('diagRun').addEventListener('click', runDiag);
+  $('diagCopy').addEventListener('click', copyDiag);
   $('pPrev').innerHTML = ICON.prev;
   $('pNext').innerHTML = ICON.next;
   $('pShuffle').innerHTML = ICON.shuffle;
