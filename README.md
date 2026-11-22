@@ -46,7 +46,25 @@ Optional: Share → **Add to Home Screen**. A Home Screen icon keeps its own sto
   - **›:** open the song list for an album, playlist or Liked Songs.
 - **Song list:** shows the cover, **Play**, **Shuffle**, and the songs, 50 at a time (**Load more** for the rest). Tapping a song plays it in that album or playlist, so the following songs keep going. **Back** (or the phone's back swipe) returns to where you were in the list. Spotify only lets personal apps list the songs in playlists you own; for other playlists the page shows a note and you can still press Play.
 - **Now Playing bar:** at the bottom while something plays: cover, song, artist, device, plus Shuffle, Previous, Play/Pause, Next and a heart for the current song. It checks every 10 seconds while the page is open on screen, and stops checking when you switch away.
+  - **Tap the cover or song name** to open the **Now playing** panel. It lists what applies to what's playing:
+    - **Open album · …** (songs): the album's song list.
+    - **Open playlist · …** when you're playing from a playlist. Your own playlists open their song list. A playlist that isn't in your library is looked up by Spotify (one request, remembered until you reload); since Spotify only lets personal apps list songs in your own playlists, it opens with the usual note and a **Play** button.
+    - **Open Liked Songs** when you're playing from Liked Songs.
+    - **Open show · …** (episodes): the podcast's episode list.
+    - **Open in Spotify:** the song or episode in the Spotify app.
+    - **Close**, or tap outside the panel.
+  - The first option is selected when the panel opens. **Back** from the song list returns to where you were, at the same scroll position. If you were already in a song list, the new one replaces it, so **Back** still returns to the list you started from.
+- **Playing now:** in any song or episode list (albums, playlists, Liked Songs, Recent, search, podcasts), the song or episode that's playing shows its name in green with a small **Playing** label. It updates with the Now Playing check.
 - **Choosing a device:** tap the device name in the status line ("Playing on iPhone · Change") to see your open Spotify devices. Picking one moves playback there and makes it the device taps play on from then on. **Refresh** in that panel looks again.
+
+### Search Spotify
+
+- Type at least 2 letters; the search runs half a second after you stop typing, or right away when you press **Search** on the keyboard.
+- A row of small outlined chips under the main filters picks what to show: **All**, **Songs**, **Artists**, **Albums**, **Playlists**, **Podcasts**, **Episodes**. The page remembers your choice.
+  - **All** shows each kind in its own group, the first 5 of each, with **See all songs** (or artists, albums, …) under each group to switch to that kind.
+  - **One kind** shows a single list, 10 at a time (Spotify's limit). **Load more** adds the next 10, up to Spotify's limit of about 1,000 results; the button goes away when there are no more.
+- Switching chips searches again for the same words, but results you've already seen this session come back without asking Spotify again. Reloading the page clears them.
+- Rows work like everywhere else: tap to play, heart to save, **+** to queue, **›** to open the song list. Podcast rows open the episode list.
 
 ### Podcasts
 
@@ -82,7 +100,8 @@ A tap is remembered for 3 minutes; after that the page forgets it. With the two 
 - Sign-in lasts about 6 months; then the page shows **Sign in** again.
 - **Already using the page?** After you upload this version, a banner says **New features need one more sign-in**. Tap **Sign in again** once and approve on Spotify's page; it asks for the new permissions (saving to your library, followed artists, recently played). Everything else keeps working until you do.
 - **Updating to v2.2 (podcasts):** the banner appears once more. Tap **Sign in again** and approve; it adds one permission, for your podcast listening progress (so episodes resume and show "min left" or **Played**). Until then the Podcasts list still loads, but Saved episodes and resume positions may be missing.
-- **Search Spotify** searches the whole catalog (songs, artists, albums, playlists, podcasts, episodes; up to 10 of each, Spotify's limit for personal apps). Tap a result to play it the same way as library items.
+- **Search Spotify** searches the whole catalog (songs, artists, albums, playlists, podcasts, episodes). Spotify returns at most 10 of each kind per request; pick one kind with the chips to page through more (see **Search Spotify** above). Tap a result to play it the same way as library items.
+- **v2.5** adds the **Now playing** panel and the search chips. It needs no new permissions, so no extra sign-in.
 - If Spotify doesn't let the page check which items are already saved, hearts start outlined and a tap saves the item.
 - **Refresh** reloads your library and checks for an open Spotify device. The page also checks each time you come back to it.
 - To update the page later, upload the new `index.html` to the same repo (it replaces the old one).

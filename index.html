@@ -288,6 +288,33 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
 .lnote { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 0.85rem; color: var(--muted); margin: 10px 2px 0; }
 .lnote .err { font-size: 0.85rem; }
 .newdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-right: 6px; vertical-align: 0.1em; }
+/* Now Playing bar: cover + title is a button that opens the "Now playing" sheet */
+.pinfo {
+  display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0;
+  font: inherit; color: inherit; text-align: left; background: none; border: 0;
+  padding: 2px 0; margin: 0; border-radius: 6px; cursor: pointer;
+}
+.pinfo:active { opacity: 0.6; }
+.pinfo .meta, .pinfo .name, .pinfo .sub { display: block; }
+a.devrow { text-decoration: none; }
+.devrow[aria-busy="true"] { opacity: 0.6; cursor: progress; }
+.npwhat { margin: -4px 0 0; white-space: normal; }
+/* The song that's playing now, in any list */
+li.row.playing .name { color: var(--accent); }
+.nowtag {
+  display: inline-block; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--accent); margin-right: 6px;
+}
+/* Search Spotify: result-type chips (outline, smaller than the main filter chips) */
+header.top.detail .schips { display: none; }
+.schips { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.schip {
+  font: inherit; font-size: 0.8rem; font-weight: 600;
+  padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line);
+  background: none; color: var(--muted); cursor: pointer; min-height: 32px;
+}
+.schip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.seeall { display: block; margin: 0; padding: 10px 2px; }
 </style>
 </head>
 <body>
@@ -312,6 +339,15 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
       <button class="chip" type="button" data-filter="all" aria-pressed="false">All</button>
       <button class="chip" type="button" data-filter="search" aria-pressed="false">Search Spotify</button>
     </div>
+    <div class="schips" id="schips" role="group" aria-label="Result type" hidden>
+      <button class="schip" type="button" data-stype="all" aria-pressed="true">All</button>
+      <button class="schip" type="button" data-stype="track" aria-pressed="false">Songs</button>
+      <button class="schip" type="button" data-stype="artist" aria-pressed="false">Artists</button>
+      <button class="schip" type="button" data-stype="album" aria-pressed="false">Albums</button>
+      <button class="schip" type="button" data-stype="playlist" aria-pressed="false">Playlists</button>
+      <button class="schip" type="button" data-stype="show" aria-pressed="false">Podcasts</button>
+      <button class="schip" type="button" data-stype="episode" aria-pressed="false">Episodes</button>
+    </div>
   </header>
   <div class="banner" id="banner" role="status" hidden>
     <span>New features need one more sign-in</span>
@@ -324,8 +360,10 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
 <div class="player" id="player" hidden>
   <div class="pinner">
     <div class="prow">
-      <img class="pcover" id="pCover" alt="">
-      <div class="meta"><div class="name" id="pTitle"></div><div class="sub" id="pSub"></div></div>
+      <button class="pinfo" id="pInfo" type="button" aria-label="Now playing options" aria-haspopup="dialog">
+        <img class="pcover" id="pCover" alt="">
+        <span class="meta"><span class="name" id="pTitle"></span><span class="sub" id="pSub"></span></span>
+      </button>
       <button class="act heart" id="pHeart" type="button" data-uri="" data-name="" data-kind="track" aria-pressed="false" aria-label="Like this song"></button>
     </div>
     <div class="pctl">
@@ -345,6 +383,18 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     <div class="sheet-btns">
       <button class="btn secondary" id="sheetRefresh" type="button">Refresh</button>
       <button class="btn secondary" id="sheetClose" type="button">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="sheet" id="np" role="dialog" aria-modal="true" aria-labelledby="npTitle" hidden>
+  <div class="sheet-back" id="npBack"></div>
+  <div class="sheet-panel">
+    <h2 id="npTitle">Now playing</h2>
+    <p class="sub npwhat" id="npWhat"></p>
+    <ul class="devlist" id="npList"></ul>
+    <div class="sheet-btns">
+      <button class="btn secondary" id="npClose" type="button">Close</button>
     </div>
   </div>
 </div>
@@ -402,9 +452,23 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     wake: 'lib-wake',          // 'wait' (default when unset), 'link' or 'shortcut'; stored as a plain string
     pending: 'lib-pending',    // {item, opts, at, mode[, manual, retry]}: a tap waiting for Spotify to wake up
     latest: 'lib-latest',      // {at, items, failed}: newest episodes across your saved shows
-    hidePlayed: 'lib-hide-played'
+    hidePlayed: 'lib-hide-played',
+    searchType: 'lib-searchtype' // Search Spotify result type: 'all' (default) or one of SEARCH_TYPES
   };
   var FILTERS = ['playlists', 'albums', 'artists', 'podcasts', 'recent', 'all', 'search'];
+  // Search Spotify result types. key: the page object in the /search answer; map: row mapper.
+  var SEARCH_TYPES = ['all', 'track', 'artist', 'album', 'playlist', 'show', 'episode'];
+  var STYPE = {
+    track: { key: 'tracks', label: 'Songs', map: function (t) { return mapTrack(t); } },
+    artist: { key: 'artists', label: 'Artists', map: function (a) { var m = mapArtist(a); if (m) m.sub = 'Artist'; return m; } },
+    album: { key: 'albums', label: 'Albums', map: function (a) { return mapAlbum(a); } },
+    playlist: { key: 'playlists', label: 'Playlists', map: function (p) { return mapPlaylist(p); } },
+    show: { key: 'shows', label: 'Podcasts', map: function (s) { return mapShow(s); } },
+    episode: { key: 'episodes', label: 'Episodes', map: function (e) { return mapEpisode(e, false); } }
+  };
+  var SEARCH_LIMIT = 10;          // Spotify's current maximum per type
+  var SEARCH_MAX_OFFSET = 1000;   // Spotify's highest allowed offset
+  var SEARCH_GROUP_ROWS = 5;      // rows per group in the All view
   var POLL_MS = 10000;
   var FRESH_MS = 90 * 1000;
   var NO_DEVICE_MS = 2 * 60 * 1000;   // how long an empty device list counts as "known: nothing open"
@@ -427,7 +491,7 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     data: null, filter: 'playlists', query: '',
     device: null, deviceAt: 0, deviceChecked: false, devices: [], devicesAt: 0, active: null,
     player: null, pollTimer: null, pollSeq: 0, pollFailed: false,
-    search: { q: '', results: null, loading: false, error: '' },
+    search: { q: '' }, stype: 'all',   // results live in searchCache, per type and query
     recent: { items: null, loading: false, error: '' }, recentSeq: 0,
     saved: {}, busy: {}, containsOff: false, checking: {}, checkQueue: [], checkTimer: null,
     detail: null, listScroll: 0, pushed: false,
@@ -438,7 +502,8 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     latest: { cache: null, loading: false, error: '', triedAt: 0, seq: 0 }
   };
   var searchTimer = null;
-  var searchSeq = 0;
+  var searchCache = {};   // 'type\nquery' -> entry (see runSearch); this session only
+  var searchKeys = [];    // insertion order, to keep the cache small
   var refreshing = null;
 
   // ---------- storage helpers ----------
@@ -861,45 +926,107 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   }
 
   // ---------- catalog search ----------
+  // Results are cached per result type and query for this session, so switching chips back and
+  // forth (or retyping a query) doesn't ask Spotify again. An entry that failed is asked again.
+  // Entry for 'all': {results: {tracks, artists, …} | null, loading, error}.
+  // Entry for one type: {items, offset (next offset to ask for), more, loading, error, moreError}.
+  function searchKey(type, q) { return type + '\n' + q; }
+  function cacheGet(type, q) { return searchCache[searchKey(type, q)] || null; }
+  function cachePut(type, q, e) {
+    var k = searchKey(type, q);
+    if (!searchCache[k]) searchKeys.push(k);
+    searchCache[k] = e;
+    while (searchKeys.length > 40) delete searchCache[searchKeys.shift()];
+  }
+  function currentSearch() { return state.search.q.length >= 2 ? cacheGet(state.stype, state.search.q) : null; }
+  function showingSearch(e) { return state.started && state.filter === 'search' && !state.detail && currentSearch() === e; }
   function runSearch(q) {
-    var seq = ++searchSeq;
-    state.search = { q: q, results: null, loading: true, error: '' };
+    var type = state.stype;
+    var e = type === 'all'
+      ? { results: null, loading: true, error: '' }
+      : { items: [], offset: 0, more: false, loading: true, error: '', moreError: '' };
+    e.type = type; e.q = q;
+    cachePut(type, q, e);
+    state.search = { q: q };
     renderList();
-    var params = new URLSearchParams({ q: q, type: 'track,artist,album,playlist,show,episode', limit: '10' });
+    fetchSearchPage(type, q, e);
+  }
+  function searchMore(e) {
+    if (!e || e.loading || !e.more) return;
+    e.loading = true; e.moreError = '';
+    paintSearchFoot(e);
+    fetchSearchPage(e.type, e.q, e);
+  }
+  function fetchSearchPage(type, q, e) {
+    var first = type === 'all' || e.offset === 0;
+    var params = new URLSearchParams({ q: q, type: type === 'all' ? 'track,artist,album,playlist,show,episode' : type, limit: String(SEARCH_LIMIT) });
+    if (type !== 'all') params.set('offset', String(e.offset));
     return api('/search?' + params.toString()).then(function (r) {
-      if (seq !== searchSeq) return; // a newer search started
       if (!r.ok) throw new Error(errMsg(r));
       var j = r.json || {};
-      function list(key, fn) { return ((j[key] && j[key].items) || []).map(fn).filter(Boolean); }
-      state.search.results = {
-        tracks: list('tracks', function (t) { return mapTrack(t); }),
-        artists: list('artists', function (a) { var m = mapArtist(a); if (m) m.sub = 'Artist'; return m; }),
-        albums: list('albums', mapAlbum),
-        playlists: list('playlists', mapPlaylist),
-        shows: list('shows', mapShow),
-        episodes: list('episodes', function (e) { return mapEpisode(e, false); })
-      };
-      state.search.loading = false;
-      renderList();
-    }).catch(function (e) {
-      if (seq !== searchSeq) return;
-      if (e.message === 'signed-out') return renderSignIn();
-      state.search.loading = false;
-      state.search.error = 'Search failed: ' + e.message;
-      renderList();
+      // Spotify can return null entries (playlists especially); the mappers drop them.
+      function list(t) { return ((j[STYPE[t].key] && j[STYPE[t].key].items) || []).map(STYPE[t].map).filter(Boolean); }
+      e.loading = false;
+      if (type === 'all') {
+        e.results = { tracks: list('track'), artists: list('artist'), albums: list('album'), playlists: list('playlist'), shows: list('show'), episodes: list('episode') };
+        if (showingSearch(e)) renderList();
+        return;
+      }
+      var page = j[STYPE[type].key] || {};
+      var seen = {};
+      e.items.forEach(function (i) { seen[i.uri] = true; });
+      var got = list(type).filter(function (i) { if (seen[i.uri]) return false; seen[i.uri] = true; return true; });
+      e.items = e.items.concat(got);
+      e.lastGot = got.length;
+      e.offset += SEARCH_LIMIT;
+      e.more = !!page.next && e.offset < SEARCH_MAX_OFFSET;
+      if (!showingSearch(e)) return;
+      if (first || !$('slist')) { renderList(); return; }
+      appendSearchRows(got, e);
+    }).catch(function (err) {
+      if (err && err.message === 'signed-out') return renderSignIn();
+      e.loading = false;
+      var msg = err && err.message ? err.message : 'unknown error';
+      if (first) e.error = 'Search failed: ' + msg;
+      else e.moreError = 'Couldn’t load more (' + msg + ').';
+      if (!showingSearch(e)) return;
+      if (first) renderList(); else paintSearchFoot(e);
     });
   }
   function scheduleSearch(q, now) {
     clearTimeout(searchTimer);
     q = q.trim();
     if (q.length < 2) {
-      searchSeq++;
-      state.search = { q: q, results: null, loading: false, error: '' };
+      state.search = { q: q };
       renderList();
       return;
     }
-    if (q === state.search.q && (state.search.results || state.search.loading)) return;
+    var e = cacheGet(state.stype, q);
+    if (e && !e.error) {   // already loaded or loading: show it, no new request
+      if (q !== state.search.q) { state.search = { q: q }; renderList(); }
+      return;
+    }
     searchTimer = setTimeout(function () { runSearch(q); }, now ? 0 : 500);
+  }
+  function paintSearchChips() {
+    document.querySelectorAll('.schip').forEach(function (c) { c.setAttribute('aria-pressed', String(c.dataset.stype === state.stype)); });
+  }
+  // Picks the result type. Re-runs the search for the current query unless it's cached.
+  function setSearchType(t, fromList) {
+    if (SEARCH_TYPES.indexOf(t) === -1) t = 'all';
+    state.stype = t;
+    set(K.searchType, t);
+    paintSearchChips();
+    clearTimeout(searchTimer);
+    var q = $('search').value.trim();
+    var e = q.length >= 2 ? cacheGet(t, q) : null;
+    if (q.length >= 2 && (!e || e.error)) runSearch(q);
+    else { state.search = { q: q }; renderList(); }
+    if (fromList) {   // "See all …" sits in the list, which was just replaced
+      window.scrollTo(0, 0);
+      var c = document.querySelector('.schip[data-stype="' + t + '"]');
+      if (c) c.focus();
+    }
   }
 
   // ---------- recently played ----------
@@ -1413,7 +1540,7 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.4 (2026-11-22)';
+  var VERSION = 'v2.5 (2026-11-22)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -1541,9 +1668,11 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     var p = state.player;
     var bar = $('player');
     var item = p && p.item;
+    paintPlaying();
     if (!item || !state.started) {
       bar.hidden = true;
       document.body.classList.remove('has-player');
+      closeNp(false);
       return;
     }
     var ep = item.type === 'episode';
@@ -1635,6 +1764,130 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     }).catch(onFail('Couldn’t switch to ' + d.name)).then(function () { schedulePoll(600); });
   }
 
+  // ---------- "Now playing" sheet: from the bar to the album, playlist, Liked Songs or show ----------
+  var plMemo = {};    // playlist id -> promise of a mapped playlist (GET /playlists/{id}), this session
+  var plKnown = {};   // playlist id -> mapped playlist, once that request answered
+  var npReturn = null;
+  function libraryPlaylist(id) {
+    var list = (state.data && state.data.playlists) || [];
+    for (var i = 0; i < list.length; i++) { if (list[i].id === id) return list[i]; }
+    return plKnown[id] || null;
+  }
+  // Playlists outside your library: Spotify still answers GET /playlists/{id} for Development Mode apps.
+  // Its song list only loads for your own or collaborative playlists; the detail view explains the rest.
+  function playlistById(id) {
+    var known = libraryPlaylist(id);
+    if (known) return Promise.resolve(known);
+    if (!plMemo[id]) {
+      plMemo[id] = api('/playlists/' + encodeURIComponent(id)).then(function (r) {
+        if (!r.ok || !r.json) throw new Error(errMsg(r));
+        var m = mapPlaylist(r.json);
+        if (!m) throw new Error('unreadable answer');
+        plKnown[id] = m;
+        return m;
+      });
+      plMemo[id].catch(function () { delete plMemo[id]; });   // a failure is asked again next time
+    }
+    return plMemo[id];
+  }
+  function ctxPlaylistId(c) {
+    var m = /(?:^|:)playlist:([A-Za-z0-9]+)$/.exec(c.uri || '') || /\/playlists\/([A-Za-z0-9]+)/.exec(c.href || '');
+    return m ? m[1] : null;
+  }
+  // Liked Songs plays as the context spotify:user:<id>:collection.
+  function isLikedCtx(c) { return !!c && /^spotify:user:[^:]+:collection$/.test(c.uri || ''); }
+  function likedDetailItem() {
+    var d = state.data;
+    return d && d.likedTotal != null ? likedItem(d) : { kind: 'liked', name: 'Liked Songs', uri: null, url: 'https://open.spotify.com/collection/tracks', sub: 'Playlist' };
+  }
+  // The options that apply to what's playing: [{label, item | playlistId}] plus the Open in Spotify link.
+  function npOptions(p) {
+    var it = p.item, c = p.context, ep = it.type === 'episode', out = [];
+    if (!ep && it.album && it.album.id) {
+      var a = mapAlbum(it.album);
+      if (a) out.push({ label: 'Open album · ' + (a.name || 'Untitled'), item: a });
+    }
+    if (c && c.type === 'playlist') {
+      var pid = ctxPlaylistId(c);
+      if (pid) {
+        var known = libraryPlaylist(pid);
+        out.push({ label: 'Open playlist' + (known ? ' · ' + known.name : ''), playlistId: pid });
+      }
+    }
+    if (isLikedCtx(c)) out.push({ label: 'Open Liked Songs', item: likedDetailItem() });
+    if (ep && it.show && it.show.id) {
+      var s = mapShow(it.show);
+      if (s) out.push({ label: 'Open show · ' + s.name, item: s });
+    }
+    return out;
+  }
+  function spotifyUrl(it) {
+    if (it.external_urls && it.external_urls.spotify) return it.external_urls.spotify;
+    return it.id ? 'https://open.spotify.com/' + (it.type === 'episode' ? 'episode/' : 'track/') + it.id : '';
+  }
+  function openNp() {
+    var p = state.player;
+    if (!p || !p.item) return;
+    npReturn = document.activeElement;
+    var it = p.item;
+    $('npWhat').textContent = (it.name || '') + (it.type === 'episode'
+      ? (it.show && it.show.name ? ' · ' + it.show.name : '')
+      : (it.artists && it.artists.length ? ' · ' + names(it.artists) : ''));
+    var ul = $('npList');
+    ul.textContent = '';
+    var opts = npOptions(p);
+    opts.forEach(function (o) {
+      var name = el('span', { class: 'devname', text: o.label });
+      var b = el('button', { class: 'devrow', type: 'button' }, [el('span', null, [name])]);
+      if (o.playlistId && o.label === 'Open playlist') {
+        // Not in your library: fetch the name now so the row can show it.
+        playlistById(o.playlistId).then(function (pl) {
+          if (document.body.contains(name)) name.textContent = 'Open playlist · ' + pl.name;
+        }, function () {});
+      }
+      b.addEventListener('click', function () { npChoose(o, b); });
+      ul.appendChild(el('li', null, [b]));
+    });
+    var url = spotifyUrl(it);
+    if (url) {
+      var a = el('a', { class: 'devrow', href: url }, [el('span', null, [el('span', { class: 'devname', text: 'Open in Spotify' })])]);
+      a.addEventListener('click', function () { closeNp(false); });
+      ul.appendChild(el('li', null, [a]));
+    }
+    $('np').hidden = false;
+    var first = ul.querySelector('.devrow');
+    (first || $('npClose')).focus();
+  }
+  function closeNp(restore) {
+    if ($('np').hidden) return;
+    $('np').hidden = true;
+    var r = npReturn;
+    npReturn = null;
+    if (restore !== false && r && r.focus && document.body.contains(r)) r.focus();
+  }
+  function npOpenDetail(item) {
+    closeNp(false);
+    openDetail(item);
+    var back = document.querySelector('.dhead .back');
+    if (back) back.focus({ preventScroll: true });
+  }
+  function npChoose(o, b) {
+    if (o.item) { npOpenDetail(o.item); return; }
+    if (b.getAttribute('aria-busy') === 'true') return;
+    var known = libraryPlaylist(o.playlistId);
+    if (known) { npOpenDetail(known); return; }
+    b.setAttribute('aria-busy', 'true');
+    playlistById(o.playlistId).then(function (pl) {
+      b.removeAttribute('aria-busy');
+      if ($('np').hidden) return;   // closed while loading
+      npOpenDetail(pl);
+    }, function (e) {
+      b.removeAttribute('aria-busy');
+      if (e && e.message === 'signed-out') { closeNp(false); return renderSignIn(); }
+      toast('Couldn’t open the playlist (' + (e && e.message ? e.message : 'unknown error') + ').');
+    });
+  }
+
   // ---------- rendering ----------
   function heartBtn(item) {
     var b = el('button', { class: 'act heart', type: 'button', 'data-uri': item.uri, 'data-name': item.name, 'data-kind': item.kind, 'aria-pressed': 'false' });
@@ -1663,6 +1916,22 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     if (item.num != null) return el('div', { class: 'cover num', 'aria-hidden': 'true', text: String(item.num) });
     return item.img ? el('img', { class: cls, src: item.img, alt: '', loading: 'lazy' }) : el('div', { class: cls, 'aria-hidden': 'true' });
   }
+  // The song or episode playing now is marked in every list (accent name + "Playing").
+  function playingUri() { var p = state.player; return (p && p.item && p.item.uri) || ''; }
+  function markPlaying(li, on) {
+    if (li.classList.contains('playing') === on) return;
+    li.classList.toggle('playing', on);
+    var sub = li.querySelector('.sub');
+    if (!sub) return;
+    var tag = sub.querySelector('.nowtag');
+    if (on && !tag) sub.insertBefore(el('span', { class: 'nowtag', text: 'Playing' }), sub.firstChild);
+    else if (!on && tag) sub.removeChild(tag);
+  }
+  function paintPlaying() {
+    var cur = playingUri();
+    var rows = document.querySelectorAll('li[data-puri]');
+    for (var i = 0; i < rows.length; i++) markPlaying(rows[i], !!cur && rows[i].getAttribute('data-puri') === cur);
+  }
   function itemRow(item) {
     var a = el('a', { class: 'item', href: item.url }, [
       coverFor(item),
@@ -1679,6 +1948,11 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
       onItemClick(item, ev);
     });
     var li = el('li', { class: 'row' }, [a]);
+    if (item.kind === 'track' || item.kind === 'episode') {
+      li.setAttribute('data-puri', item.uri);
+      var cur = playingUri();
+      if (cur && cur === item.uri) markPlaying(li, true);
+    }
     var acts = actionButtons(item);
     if (acts.length) li.appendChild(el('div', { class: 'acts' }, acts));
     return li;
@@ -1686,24 +1960,71 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   function renderSearch(main) {
     var s = state.search;
     if (s.q.length < 2) { main.appendChild(el('p', { class: 'empty', text: 'Type a song, artist, album, playlist or podcast to search all of Spotify.' })); return; }
-    if (s.loading) { main.appendChild(el('p', { class: 'empty', text: 'Searching…' })); return; }
-    if (s.error) { main.appendChild(el('p', { class: 'err', text: s.error })); return; }
-    var r = s.results;
+    var e = currentSearch();
+    if (!e || (e.loading && (e.type === 'all' ? !e.results : !e.items.length))) { main.appendChild(el('p', { class: 'empty', text: 'Searching…' })); return; }
+    if (e.error) { main.appendChild(el('p', { class: 'err', text: e.error })); return; }
+    if (e.type !== 'all') return renderSearchType(main, e, s.q);
+    var r = e.results;
     if (!r) return;
-    var groups = [['Songs', r.tracks], ['Artists', r.artists], ['Albums', r.albums], ['Playlists', r.playlists], ['Podcasts', r.shows || []], ['Episodes', r.episodes || []]];
+    // All: each group shows its first few rows, with "See all …" to switch to that type.
+    var groups = [['track', r.tracks], ['artist', r.artists], ['album', r.albums], ['playlist', r.playlists], ['show', r.shows || []], ['episode', r.episodes || []]];
     var any = false;
     var all = [];
     groups.forEach(function (g) {
       if (!g[1].length) return;
       any = true;
-      all = all.concat(g[1]);
-      main.appendChild(el('h2', { class: 'sect', text: g[0] }));
+      var label = STYPE[g[0]].label;
+      var rows = g[1].slice(0, SEARCH_GROUP_ROWS);
+      all = all.concat(rows);
+      main.appendChild(el('h2', { class: 'sect', text: label }));
       var ul = el('ul', { class: 'list' });
-      g[1].forEach(function (i) { ul.appendChild(itemRow(i)); });
+      rows.forEach(function (i) { ul.appendChild(itemRow(i)); });
       main.appendChild(ul);
+      var see = el('button', { class: 'linkbtn seeall', type: 'button', 'data-see': g[0], text: 'See all ' + label.toLowerCase() });
+      see.addEventListener('click', function () { setSearchType(g[0], true); });
+      main.appendChild(see);
     });
     if (!any) main.appendChild(el('p', { class: 'empty', text: 'No results for “' + s.q + '”.' }));
     requestSaved(savableUris(all));
+  }
+  // One result type: a flat list with Load more (10 at a time).
+  function renderSearchType(main, e, q) {
+    if (!e.items.length) {
+      main.appendChild(el('p', { class: 'empty', text: 'No ' + STYPE[e.type].label.toLowerCase() + ' for “' + q + '”.' }));
+      return;
+    }
+    var ul = el('ul', { class: 'list', id: 'slist' });
+    main.appendChild(ul);
+    main.appendChild(el('div', { class: 'dfoot', id: 'sfoot' }));
+    appendSearchRows(e.items, e);
+  }
+  function appendSearchRows(items, e) {
+    var ul = $('slist');
+    if (!ul) return;
+    items.forEach(function (i) { ul.appendChild(itemRow(i)); });
+    requestSaved(savableUris(items));
+    paintSearchFoot(e);
+  }
+  function paintSearchFoot(e) {
+    var f = $('sfoot');
+    if (!f) return;
+    var had = f.querySelector('button');
+    var hadFocus = had && document.activeElement === had;
+    f.textContent = '';
+    if (e.moreError) f.appendChild(el('p', { class: 'err', text: e.moreError }));
+    if (e.more || e.loading) {
+      // The button stays in place while loading so it keeps focus.
+      var more = el('button', { class: 'btn secondary', type: 'button', text: e.loading ? 'Loading…' : 'Load more' });
+      if (e.loading) more.setAttribute('aria-disabled', 'true');
+      more.addEventListener('click', function () { searchMore(e); });
+      f.appendChild(more);
+      if (hadFocus) more.focus();
+    } else if (hadFocus) {
+      // No more results: move focus to the first of the rows just added (or the last row).
+      var links = document.querySelectorAll('#slist a.item');
+      var target = links[Math.max(0, links.length - (e.lastGot || 1))];
+      if (target) target.focus();
+    }
   }
   function matches(items) {
     var q = state.query.trim().toLowerCase();
@@ -1764,6 +2085,7 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     state.filter = f; set(K.filter, f);
     document.querySelectorAll('.filters .chip').forEach(function (c) { c.setAttribute('aria-pressed', String(c.dataset.filter === f)); });
     var box = $('search');
+    $('schips').hidden = f !== 'search';
     if (f === 'search') {
       box.placeholder = 'Search all of Spotify';
       box.setAttribute('aria-label', 'Search all of Spotify');
@@ -1808,9 +2130,14 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     return m;
   }
   function openDetail(item) {
-    state.listScroll = window.pageYOffset || document.documentElement.scrollTop || 0;
+    // Opening another song list from inside one (the Now playing sheet) replaces it, so Back
+    // still returns to the list you started from, at the same scroll position.
+    var replacing = !!state.detail;
+    if (!replacing) state.listScroll = window.pageYOffset || document.documentElement.scrollTop || 0;
     state.detail = { item: item, items: [], next: null, loading: false, error: '', restricted: false, lastUrl: null };
-    try { history.pushState({ detail: true }, '', '#detail'); state.pushed = true; } catch (e) { state.pushed = false; }
+    if (!(replacing && state.pushed)) {
+      try { history.pushState({ detail: true }, '', '#detail'); state.pushed = true; } catch (e) { state.pushed = false; }
+    }
     renderDetail();
     window.scrollTo(0, 0);
     if (canSave(item)) requestSaved([item.uri]);
@@ -1940,6 +2267,7 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     $('top').hidden = true;
     $('banner').hidden = true;
     closeSheet();
+    closeNp(false);
     paintPlayer();
   }
   function renderSetup(errMsgText) {
@@ -2001,6 +2329,9 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     $('top').hidden = false;
     var f = get(K.filter);
     state.filter = FILTERS.indexOf(f) !== -1 ? f : 'playlists';
+    var st = get(K.searchType);
+    state.stype = SEARCH_TYPES.indexOf(st) !== -1 ? st : 'all';
+    paintSearchChips();
     state.data = get(K.cache);
     var lc = get(K.latest);
     state.latest.cache = (lc && Array.isArray(lc.items) && typeof lc.at === 'number') ? lc : null;
@@ -2025,13 +2356,19 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     e.target.blur(); // hides the iPhone keyboard so results are visible
   });
   document.querySelectorAll('.filters .chip').forEach(function (c) { c.addEventListener('click', function () { setFilter(c.dataset.filter, true); }); });
+  document.querySelectorAll('.schip').forEach(function (c) {
+    c.addEventListener('click', function () { if (c.dataset.stype !== state.stype) setSearchType(c.dataset.stype, false); });
+  });
   $('refreshBtn').addEventListener('click', function () { checkDevice(); refresh(); schedulePoll(0); toast('Refreshing…'); });
   $('bannerBtn').addEventListener('click', login);
   $('devBtn').addEventListener('click', openSheet);
   $('sheetClose').addEventListener('click', closeSheet);
   $('sheetBack').addEventListener('click', closeSheet);
   $('sheetRefresh').addEventListener('click', loadSheetDevices);
-  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { closeSheet(); closeDiag(); } });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { closeSheet(); closeDiag(); closeNp(); } });
+  $('pInfo').addEventListener('click', openNp);
+  $('npClose').addEventListener('click', function () { closeNp(); });
+  $('npBack').addEventListener('click', function () { closeNp(); });
   $('diagBtn').addEventListener('click', openDiag);
   $('diagClose').addEventListener('click', closeDiag);
   $('diagBack').addEventListener('click', closeDiag);
