@@ -260,8 +260,10 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
 }
 .cover.eps svg { width: 46%; height: 46%; display: block; }
 /* Auto-wake status line (inside the sticky header) */
-.wake { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--fg); margin-top: 6px; }
-.wake .stext { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wake { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 4px 8px; font-size: 0.85rem; color: var(--fg); margin-top: 6px; }
+.wake .dot { margin-top: 0.4em; }
+.wake .stext { flex: 1 1 60%; min-width: 0; }
+.wakebtns { display: flex; gap: 16px; flex-wrap: wrap; margin-left: auto; padding-left: 16px; }
 .dot.pulse { background: var(--accent); animation: pulse 0.9s ease-in-out infinite alternate; }
 @keyframes pulse { from { opacity: 1; } to { opacity: 0.25; } }
 @media (prefers-reduced-motion: reduce) { .dot.pulse { animation: none; } }
@@ -271,6 +273,21 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
 .setrow input { width: 22px; height: 22px; margin: 1px 0 0; flex: none; accent-color: var(--accent); }
 .setname { display: block; font-weight: 600; }
 .setnote { display: block; font-size: 0.85rem; color: var(--muted); }
+.setgroup { border: 0; margin: 0; padding: 0; min-width: 0; }
+.setgroup legend { padding: 0; margin-bottom: 2px; font-weight: 600; }
+/* Podcasts: Latest / Shows toggle and the Latest episodes header */
+.seg { display: flex; gap: 3px; padding: 3px; margin-top: 12px; border-radius: 10px; background: var(--chip); }
+.seg button {
+  flex: 1; font: inherit; font-size: 0.9rem; font-weight: 600; color: var(--fg); background: none;
+  border: 0; border-radius: 8px; padding: 7px 10px; min-height: 36px; cursor: pointer;
+}
+.seg button[aria-pressed="true"] { background: var(--surface); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18); }
+.lbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; }
+.lbar .btn { display: inline-flex; align-items: center; gap: 6px; }
+.lbar .btn svg { width: 18px; height: 18px; display: block; }
+.lnote { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 0.85rem; color: var(--muted); margin: 10px 2px 0; }
+.lnote .err { font-size: 0.85rem; }
+.newdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-right: 6px; vertical-align: 0.1em; }
 </style>
 </head>
 <body>
@@ -284,7 +301,7 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
       </span>
     </div>
     <div class="status" id="status"><span class="dot" id="dot"></span><span class="stext"><span id="statusText">Checking for Spotify on your devices…</span> <button class="linkbtn" id="devBtn" type="button" hidden></button></span></div>
-    <div class="wake" id="wake" role="status" hidden><span class="dot pulse"></span><span class="stext" id="wakeText"></span><button class="linkbtn" id="wakeCancel" type="button">Cancel</button></div>
+    <div class="wake" id="wake" role="status" hidden><span class="dot pulse" id="wakeDot"></span><span class="stext" id="wakeText"></span><span class="wakebtns"><button class="linkbtn" id="wakeRetry" type="button" hidden>Try again</button><button class="linkbtn" id="wakeOpen" type="button" hidden>Open Spotify instead</button><button class="linkbtn" id="wakeCancel" type="button">Cancel</button></span></div>
     <input class="search" id="search" type="search" placeholder="Filter by name" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Filter by name">
     <div class="filters" role="group" aria-label="Show">
       <button class="chip" type="button" data-filter="playlists" aria-pressed="true">Playlists</button>
@@ -337,7 +354,12 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   <div class="sheet-panel">
     <h2 id="diagTitle">Diagnostics</h2>
     <h3 class="sheet-sub">Settings</h3>
-    <label class="setrow"><input type="checkbox" id="wakeShortcut"><span><span class="setname">Use my Wake Spotify shortcut</span><span class="setnote">When Spotify isn’t open on any device, a tap runs your “Wake Spotify” shortcut instead of opening the item in the Spotify app.</span></span></label>
+    <fieldset class="setgroup" id="wakeModes">
+      <legend>When Spotify isn’t running</legend>
+      <label class="setrow"><input type="radio" name="wakeMode" value="wait"><span><span class="setname">Wait for me to press play (no app)</span><span class="setnote">Press play in Control Center or on the lock screen. Spotify starts in the background and the page plays what you tapped.</span></span></label>
+      <label class="setrow"><input type="radio" name="wakeMode" value="link"><span><span class="setname">Open the Spotify app</span><span class="setnote">A tap opens the item in Spotify; switch back and the page plays it.</span></span></label>
+      <label class="setrow"><input type="radio" name="wakeMode" value="shortcut"><span><span class="setname">Run my Wake Spotify shortcut</span><span class="setnote">A tap runs your “Wake Spotify” shortcut, which opens Spotify and comes back to the page.</span></span></label>
+    </fieldset>
     <h3 class="sheet-sub">Report</h3>
     <pre class="diagpre" id="diagOut">Checking…</pre>
     <div class="sheet-btns">
@@ -377,8 +399,10 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     cache: 'lib-cache',        // {at, me, playlists, albums, artists, likedTotal, shows, episodesTotal}
     filter: 'lib-filter',
     device: 'lib-device',      // preferred device id, chosen in the device sheet
-    wake: 'lib-wake',          // 'link' (default) or 'shortcut'; stored as a plain string
-    pending: 'lib-pending'     // {item, opts, at[, manual]}: a tap waiting for Spotify to wake up
+    wake: 'lib-wake',          // 'wait' (default when unset), 'link' or 'shortcut'; stored as a plain string
+    pending: 'lib-pending',    // {item, opts, at, mode[, manual, retry]}: a tap waiting for Spotify to wake up
+    latest: 'lib-latest',      // {at, items, failed}: newest episodes across your saved shows
+    hidePlayed: 'lib-hide-played'
   };
   var FILTERS = ['playlists', 'albums', 'artists', 'podcasts', 'recent', 'all', 'search'];
   var POLL_MS = 10000;
@@ -389,6 +413,12 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   var WAKE_FAST_MS = 400;         // check this often right after you come back
   var WAKE_FAST_FOR_MS = 6000;    // length of the fast phase
   var WAKE_FOR_MS = 20000;
+  var WAIT_POLL_MS = 1000;        // 'wait' mode: check for Spotify this often…
+  var WAIT_FOR_MS = 60000;        // …for this long per window
+  var LATEST_MS = 30 * 60 * 1000; // Latest episodes: refetch at most this often on its own
+  var LATEST_PER_SHOW = 5;
+  var LATEST_KEEP = 50;
+  var LATEST_PARALLEL = 4;        // show requests in flight at once
   var SHORTCUT_URL = 'shortcuts://run-shortcut?name=' + encodeURIComponent('Wake Spotify');
   var NO_DEVICE = 'Spotify needs to be open on a device first: your phone, computer or speaker.';
   var REDIRECT = location.origin + location.pathname.replace(/index\.html$/, '');
@@ -403,7 +433,9 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     detail: null, listScroll: 0, pushed: false,
     started: false, scopeProblem: false,
     sheetLoading: false, sheetError: '', sheetReturn: null,
-    wake: { running: false, timer: null, at: 0 }
+    wake: { running: false, timer: null, gen: 0 },
+    podTab: 'latest',
+    latest: { cache: null, loading: false, error: '', triedAt: 0, seq: 0 }
   };
   var searchTimer = null;
   var searchSeq = 0;
@@ -681,15 +713,38 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     if (p[3]) { o.day = 'numeric'; if (d.getFullYear() === new Date().getFullYear()) delete o.year; }
     try { return d.toLocaleDateString(undefined, o); } catch (e) { return s; }
   }
+  // Whole days from a release date (YYYY-MM-DD, YYYY-MM or YYYY) to today; null if unreadable.
+  function daysAgo(s) {
+    var p = /^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?$/.exec(s || '');
+    if (!p) return null;
+    var d = new Date(+p[1], +(p[2] || 1) - 1, +(p[3] || 1));
+    var t = new Date(); t.setHours(0, 0, 0, 0);
+    return Math.round((t - d) / 86400000);
+  }
+  // "Today", "Yesterday", or the date ("Nov 18").
+  function relDate(s) {
+    var n = /^\d{4}-\d{2}-\d{2}$/.test(s || '') ? daysAgo(s) : null;
+    if (n === 0) return 'Today';
+    if (n === 1) return 'Yesterday';
+    return fmtDate(s);
+  }
+  function resumeOf(e) {
+    var rp = e.resume_point || null;
+    var played = !!(rp && rp.fully_played);
+    return { played: played, pos: (!played && rp && rp.resume_position_ms > 0) ? rp.resume_position_ms : 0 };
+  }
+  function epWhen(played, pos, dur) {
+    return played ? 'Played' : (pos && dur ? Math.max(1, Math.round((dur - pos) / 60000)) + ' min left' : (dur ? fmtDur(dur) : ''));
+  }
   // Episode rows: "Episode · <show name or date> · <duration | X min left | Played>".
   // showName: true uses the episode's show name (saved episodes); otherwise the release date.
   function mapEpisode(e, showName) {
     if (!e || !e.uri || !e.id) return null;
-    var rp = e.resume_point || null;
-    var played = !!(rp && rp.fully_played);
-    var pos = (!played && rp && rp.resume_position_ms > 0) ? rp.resume_position_ms : 0;
+    var rs = resumeOf(e);
+    var played = rs.played;
+    var pos = rs.pos;
     var dur = e.duration_ms || 0;
-    var when = played ? 'Played' : (pos && dur ? Math.max(1, Math.round((dur - pos) / 60000)) + ' min left' : (dur ? fmtDur(dur) : ''));
+    var when = epWhen(played, pos, dur);
     var by = showName ? ((e.show && e.show.name) || fmtDate(e.release_date)) : (fmtDate(e.release_date) || (e.show && e.show.name) || '');
     return {
       kind: 'episode', id: e.id, name: e.name || 'Untitled', uri: e.uri,
@@ -883,6 +938,152 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     });
   }
 
+  // ---------- latest episodes: the newest episodes across your saved shows ----------
+  // Spotify has no batch call for this, so each saved show's newest few episodes are fetched
+  // separately (a few at a time), merged newest first, and cached for 30 minutes.
+  function onLatestView() { return state.started && !state.detail && state.filter === 'podcasts' && state.podTab === 'latest'; }
+  function latestFresh(c) { return !!c && typeof c.at === 'number' && Date.now() - c.at < LATEST_MS && c.at < Date.now() + 60000; }
+  function hidePlayed() { return get(K.hidePlayed) === true; }
+  function rerenderLatest() { if (onLatestView()) renderList(); }
+  function maybeLoadLatest() {
+    var L = state.latest;
+    if (!state.started || document.hidden || L.loading || latestFresh(L.cache)) return;
+    if (Date.now() - L.triedAt < LATEST_MS) return;   // a failed try waits as long as a good one
+    loadLatest();
+  }
+  function mapLatest(e, s) {
+    if (!e || !e.uri || !e.id || e.is_playable === false) return null;
+    var rs = resumeOf(e);
+    return {
+      id: e.id, name: e.name || 'Untitled', uri: e.uri,
+      img: img(e.images && e.images.length ? e.images : null) || s.img || '',
+      showId: s.id, showName: s.name || '', date: e.release_date || '',
+      durMs: e.duration_ms || 0, positionMs: rs.pos, played: rs.played
+    };
+  }
+  function loadLatest() {
+    var L = state.latest;
+    var shows = state.data && state.data.shows;
+    if (L.loading || !shows || !shows.length || document.hidden) return;
+    L.loading = true; L.error = ''; L.triedAt = Date.now();
+    var seq = ++L.seq;
+    var found = [], failed = 0, next = 0, running = 0, aborted = false, signedOut = false, finished = false;
+    function finish() {
+      if (finished) return;
+      finished = true;
+      if (seq !== L.seq) return;
+      L.loading = false;
+      if (signedOut) { renderSignIn(); return; }
+      if (aborted) { L.triedAt = 0; setTimeout(rerenderLatest, 0); return; }   // left the page: try again on return
+      if (failed === shows.length) {
+        L.error = 'Couldn’t load the latest episodes.';
+      } else {
+        // Newest first; same date keeps the order of your shows, then each show's own order.
+        found.sort(function (a, b) { return a.x.date < b.x.date ? 1 : a.x.date > b.x.date ? -1 : (a.si - b.si) || (a.k - b.k); });
+        L.cache = { at: Date.now(), items: found.slice(0, LATEST_KEEP).map(function (f) { return f.x; }), failed: failed };
+        set(K.latest, L.cache);
+      }
+      setTimeout(rerenderLatest, 0);
+    }
+    function launch() {
+      while (running < LATEST_PARALLEL && next < shows.length && !aborted) {
+        if (document.hidden || signedOut) { aborted = true; break; }   // nothing while the page is hidden
+        one(next++);
+      }
+      if (running === 0) finish();
+    }
+    function one(si) {
+      var s = shows[si];
+      running++;
+      api('/shows/' + encodeURIComponent(s.id) + '/episodes?limit=' + LATEST_PER_SHOW + '&offset=0').then(function (r) {
+        if (!r.ok || !r.json) throw new Error(errMsg(r));
+        (r.json.items || []).forEach(function (e, k) { var x = mapLatest(e, s); if (x) found.push({ x: x, si: si, k: k }); });
+      }).catch(function (e) {
+        if (e && e.message === 'signed-out') signedOut = true;
+        failed++;
+      }).then(function () { running--; launch(); });
+    }
+    launch();
+    setTimeout(rerenderLatest, 0);   // shows "Updating…"
+  }
+  function latestItem(x) {
+    var age = daysAgo(x.date);
+    return {
+      kind: 'episode', id: x.id, name: x.name, uri: x.uri, url: 'https://open.spotify.com/episode/' + x.id, img: x.img,
+      sub: [x.showName, relDate(x.date), epWhen(x.played, x.positionMs, x.durMs)].filter(Boolean).join(' · '),
+      positionMs: x.positionMs, played: x.played,
+      fresh: !x.played && !(x.positionMs > 0) && age != null && age < 7   // released in the last 7 days, not started
+    };
+  }
+  function podSeg() {
+    var g = el('div', { class: 'seg', role: 'group', 'aria-label': 'Podcasts view' });
+    [['latest', 'Latest'], ['shows', 'Shows']].forEach(function (t) {
+      var b = el('button', { type: 'button', 'data-tab': t[0], 'aria-pressed': String(state.podTab === t[0]), text: t[1] });
+      b.addEventListener('click', function () {
+        if (state.podTab === t[0]) return;
+        state.podTab = t[0];
+        renderList();
+        var nb = document.querySelector('.seg [data-tab="' + t[0] + '"]');
+        if (nb) nb.focus();
+      });
+      g.appendChild(b);
+    });
+    return g;
+  }
+  function renderLatest(main) {
+    var d = state.data;
+    var L = state.latest;
+    if (!d.shows) {
+      main.appendChild(el('p', { class: d.shows === null ? 'err' : 'empty', text: d.shows === null ? 'Couldn’t load your podcasts. Tap Refresh to try again.' : 'Loading your podcasts…' }));
+      return;
+    }
+    if (!d.shows.length) { main.appendChild(el('p', { class: 'empty', text: 'You haven’t saved any podcasts yet.' })); return; }
+    maybeLoadLatest();
+    var c = L.cache;
+    var all = c ? c.items.map(latestItem) : [];
+    var hide = hidePlayed();
+    var newest = all.filter(function (i) { return !i.played; })[0] || null;
+    // Header: Play (newest unplayed), Hide played, then when it was updated.
+    var playA = el('a', { class: 'btn small', href: newest ? newest.url : '#', 'aria-label': newest ? 'Play newest unplayed episode: ' + newest.name : 'Play newest unplayed episode' });
+    playA.innerHTML = ICON.play;
+    playA.appendChild(el('span', { text: 'Play newest' }));
+    playA.addEventListener('click', function (ev) {
+      if (!newest) { ev.preventDefault(); toast(L.loading ? 'Episodes are still loading.' : 'No unplayed episodes.'); return; }
+      onItemClick(newest, ev);
+    });
+    var hideB = el('button', { class: 'chip', type: 'button', 'aria-pressed': String(hide), text: 'Hide played' });
+    hideB.addEventListener('click', function () {
+      set(K.hidePlayed, !hidePlayed());
+      renderList();
+      var nb = document.querySelector('.lbar .chip');
+      if (nb) nb.focus();
+    });
+    main.appendChild(el('div', { class: 'lbar' }, [playA, hideB]));
+    var note = el('p', { class: 'lnote' });
+    if (c) note.appendChild(el('span', { text: 'Updated ' + ago(new Date(c.at).toISOString()) + (L.loading ? ' · Updating…' : '') }));
+    else if (L.loading) note.appendChild(el('span', { text: 'Loading the latest episodes…' }));
+    if (!L.loading) {
+      var rb = el('button', { class: 'linkbtn', type: 'button', text: 'Refresh' });
+      rb.addEventListener('click', function () { loadLatest(); });
+      if (c) note.appendChild(el('span', { 'aria-hidden': 'true', text: '·' }));
+      note.appendChild(rb);
+    }
+    if (L.error) note.appendChild(el('span', { class: 'err', text: L.error }));
+    else if (c && c.failed) note.appendChild(el('span', { class: 'err', text: 'Couldn’t load ' + c.failed + (c.failed === 1 ? ' show' : ' shows') }));
+    main.appendChild(note);
+    if (!c) return;
+    var items = matches(all.filter(function (i) { return !(hide && i.played); }));
+    if (!items.length) {
+      main.appendChild(el('p', { class: 'empty', text: state.query.trim() ? 'Nothing matches “' + state.query + '”.'
+        : (all.length ? 'Everything here is played. Turn off Hide played to see it.' : 'No episodes yet.') }));
+      return;
+    }
+    var ul = el('ul', { class: 'list' });
+    items.forEach(function (i) { ul.appendChild(itemRow(i)); });
+    main.appendChild(ul);
+    requestSaved(savableUris(items));
+  }
+
   // ---------- devices + playback ----------
   function recomputeDevice() {
     var list = state.devices || [];
@@ -897,6 +1098,7 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
                 list.filter(function (x) { return x.type === 'Smartphone'; })[0] || null;
     state.device = d;
     showStatus();
+    if (d) playPendingOnDevice();
   }
   var devicesReq = null;
   function fetchDevices() {
@@ -997,6 +1199,7 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     // Device known and fresh: play here. Known that nothing is open: wake Spotify now, while
     // still inside the tap (iPhone Safari may refuse to open an app after waiting on the network).
     // Not sure: check first, as before, and if nothing is open offer a button that wakes Spotify.
+    // In 'wait' mode nothing opens at all: the page waits for you to press play in Control Center.
     ev.preventDefault();
     if (deviceFresh()) { playNow(item, opts); return; }
     if (noDeviceKnown()) { wakeSpotify(item, opts); return; }
@@ -1007,6 +1210,8 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
         toast('Couldn’t check your devices (' + state.deviceError + ').', { href: item.url, text: 'Open in Spotify' });
         return;
       }
+      // Waiting needs no tap of its own (nothing opens), so start right away.
+      if (wakeMode() === 'wait') { waitForPlay(item, opts); return; }
       // The network wait used up the tap, so the button gives a fresh one to wake Spotify from.
       toast('Spotify isn’t open on any device.', null, {
         text: wakeMode() === 'shortcut' ? 'Wake Spotify' : 'Open in Spotify',
@@ -1019,19 +1224,24 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   function wakeMode() {
     var v = null;
     try { v = localStorage.getItem(K.wake); } catch (e) {}
-    return (v === 'shortcut' || v === '"shortcut"') ? 'shortcut' : 'link';
+    if (v === 'shortcut' || v === '"shortcut"') return 'shortcut';
+    if (v === 'link' || v === '"link"') return 'link';
+    return 'wait';   // default: wait for a press of play in Control Center or on the lock screen
   }
-  function setWakeMode(m) { try { localStorage.setItem(K.wake, m === 'shortcut' ? 'shortcut' : 'link'); } catch (e) {} }
+  function setWakeMode(m) {
+    try { localStorage.setItem(K.wake, (m === 'shortcut' || m === 'link') ? m : 'wait'); } catch (e) {}
+  }
   // Test hook: a harness can define window.libNavigate to catch the jump instead of leaving the page.
   function navigate(url) {
     if (typeof window.libNavigate === 'function') { window.libNavigate(url); return; }
     location.href = url;
   }
-  function savePending(item, opts) {
+  function savePending(item, opts, mode) {
     var p = {
       item: { kind: item.kind, id: item.id, name: item.name, uri: item.uri, url: item.url, ctx: item.ctx, positionMs: item.positionMs },
       opts: { shuffle: !!(opts && opts.shuffle) },
-      at: Date.now()
+      at: Date.now(),
+      mode: mode || 'link'
     };
     set(K.pending, p);
     return p;
@@ -1042,22 +1252,49 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     if (!p.item || typeof p.at !== 'number' || Date.now() - p.at > WAKE_MAX_MS || p.at > Date.now() + 60000) { del(K.pending); return null; }
     return p;
   }
-  function wakeSpotify(item, opts) {
-    savePending(item, opts);
-    navigate(wakeMode() === 'shortcut' ? SHORTCUT_URL : item.url);
+  // mode: 'link' or 'shortcut' leave the page from this tap; 'wait' stays put. Defaults to the setting.
+  function wakeSpotify(item, opts, mode) {
+    mode = mode || wakeMode();
+    if (mode === 'wait') { waitForPlay(item, opts); return; }
+    stopWake();
+    savePending(item, opts, mode);
+    navigate(mode === 'shortcut' ? SHORTCUT_URL : item.url);
     // Normally the page is hidden by now and resumes on return. If it's still showing
     // (a confirmation prompt, or Spotify opened elsewhere), start watching for a device anyway.
     setTimeout(function () { if (!document.hidden) resumePending(false); }, 2000);
   }
-  function showWake(name) {
-    $('wake').hidden = !name;
-    $('wakeText').textContent = name ? 'Starting “' + name + '”…' : '';
+  // 'wait' mode: remember the tap and watch for Spotify; you press play in Control Center
+  // or on the lock screen, Spotify starts in the background and shows up as a device.
+  function waitForPlay(item, opts) {
+    stopWake();
+    savePending(item, opts, 'wait');
+    resumePending(false);
+  }
+  // text: the status line, or null to hide it. o: {pulse, retry, open} picks the dot and buttons.
+  function showWake(text, o) {
+    o = o || {};
+    $('wake').hidden = !text;
+    $('wakeText').textContent = text || '';
+    $('wakeDot').className = 'dot' + (o.pulse ? ' pulse' : ' off');
+    $('wakeRetry').hidden = !o.retry;
+    $('wakeOpen').hidden = !o.open;
   }
   function stopWake() {
     var w = state.wake;
     w.running = false;
+    w.gen++;   // any check still in flight ignores its answer
     clearTimeout(w.timer); w.timer = null;
     showWake(null);
+  }
+  // Any path that finds a device (the Now Playing check, a device refresh, coming back to the page)
+  // plays a waiting 'wait'-mode tap, unless a wake loop is running and will do it itself.
+  function playPendingOnDevice() {
+    if (!state.started || !state.device || state.wake.running) return;
+    var p = readPending();
+    if (!p || p.mode !== 'wait') return;
+    del(K.pending);   // claim it before playing, so nothing can play it twice
+    stopWake();
+    setTimeout(function () { if (state.started && state.device) playNow(p.item, p.opts); }, 0);
   }
   // Runs on load, on return to the page, and from "Try again". Never loops on its own:
   // after one timeout the pending tap waits for a manual retry.
@@ -1065,24 +1302,28 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     var w = state.wake;
     if (!state.started || w.running || document.hidden) return;
     var p = readPending();
-    if (!p || (p.manual && !manual)) return;
+    if (!p) return;
+    if (p.mode === 'wait') { waitLoop(p, manual); return; }
+    if (p.manual && !manual) return;
     if (manual) { p.at = Date.now(); set(K.pending, p); }
-    w.running = true; w.at = p.at;
+    clearTimeout(w.timer); w.timer = null;
+    w.running = true;
+    var gen = ++w.gen;
     var started = Date.now();
     var until = started + WAKE_FOR_MS;
     function gap() { return (Date.now() - started < WAKE_FAST_FOR_MS) ? WAKE_FAST_MS : WAKE_POLL_MS; }
-    showWake(p.item.name);
+    showWake('Starting “' + p.item.name + '”…', { pulse: true });
     function mine() { var cur = readPending(); return !!cur && cur.at === p.at; }
     function tick() {
       w.timer = null;
-      if (!w.running || w.at !== p.at) return;
+      if (!w.running || w.gen !== gen) return;
       if (document.hidden) { stopWake(); return; }   // picks up again on return
       if (!mine()) { stopWake(); return; }           // cancelled, or another tab played it
       fetchDevices().then(function () { return state.device; }, function (e) {
         if (e.message === 'signed-out') throw e;
         return null;
       }).then(function (d) {
-        if (!w.running || w.at !== p.at) return;
+        if (!w.running || w.gen !== gen) return;
         if (d) {
           if (!mine()) { stopWake(); return; }
           del(K.pending);   // claim it before playing, so nothing can play it twice
@@ -1108,10 +1349,76 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     }
     tick();
   }
+  // 'wait' mode: checks every second for up to a minute while the page is on screen. Leaving the
+  // page pauses it; coming back starts a fresh minute (the tap itself still expires after 3 minutes).
+  // Never loops on its own: one timeout waits for Try again, a second one drops the tap.
+  function waitLoop(p, manual) {
+    var w = state.wake;
+    clearTimeout(w.timer); w.timer = null;
+    if (manual) { p.at = Date.now(); p.manual = false; p.retry = true; set(K.pending, p); }
+    else if (p.manual) { showWaitTimeout(); return; }
+    w.running = true;
+    var gen = ++w.gen;
+    var until = Date.now() + WAIT_FOR_MS;
+    showWake('Press play in Control Center or on the lock screen. “' + p.item.name + '” starts as soon as Spotify wakes.', { pulse: true, open: true });
+    function mine() { var cur = readPending(); return !!cur && cur.at === p.at; }
+    function tick() {
+      w.timer = null;
+      if (!w.running || w.gen !== gen) return;
+      if (document.hidden) { stopWake(); return; }   // paused; a fresh minute starts on return
+      if (!mine()) { stopWake(); return; }           // cancelled, replaced, or played elsewhere
+      fetchDevices().then(function () { return state.device; }, function (e) {
+        if (e.message === 'signed-out') throw e;
+        return null;
+      }).then(function (d) {
+        if (!w.running || w.gen !== gen) return;
+        if (d) {
+          if (!mine()) { stopWake(); return; }
+          del(K.pending);   // claim it before playing, so nothing can play it twice
+          stopWake();
+          return playNow(p.item, p.opts);
+        }
+        if (Date.now() + WAIT_POLL_MS > until) {
+          stopWake();
+          if (!mine()) return;
+          if (p.retry) {
+            del(K.pending);
+            toast('Spotify still didn’t wake up. Start something in Spotify, then tap again.');
+          } else {
+            p.manual = true; set(K.pending, p);
+            showWaitTimeout();
+          }
+          return;
+        }
+        w.timer = setTimeout(tick, WAIT_POLL_MS);
+      }).catch(function (e) {
+        stopWake();
+        if (e && e.message === 'signed-out') renderSignIn();
+      });
+    }
+    tick();
+  }
+  // After the first minute the tap stays remembered until Try again, Open Spotify instead, Cancel,
+  // a device showing up (see playPendingOnDevice), or the 3-minute limit.
+  function showWaitTimeout() {
+    var p = readPending();
+    var w = state.wake;
+    if (!p) { showWake(null); return; }
+    showWake('Spotify didn’t wake up yet.', { retry: true, open: true });
+    clearTimeout(w.timer);
+    w.timer = setTimeout(function () {
+      w.timer = null;
+      if (!w.running && !readPending()) showWake(null);
+    }, Math.max(0, p.at + WAKE_MAX_MS - Date.now()) + 500);
+  }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.3 (2026-11-22)';
-  function openDiag() { $('diag').hidden = false; $('wakeShortcut').checked = wakeMode() === 'shortcut'; $('diagClose').focus(); runDiag(); }
+  var VERSION = 'v2.4 (2026-11-22)';
+  function paintWakeModes() {
+    var m = wakeMode();
+    document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
+  }
+  function openDiag() { $('diag').hidden = false; paintWakeModes(); $('diagClose').focus(); runDiag(); }
   function closeDiag() { $('diag').hidden = true; }
   function runDiag() {
     var out = [];
@@ -1127,7 +1434,9 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     line('Device picked: ' + (state.device ? state.device.name + ' (' + state.device.type + ')' : 'none') + (state.deviceError ? ' · error: ' + state.deviceError : ''));
     line('Wake mode: ' + wakeMode());
     var pend = readPending();
-    line('Pending: ' + (pend ? pend.item.name + ' (' + Math.round((Date.now() - pend.at) / 1000) + 's ago' + (pend.manual ? ', waiting for Try again' : '') + ')' : 'none'));
+    line('Pending: ' + (pend ? pend.item.name + ' (' + (pend.mode || 'link') + ', ' + Math.round((Date.now() - pend.at) / 1000) + 's ago' + (pend.manual ? ', waiting for Try again' : '') + ')' : 'none'));
+    var lc = state.latest.cache;
+    line('Latest episodes: ' + (lc ? lc.items.length + ' cached, updated ' + ago(new Date(lc.at).toISOString()) + (lc.failed ? ', ' + lc.failed + ' show(s) failed' : '') : 'not loaded'));
     line('');
     function probe(label, path, show) {
       return api(path).then(function (r) {
@@ -1357,7 +1666,12 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   function itemRow(item) {
     var a = el('a', { class: 'item', href: item.url }, [
       coverFor(item),
-      el('div', { class: 'meta' }, [el('div', { class: 'name', text: item.name }), el('div', { class: 'sub', text: item.sub })])
+      el('div', { class: 'meta' }, [
+        item.fresh
+          ? el('div', { class: 'name' }, [el('span', { class: 'newdot', role: 'img', 'aria-label': 'New' }), document.createTextNode(item.name)])
+          : el('div', { class: 'name', text: item.name }),
+        el('div', { class: 'sub', text: item.sub })
+      ])
     ]);
     a.addEventListener('click', function (ev) {
       // Spotify can't play a show as a whole, so podcast rows open their episode list.
@@ -1417,6 +1731,10 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     if (!d) { main.appendChild(el('p', { class: 'empty', text: 'Loading your library…' })); return; }
     var f = state.filter;
     var items = [];
+    if (f === 'podcasts') {
+      main.appendChild(podSeg());
+      if (state.podTab === 'latest') return renderLatest(main);
+    }
     if ((f === 'playlists' || f === 'all') && d.likedTotal != null) items.push(likedItem(d));
     if (f === 'playlists' || f === 'all') items = items.concat(d.playlists || []);
     if (f === 'albums' || f === 'all') items = items.concat(d.albums || []);
@@ -1444,7 +1762,7 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   function setFilter(f, focus) {
     var wasSearch = state.filter === 'search';
     state.filter = f; set(K.filter, f);
-    document.querySelectorAll('.chip').forEach(function (c) { c.setAttribute('aria-pressed', String(c.dataset.filter === f)); });
+    document.querySelectorAll('.filters .chip').forEach(function (c) { c.setAttribute('aria-pressed', String(c.dataset.filter === f)); });
     var box = $('search');
     if (f === 'search') {
       box.placeholder = 'Search all of Spotify';
@@ -1684,6 +2002,8 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     var f = get(K.filter);
     state.filter = FILTERS.indexOf(f) !== -1 ? f : 'playlists';
     state.data = get(K.cache);
+    var lc = get(K.latest);
+    state.latest.cache = (lc && Array.isArray(lc.items) && typeof lc.at === 'number') ? lc : null;
     seedSaved(state.data, false);
     updateBanner();
     setFilter(state.filter);
@@ -1704,7 +2024,7 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     if (state.filter === 'search') scheduleSearch(e.target.value, true);
     e.target.blur(); // hides the iPhone keyboard so results are visible
   });
-  document.querySelectorAll('.chip').forEach(function (c) { c.addEventListener('click', function () { setFilter(c.dataset.filter, true); }); });
+  document.querySelectorAll('.filters .chip').forEach(function (c) { c.addEventListener('click', function () { setFilter(c.dataset.filter, true); }); });
   $('refreshBtn').addEventListener('click', function () { checkDevice(); refresh(); schedulePoll(0); toast('Refreshing…'); });
   $('bannerBtn').addEventListener('click', login);
   $('devBtn').addEventListener('click', openSheet);
@@ -1717,11 +2037,26 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   $('diagBack').addEventListener('click', closeDiag);
   $('diagRun').addEventListener('click', runDiag);
   $('diagCopy').addEventListener('click', copyDiag);
-  $('wakeShortcut').addEventListener('change', function (e) {
-    setWakeMode(e.target.checked ? 'shortcut' : 'link');
-    toast(e.target.checked ? 'Taps will run your Wake Spotify shortcut when Spotify isn’t open' : 'Taps will open the item in Spotify when Spotify isn’t open');
+  document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) {
+    r.addEventListener('change', function () {
+      if (!r.checked) return;
+      setWakeMode(r.value);
+      toast(r.value === 'shortcut' ? 'Taps will run your Wake Spotify shortcut when Spotify isn’t running'
+        : r.value === 'link' ? 'Taps will open the item in Spotify when Spotify isn’t running'
+        : 'Taps will wait for you to press play in Control Center when Spotify isn’t running');
+    });
   });
   $('wakeCancel').addEventListener('click', function () { del(K.pending); stopWake(); toast('Cancelled'); });
+  $('wakeRetry').addEventListener('click', function () {
+    if (!readPending()) { stopWake(); toast('Tap the item again.'); return; }
+    resumePending(true);
+  });
+  // A real tap, so leaving for the Spotify app is allowed here.
+  $('wakeOpen').addEventListener('click', function () {
+    var p = readPending();
+    if (!p) { stopWake(); toast('Tap the item again.'); return; }
+    wakeSpotify(p.item, p.opts, 'link');
+  });
   $('pPrev').innerHTML = ICON.prev;
   $('pNext').innerHTML = ICON.next;
   $('pShuffle').innerHTML = ICON.shuffle;
@@ -1749,12 +2084,16 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     closeDetail();
   });
   document.addEventListener('visibilitychange', function () {
-    if (document.hidden) { clearTimeout(state.pollTimer); state.pollTimer = null; return; }
-    if (state.started && get(K.token)) { checkDevice(); schedulePoll(0); resumePending(false); }
+    if (document.hidden) {
+      clearTimeout(state.pollTimer); state.pollTimer = null;
+      if (state.wake.running) stopWake();   // pause the wake check; it starts fresh on return
+      return;
+    }
+    if (state.started && get(K.token)) { checkDevice(); schedulePoll(0); resumePending(false); if (onLatestView()) maybeLoadLatest(); }
   });
   // Coming back with the Back button can restore the page from memory without a visibility change.
   window.addEventListener('pageshow', function (e) {
-    if (e.persisted && state.started && get(K.token)) { checkDevice(); schedulePoll(0); resumePending(false); }
+    if (e.persisted && state.started && get(K.token)) { checkDevice(); schedulePoll(0); resumePending(false); if (onLatestView()) maybeLoadLatest(); }
   });
   // Safari can report focus a moment before the visibility change; start looking for Spotify right away.
   window.addEventListener('focus', function () {

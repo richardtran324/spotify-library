@@ -3,7 +3,7 @@
 A one-file web page (`index.html`) that lists your Spotify playlists, saved albums, followed artists, saved podcasts, recently played songs and Liked Songs, with no Home feed and no banners. You can also like and save items, queue songs and episodes, open song and episode lists, control playback and choose the device.
 
 - **Spotify already open on a device:** tapping an item starts it playing there, and you stay on the page.
-- **Spotify not open:** the page wakes Spotify for you, then plays what you tapped when you come back (see **Starting Spotify from the page** below).
+- **Spotify not running:** the page remembers what you tapped. Press play in Control Center or on the lock screen and it starts as soon as Spotify wakes, without opening the app (see **When Spotify isn't running** below).
 
 Nothing secret is stored in the file. Your sign-in stays in Safari on your phone. Spotify's Client ID identifies your app; it isn't a password.
 
@@ -50,29 +50,31 @@ Optional: Share → **Add to Home Screen**. A Home Screen icon keeps its own sto
 
 ### Podcasts
 
-- The **Podcasts** filter shows **Saved episodes** first (the episodes you saved in Spotify), then the podcasts you follow, each with its episode count. **All** includes them too.
+- The **Podcasts** filter opens on a **Latest | Shows** switch. **Latest** (the default) is the newest episodes across all your saved podcasts; **Shows** is **Saved episodes** (the episodes you saved in Spotify) followed by the podcasts you follow, each with its episode count. **All** includes Saved episodes and your podcasts too.
+- **Latest episodes:** the 50 newest episodes across your saved podcasts (the newest 5 from each), newest first. Each row shows the podcast, when it came out (**Today**, **Yesterday**, or the date) and the length, time left, or **Played**. A green dot marks an episode from the last 7 days that you haven't started.
+  - **Play newest** starts the newest episode you haven't finished.
+  - **Hide played** hides episodes you've finished; the page remembers the setting.
+  - The list is saved on the phone and reloads from Spotify at most every 30 minutes, and only while the page is on screen. **Updated … ago** shows its age; **Refresh** next to it reloads now. Listening progress in this list updates on each reload. If some podcasts can't be loaded, the rest still show, with a note such as **Couldn't load 1 show**.
 - **Tapping a podcast opens its episode list** (newest first, 50 at a time, **Load more** for the rest). Spotify doesn't let apps play a whole podcast, so the **Play** button at the top starts the newest episode you haven't finished. The heart removes the podcast from your library, with **Undo**.
 - **Episode rows** show the podcast or release date and the length, or how much is left ("12 min left") or **Played**. Tapping an episode plays it and picks up where you left off. The heart saves it to Saved episodes; **+** adds it to the queue.
 - **Search Spotify** also finds podcasts and episodes, shown under **Podcasts** and **Episodes**.
 - If an episode won't play from the page, the message offers **Open in Spotify** for that episode.
 
-### Starting Spotify from the page
+### When Spotify isn't running
 
-When the iPhone's Spotify app has been idle for a while, Spotify stops listing it as a device, so the page has nothing to play on. Instead of only showing a message, the page now remembers what you tapped and wakes Spotify:
+When the iPhone's Spotify app has been idle for a while, Spotify stops listing it as a device, so the page has nothing to play on. The page remembers what you tapped and plays it as soon as Spotify is back. Choose how in **Diagnostics → Settings → When Spotify isn't running**:
 
-1. You tap a song, episode, album, playlist, artist or Liked Songs while no device is open.
-2. The page opens Spotify (one of two ways, below).
-3. When you're back on the page, a line under the status says **Starting "…"** while it looks for your phone for up to 15 seconds. As soon as Spotify shows up, it plays what you tapped and says **Playing …**.
-4. If Spotify doesn't show up in time, you get **Spotify didn't show up yet** with a **Try again** button. The page never keeps retrying on its own. **Cancel** on the status line drops the tap.
+- **Wait for me to press play (no app)** (default): nothing opens. The line under the status says **Press play in Control Center or on the lock screen. "…" starts as soon as Spotify wakes.** Pressing play there starts Spotify in the background, the iPhone shows up as a device, and the page plays what you tapped. For a moment you may hear whatever Spotify last played before it switches; that's normal.
+  - The page checks every second for up to a minute while it's on screen. If you leave the page, it pauses and starts a fresh minute when you come back.
+  - **Open Spotify instead** on that line opens the item in the Spotify app (the next option) for this one tap. **Cancel** drops the tap.
+  - If Spotify doesn't wake within the minute, the line says **Spotify didn't wake up yet** with **Try again** (one more minute) and **Open Spotify instead**. After a second miss the page drops the tap and asks you to start something in Spotify, then tap again. It never keeps retrying on its own.
+  - Starting playback anywhere else also counts: if the Now Playing check sees Spotify playing while a tap is waiting, the page plays the tap.
+- **Open the Spotify app:** the Spotify app opens on what you tapped. Switch back to Safari (swipe along the bottom edge or tap "◀ Safari" at the top left). A line under the status says **Starting "…"** while the page looks for your phone for up to 20 seconds, then plays what you tapped. If Spotify doesn't show up in time, you get **Spotify didn't show up yet** with a **Try again** button.
+- **Run my Wake Spotify shortcut:** a tap runs your iPhone Shortcut named exactly **Wake Spotify**, which opens Spotify, waits, and comes back to the page at `https://richardtran324.github.io/spotify-library/?wake=1`; the page then plays the item without you switching back. The shortcut steps are in a separate guide. Safari may ask whether to open Shortcuts; tap **Open**.
 
-A tap is remembered for 3 minutes; after that the page forgets it. If the page hasn't checked for devices recently when you tap, it checks first and then shows a button to wake Spotify, because iPhone Safari may not open another app after the page has been waiting on Spotify.
+A tap is remembered for 3 minutes; after that the page forgets it. With the two options that open the app, if the page hasn't checked for devices recently when you tap, it checks first and then shows a button to wake Spotify, because iPhone Safari may not open another app after the page has been waiting on Spotify. (Waiting needs no button: nothing opens.) If you had picked the app or shortcut option in an earlier version, that choice stays.
 
-**Two ways to wake Spotify** (choose in **Diagnostics → Settings**):
-
-- **Open the item in Spotify** (default): the Spotify app opens on what you tapped. Switch back to Safari (swipe along the bottom edge or tap "◀ Safari" at the top left) and the page plays it.
-- **Use my Wake Spotify shortcut:** turn on **Use my Wake Spotify shortcut**. A tap then runs your iPhone Shortcut named exactly **Wake Spotify**, which opens Spotify, waits, and comes back to the page at `https://richardtran324.github.io/spotify-library/?wake=1`; the page then plays the item without you switching back. The shortcut steps are in a separate guide. The page only uses the shortcut when this setting is on. Safari may ask whether to open Shortcuts; tap **Open**.
-
-**Diagnostics** shows **Wake mode** (link or shortcut) and **Pending** (the remembered tap and how long ago, or none).
+**Diagnostics** shows **Wake mode** (wait, link or shortcut), **Pending** (the remembered tap, its mode and how long ago, or none) and the **Latest episodes** cache.
 
 ## Notes
 
