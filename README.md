@@ -41,5 +41,6 @@ Optional: Share → **Add to Home Screen**. A Home Screen icon keeps its own sto
 
 - Requires Spotify Premium (Spotify's rule for personal developer apps and for starting playback).
 - Sign-in lasts about 6 months; then the page shows **Sign in** again.
+- **Search Spotify** searches the whole catalog (songs, artists, albums, playlists; up to 10 of each, Spotify's limit for personal apps). Tap a result to play it the same way as library items.
 - **Refresh** reloads your library and checks for an open Spotify device. The page also checks each time you come back to it.
 - To update the page later, upload the new `index.html` to the same repo (it replaces the old one).

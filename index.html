@@ -120,6 +120,11 @@ a.item:active { opacity: 0.6; }
 .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sub { font-size: 0.85rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .empty { color: var(--muted); padding: 24px 2px; }
+.sect {
+  font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--muted); margin: 18px 2px 2px;
+}
+.cover.round { border-radius: 50%; }
 .card {
   background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
   padding: 16px; margin-top: 16px; display: flex; flex-direction: column; gap: 12px;
@@ -166,6 +171,7 @@ a.item:active { opacity: 0.6; }
       <button class="chip" type="button" data-filter="playlists" aria-pressed="true">Playlists</button>
       <button class="chip" type="button" data-filter="albums" aria-pressed="false">Albums</button>
       <button class="chip" type="button" data-filter="all" aria-pressed="false">All</button>
+      <button class="chip" type="button" data-filter="search" aria-pressed="false">Search Spotify</button>
     </div>
   </header>
 
@@ -196,7 +202,12 @@ a.item:active { opacity: 0.6; }
   };
   var REDIRECT = location.origin + location.pathname.replace(/index\.html$/, '');
 
-  var state = { data: null, filter: 'playlists', query: '', device: null, deviceAt: 0 };
+  var state = {
+    data: null, filter: 'playlists', query: '', device: null, deviceAt: 0,
+    search: { q: '', results: null, loading: false, error: '' }
+  };
+  var searchTimer = null;
+  var searchSeq = 0;
 
   // ---------- storage helpers ----------
   function get(k) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch (e) { return null; } }
@@ -373,6 +384,63 @@ a.item:active { opacity: 0.6; }
     });
   }
 
+  // ---------- catalog search ----------
+  function names(list) { return (list || []).map(function (x) { return x && x.name; }).filter(Boolean).join(', '); }
+  function runSearch(q) {
+    var seq = ++searchSeq;
+    state.search = { q: q, results: null, loading: true, error: '' };
+    renderList();
+    var params = new URLSearchParams({ q: q, type: 'track,artist,album,playlist', limit: '10' });
+    return api('/search?' + params.toString()).then(function (r) {
+      if (seq !== searchSeq) return; // a newer search started
+      if (!r.ok) throw new Error((r.json && r.json.error && r.json.error.message) || ('HTTP ' + r.status));
+      var j = r.json || {};
+      function list(key) { return ((j[key] && j[key].items) || []).filter(Boolean); }
+      state.search.results = {
+        tracks: list('tracks').map(function (t) {
+          return {
+            kind: 'track', id: t.id, name: t.name, uri: t.uri,
+            url: 'https://open.spotify.com/track/' + t.id,
+            img: img(t.album && t.album.images),
+            sub: 'Song · ' + names(t.artists) + (t.album && t.album.name ? ' · ' + t.album.name : '')
+          };
+        }),
+        artists: list('artists').map(function (a) {
+          return { kind: 'artist', id: a.id, name: a.name, uri: a.uri, url: 'https://open.spotify.com/artist/' + a.id, img: img(a.images), sub: 'Artist' };
+        }),
+        albums: list('albums').map(function (a) {
+          return { kind: 'album', id: a.id, name: a.name, uri: a.uri, url: 'https://open.spotify.com/album/' + a.id, img: img(a.images), sub: 'Album · ' + names(a.artists) };
+        }),
+        playlists: list('playlists').map(function (p) {
+          return {
+            kind: 'playlist', id: p.id, name: p.name || 'Untitled', uri: p.uri, url: 'https://open.spotify.com/playlist/' + p.id,
+            img: img(p.images), sub: 'Playlist' + (p.owner && p.owner.display_name ? ' · ' + p.owner.display_name : '')
+          };
+        })
+      };
+      state.search.loading = false;
+      renderList();
+    }).catch(function (e) {
+      if (seq !== searchSeq) return;
+      if (e.message === 'signed-out') return renderSignIn();
+      state.search.loading = false;
+      state.search.error = 'Search failed: ' + e.message;
+      renderList();
+    });
+  }
+  function scheduleSearch(q, now) {
+    clearTimeout(searchTimer);
+    q = q.trim();
+    if (q.length < 2) {
+      searchSeq++;
+      state.search = { q: q, results: null, loading: false, error: '' };
+      renderList();
+      return;
+    }
+    if (q === state.search.q && (state.search.results || state.search.loading)) return;
+    searchTimer = setTimeout(function () { runSearch(q); }, now ? 0 : 500);
+  }
+
   // ---------- devices + playback ----------
   function checkDevice() {
     return api('/me/player/devices').then(function (r) {
@@ -396,9 +464,10 @@ a.item:active { opacity: 0.6; }
   }
   function play(item) {
     var d = state.device;
-    var body = item.kind === 'liked'
-      ? (state.data && state.data.me ? { context_uri: 'spotify:user:' + state.data.me.id + ':collection' } : null)
-      : { context_uri: item.uri };
+    var body;
+    if (item.kind === 'liked') body = state.data && state.data.me ? { context_uri: 'spotify:user:' + state.data.me.id + ':collection' } : null;
+    else if (item.kind === 'track') body = { uris: [item.uri] };
+    else body = { context_uri: item.uri };
     if (!body) return Promise.reject(new Error('no-user'));
     return api('/me/player/play?device_id=' + encodeURIComponent(d.id), { method: 'PUT', body: body }).then(function (r) {
       if (r.ok) { toast('Playing “' + item.name + '” on ' + d.name); return; }
@@ -418,9 +487,10 @@ a.item:active { opacity: 0.6; }
 
   // ---------- rendering ----------
   function itemRow(item) {
+    var round = item.kind === 'artist' ? ' round' : '';
     var cover = item.kind === 'liked'
       ? el('div', { class: 'cover liked', 'aria-hidden': 'true', text: '♥' })
-      : (item.img ? el('img', { class: 'cover', src: item.img, alt: '', loading: 'lazy' }) : el('div', { class: 'cover', 'aria-hidden': 'true' }));
+      : (item.img ? el('img', { class: 'cover' + round, src: item.img, alt: '', loading: 'lazy' }) : el('div', { class: 'cover' + round, 'aria-hidden': 'true' }));
     var a = el('a', { class: 'item', href: item.url }, [
       cover,
       el('div', { class: 'meta' }, [el('div', { class: 'name', text: item.name }), el('div', { class: 'sub', text: item.sub })])
@@ -428,9 +498,29 @@ a.item:active { opacity: 0.6; }
     a.addEventListener('click', function (ev) { onItemClick(item, ev); });
     return el('li', null, [a]);
   }
+  function renderSearch(main) {
+    var s = state.search;
+    if (s.q.length < 2) { main.appendChild(el('p', { class: 'empty', text: 'Type a song, artist, album or playlist to search all of Spotify.' })); return; }
+    if (s.loading) { main.appendChild(el('p', { class: 'empty', text: 'Searching…' })); return; }
+    if (s.error) { main.appendChild(el('p', { class: 'err', text: s.error })); return; }
+    var r = s.results;
+    if (!r) return;
+    var groups = [['Songs', r.tracks], ['Artists', r.artists], ['Albums', r.albums], ['Playlists', r.playlists]];
+    var any = false;
+    groups.forEach(function (g) {
+      if (!g[1].length) return;
+      any = true;
+      main.appendChild(el('h2', { class: 'sect', text: g[0] }));
+      var ul = el('ul', { class: 'list' });
+      g[1].forEach(function (i) { ul.appendChild(itemRow(i)); });
+      main.appendChild(ul);
+    });
+    if (!any) main.appendChild(el('p', { class: 'empty', text: 'No results for “' + s.q + '”.' }));
+  }
   function renderList() {
     var main = $('main');
     main.textContent = '';
+    if (state.filter === 'search') return renderSearch(main);
     var d = state.data;
     if (!d) { main.appendChild(el('p', { class: 'empty', text: 'Loading your library…' })); return; }
     var q = state.query.trim().toLowerCase();
@@ -446,9 +536,21 @@ a.item:active { opacity: 0.6; }
     items.forEach(function (i) { ul.appendChild(itemRow(i)); });
     main.appendChild(ul);
   }
-  function setFilter(f) {
+  function setFilter(f, focus) {
+    var wasSearch = state.filter === 'search';
     state.filter = f; set(K.filter, f);
     document.querySelectorAll('.chip').forEach(function (c) { c.setAttribute('aria-pressed', String(c.dataset.filter === f)); });
+    var box = $('search');
+    if (f === 'search') {
+      box.placeholder = 'Search all of Spotify';
+      box.setAttribute('enterkeyhint', 'search');
+      if (!wasSearch) { box.value = state.search.q; }
+      if (focus) box.focus();
+    } else {
+      box.placeholder = 'Filter by name';
+      box.setAttribute('enterkeyhint', 'done');
+      if (wasSearch) { box.value = state.query; }
+    }
     renderList();
   }
 
@@ -510,8 +612,17 @@ a.item:active { opacity: 0.6; }
   }
 
   // ---------- wiring ----------
-  $('search').addEventListener('input', function (e) { state.query = e.target.value; renderList(); });
-  document.querySelectorAll('.chip').forEach(function (c) { c.addEventListener('click', function () { setFilter(c.dataset.filter); }); });
+  $('search').addEventListener('input', function (e) {
+    if (state.filter === 'search') scheduleSearch(e.target.value, false);
+    else { state.query = e.target.value; renderList(); }
+  });
+  $('search').addEventListener('keydown', function (e) {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    if (state.filter === 'search') scheduleSearch(e.target.value, true);
+    e.target.blur(); // hides the iPhone keyboard so results are visible
+  });
+  document.querySelectorAll('.chip').forEach(function (c) { c.addEventListener('click', function () { setFilter(c.dataset.filter, true); }); });
   $('refreshBtn').addEventListener('click', function () { checkDevice(); refresh(); toast('Refreshing…'); });
   document.addEventListener('visibilitychange', function () { if (!document.hidden && get(K.token)) checkDevice(); });
 
