@@ -253,6 +253,24 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
 }
 .toast .toastbtn:focus-visible { outline-color: var(--bg); }
 .err { color: var(--warn); font-size: 0.9rem; }
+/* Podcasts */
+.cover.eps {
+  display: grid; place-items: center;
+  background: linear-gradient(135deg, #0d5c46, #3fb27f); color: #fff;
+}
+.cover.eps svg { width: 46%; height: 46%; display: block; }
+/* Auto-wake status line (inside the sticky header) */
+.wake { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--fg); margin-top: 6px; }
+.wake .stext { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dot.pulse { background: var(--accent); animation: pulse 0.9s ease-in-out infinite alternate; }
+@keyframes pulse { from { opacity: 1; } to { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) { .dot.pulse { animation: none; } }
+/* Settings in the Diagnostics sheet */
+.sheet-sub { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin: 4px 0 0; }
+.setrow { display: flex; align-items: flex-start; gap: 12px; padding: 6px 0 4px; cursor: pointer; min-height: 44px; }
+.setrow input { width: 22px; height: 22px; margin: 1px 0 0; flex: none; accent-color: var(--accent); }
+.setname { display: block; font-weight: 600; }
+.setnote { display: block; font-size: 0.85rem; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -266,11 +284,13 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
       </span>
     </div>
     <div class="status" id="status"><span class="dot" id="dot"></span><span class="stext"><span id="statusText">Checking for Spotify on your devices…</span> <button class="linkbtn" id="devBtn" type="button" hidden></button></span></div>
+    <div class="wake" id="wake" role="status" hidden><span class="dot pulse"></span><span class="stext" id="wakeText"></span><button class="linkbtn" id="wakeCancel" type="button">Cancel</button></div>
     <input class="search" id="search" type="search" placeholder="Filter by name" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Filter by name">
     <div class="filters" role="group" aria-label="Show">
       <button class="chip" type="button" data-filter="playlists" aria-pressed="true">Playlists</button>
       <button class="chip" type="button" data-filter="albums" aria-pressed="false">Albums</button>
       <button class="chip" type="button" data-filter="artists" aria-pressed="false">Artists</button>
+      <button class="chip" type="button" data-filter="podcasts" aria-pressed="false">Podcasts</button>
       <button class="chip" type="button" data-filter="recent" aria-pressed="false">Recent</button>
       <button class="chip" type="button" data-filter="all" aria-pressed="false">All</button>
       <button class="chip" type="button" data-filter="search" aria-pressed="false">Search Spotify</button>
@@ -316,6 +336,9 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   <div class="sheet-back" id="diagBack"></div>
   <div class="sheet-panel">
     <h2 id="diagTitle">Diagnostics</h2>
+    <h3 class="sheet-sub">Settings</h3>
+    <label class="setrow"><input type="checkbox" id="wakeShortcut"><span><span class="setname">Use my Wake Spotify shortcut</span><span class="setnote">When Spotify isn’t open on any device, a tap runs your “Wake Spotify” shortcut instead of opening the item in the Spotify app.</span></span></label>
+    <h3 class="sheet-sub">Report</h3>
     <pre class="diagpre" id="diagOut">Checking…</pre>
     <div class="sheet-btns">
       <button class="btn secondary" id="diagCopy" type="button">Copy</button>
@@ -340,7 +363,8 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     'user-follow-read',
     'user-read-playback-state',
     'user-modify-playback-state',
-    'user-read-recently-played'
+    'user-read-recently-played',
+    'user-read-playback-position'
   ];
   var SCOPES = SCOPE_LIST.join(' ');
   var API = 'https://api.spotify.com/v1';
@@ -350,13 +374,20 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     token: 'lib-token',        // {access, refresh, expires, scope}
     verifier: 'lib-verifier',
     state: 'lib-state',
-    cache: 'lib-cache',        // {at, me, playlists, albums, artists, likedTotal}
+    cache: 'lib-cache',        // {at, me, playlists, albums, artists, likedTotal, shows, episodesTotal}
     filter: 'lib-filter',
-    device: 'lib-device'       // preferred device id, chosen in the device sheet
+    device: 'lib-device',      // preferred device id, chosen in the device sheet
+    wake: 'lib-wake',          // 'link' (default) or 'shortcut'; stored as a plain string
+    pending: 'lib-pending'     // {item, opts, at[, manual]}: a tap waiting for Spotify to wake up
   };
-  var FILTERS = ['playlists', 'albums', 'artists', 'recent', 'all', 'search'];
+  var FILTERS = ['playlists', 'albums', 'artists', 'podcasts', 'recent', 'all', 'search'];
   var POLL_MS = 10000;
   var FRESH_MS = 90 * 1000;
+  var NO_DEVICE_MS = 2 * 60 * 1000;   // how long an empty device list counts as "known: nothing open"
+  var WAKE_MAX_MS = 3 * 60 * 1000;    // a pending tap older than this is dropped
+  var WAKE_POLL_MS = 1500;
+  var WAKE_FOR_MS = 15000;
+  var SHORTCUT_URL = 'shortcuts://run-shortcut?name=' + encodeURIComponent('Wake Spotify');
   var NO_DEVICE = 'Spotify needs to be open on a device first: your phone, computer or speaker.';
   var REDIRECT = location.origin + location.pathname.replace(/index\.html$/, '');
 
@@ -369,7 +400,8 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     saved: {}, busy: {}, containsOff: false, checking: {}, checkQueue: [], checkTimer: null,
     detail: null, listScroll: 0, pushed: false,
     started: false, scopeProblem: false,
-    sheetLoading: false, sheetError: '', sheetReturn: null
+    sheetLoading: false, sheetError: '', sheetReturn: null,
+    wake: { running: false, timer: null, at: 0 }
   };
   var searchTimer = null;
   var searchSeq = 0;
@@ -406,7 +438,8 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     next: svg('<path fill="currentColor" d="M6 18l8.5-6L6 6zM16 6h2v12h-2z"/>'),
     play: svg('<path fill="currentColor" d="M8 5v14l11-7z"/>'),
     pause: svg('<path fill="currentColor" d="M6 5h4v14H6zM14 5h4v14h-4z"/>'),
-    shuffle: svg('<path fill="currentColor" d="M10.6 9.2L5.4 4 4 5.4l5.2 5.2 1.4-1.4zM14.5 4l2 2L4 18.6 5.4 20 18 7.5l2 2V4h-5.5zm.3 9.4l-1.4 1.4 3.1 3.1-2 2.1H20v-5.5l-2 2-3.2-3.1z"/>')
+    shuffle: svg('<path fill="currentColor" d="M10.6 9.2L5.4 4 4 5.4l5.2 5.2 1.4-1.4zM14.5 4l2 2L4 18.6 5.4 20 18 7.5l2 2V4h-5.5zm.3 9.4l-1.4 1.4 3.1 3.1-2 2.1H20v-5.5l-2 2-3.2-3.1z"/>'),
+    bookmark: svg('<path fill="currentColor" d="M6 3h12v18l-6-4.5L6 21z"/>')
   };
 
   var toastTimer = null;
@@ -622,6 +655,48 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   function likedItem(d) {
     return { kind: 'liked', name: 'Liked Songs', uri: null, url: 'https://open.spotify.com/collection/tracks', sub: 'Playlist · ' + d.likedTotal + ' songs' };
   }
+  function mapShow(s) {
+    if (!s || !s.id) return null;
+    var n = s.total_episodes;
+    return {
+      kind: 'show', id: s.id, name: s.name || 'Untitled', uri: s.uri, url: 'https://open.spotify.com/show/' + s.id, img: img(s.images),
+      sub: 'Podcast' + (n != null ? ' · ' + n + (n === 1 ? ' episode' : ' episodes') : (s.publisher ? ' · ' + s.publisher : ''))
+    };
+  }
+  function savedEpisodesItem(d) {
+    return { kind: 'episodes', name: 'Saved episodes', uri: null, url: 'https://open.spotify.com/collection/your-episodes', sub: 'Podcast · ' + d.episodesTotal + (d.episodesTotal === 1 ? ' episode' : ' episodes') };
+  }
+  function fmtDur(ms) {
+    var m = Math.max(1, Math.round(ms / 60000));
+    return m < 60 ? m + ' min' : Math.floor(m / 60) + ' hr' + (m % 60 ? ' ' + (m % 60) + ' min' : '');
+  }
+  function fmtDate(s) {
+    var p = /^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?$/.exec(s || '');
+    if (!p) return '';
+    if (!p[2]) return p[1];
+    var d = new Date(+p[1], +p[2] - 1, +(p[3] || 1));
+    var o = { month: 'short', year: 'numeric' };
+    if (p[3]) { o.day = 'numeric'; if (d.getFullYear() === new Date().getFullYear()) delete o.year; }
+    try { return d.toLocaleDateString(undefined, o); } catch (e) { return s; }
+  }
+  // Episode rows: "Episode · <show name or date> · <duration | X min left | Played>".
+  // showName: true uses the episode's show name (saved episodes); otherwise the release date.
+  function mapEpisode(e, showName) {
+    if (!e || !e.uri || !e.id) return null;
+    var rp = e.resume_point || null;
+    var played = !!(rp && rp.fully_played);
+    var pos = (!played && rp && rp.resume_position_ms > 0) ? rp.resume_position_ms : 0;
+    var dur = e.duration_ms || 0;
+    var when = played ? 'Played' : (pos && dur ? Math.max(1, Math.round((dur - pos) / 60000)) + ' min left' : (dur ? fmtDur(dur) : ''));
+    var by = showName ? ((e.show && e.show.name) || fmtDate(e.release_date)) : (fmtDate(e.release_date) || (e.show && e.show.name) || '');
+    return {
+      kind: 'episode', id: e.id, name: e.name || 'Untitled', uri: e.uri,
+      url: 'https://open.spotify.com/episode/' + e.id,
+      img: img(e.images && e.images.length ? e.images : (e.show && e.show.images)),
+      sub: ['Episode', by, when].filter(Boolean).join(' · '),
+      positionMs: pos, played: played
+    };
+  }
   function loadData() {
     var me = api('/me').then(function (r) { return r.ok && r.json ? { id: r.json.id, name: r.json.display_name } : null; });
     var playlists = pages('/me/playlists?limit=50', mapPlaylist);
@@ -632,8 +707,12 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
       return null;
     });
     var liked = api('/me/tracks?limit=1').then(function (r) { return r.ok && r.json ? r.json.total : null; });
-    return Promise.all([me, playlists, albums, liked, artists]).then(function (v) {
-      var data = { at: Date.now(), me: v[0], playlists: v[1], albums: v[2], likedTotal: v[3], artists: v[4] };
+    // Podcasts are optional too: a failure leaves the rest of the library intact.
+    function optional(e) { if (e.message === 'signed-out') throw e; return null; }
+    var shows = pages('/me/shows?limit=50', function (it) { return mapShow(it && it.show); }).catch(optional);
+    var episodes = api('/me/episodes?limit=1').then(function (r) { return r.ok && r.json && typeof r.json.total === 'number' ? r.json.total : null; }).catch(optional);
+    return Promise.all([me, playlists, albums, liked, artists, shows, episodes]).then(function (v) {
+      var data = { at: Date.now(), me: v[0], playlists: v[1], albums: v[2], likedTotal: v[3], artists: v[4], shows: v[5], episodesTotal: v[6] };
       set(K.cache, data);
       return data;
     });
@@ -644,6 +723,7 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     var me = d.me && d.me.id;
     function mark(uri) { if (uri && (force || state.saved[uri] === undefined)) state.saved[uri] = true; }
     (d.albums || []).forEach(function (a) { mark(a.uri); });
+    (d.shows || []).forEach(function (s) { mark(s.uri); });
     (d.playlists || []).forEach(function (p) { if (p.ownerId && p.ownerId !== me) mark(p.uri); });
   }
 
@@ -651,11 +731,13 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   function isOwn(p) { var me = state.data && state.data.me; return !!(me && p.ownerId && p.ownerId === me.id); }
   function canSave(item) {
     if (!item || !item.uri) return false;
-    if (item.kind === 'track' || item.kind === 'episode' || item.kind === 'album') return true;
+    if (item.kind === 'track' || item.kind === 'episode' || item.kind === 'album' || item.kind === 'show') return true;
     if (item.kind === 'playlist') return !isOwn(item);
     return false;
   }
-  function canOpen(item) { return item.kind === 'album' || item.kind === 'playlist' || item.kind === 'liked'; }
+  function canOpen(item) { return item.kind === 'album' || item.kind === 'playlist' || item.kind === 'liked' || isPod(item); }
+  // A podcast or the Saved episodes collection: opens an episode list instead of playing.
+  function isPod(item) { return item.kind === 'show' || item.kind === 'episodes'; }
   function requestSaved(uris) {
     if (state.containsOff) return;
     uris.forEach(function (u) {
@@ -726,7 +808,7 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     var seq = ++searchSeq;
     state.search = { q: q, results: null, loading: true, error: '' };
     renderList();
-    var params = new URLSearchParams({ q: q, type: 'track,artist,album,playlist', limit: '10' });
+    var params = new URLSearchParams({ q: q, type: 'track,artist,album,playlist,show,episode', limit: '10' });
     return api('/search?' + params.toString()).then(function (r) {
       if (seq !== searchSeq) return; // a newer search started
       if (!r.ok) throw new Error(errMsg(r));
@@ -736,7 +818,9 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
         tracks: list('tracks', function (t) { return mapTrack(t); }),
         artists: list('artists', function (a) { var m = mapArtist(a); if (m) m.sub = 'Artist'; return m; }),
         albums: list('albums', mapAlbum),
-        playlists: list('playlists', mapPlaylist)
+        playlists: list('playlists', mapPlaylist),
+        shows: list('shows', mapShow),
+        episodes: list('episodes', function (e) { return mapEpisode(e, false); })
       };
       state.search.loading = false;
       renderList();
@@ -860,7 +944,11 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   function playBody(item) {
     if (item.kind === 'liked') return likedCtx() ? { context_uri: likedCtx() } : null;
     if (item.ctx) return { context_uri: item.ctx, offset: { uri: item.uri } };
-    if (item.kind === 'track' || item.kind === 'episode') return { uris: [item.uri] };
+    if (item.kind === 'track' || item.kind === 'episode') {
+      var b = { uris: [item.uri] };
+      if (item.kind === 'episode' && item.positionMs > 0) b.position_ms = item.positionMs;   // resume where you left off
+      return b;
+    }
     return { context_uri: item.uri };
   }
   function play(item, opts) {
@@ -892,27 +980,134 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     });
   }
   function deviceFresh() { return state.device && (Date.now() - state.deviceAt < FRESH_MS); }
+  // A recent check found no device at all (not an error): safe to wake Spotify straight from the tap.
+  function noDeviceKnown() {
+    return state.deviceChecked && !state.device && !state.deviceError && (Date.now() - state.devicesAt < NO_DEVICE_MS);
+  }
+  function playNow(item, opts) {
+    return play(item, opts).catch(function (e) {
+      if (e.message === 'signed-out') return renderSignIn();
+      state.device = null; state.deviceAt = 0; state.devicesAt = 0; showStatus();   // next tap checks again
+      toast('Couldn’t play (' + e.message + ').', { href: item.url, text: 'Open in Spotify' });
+    });
+  }
   function onItemClick(item, ev, opts) {
-    // Never jump to the Spotify app by surprise: look for a device first,
-    // and only offer "Open in Spotify" if none is available.
+    // Device known and fresh: play here. Known that nothing is open: wake Spotify now, while
+    // still inside the tap (iPhone Safari may refuse to open an app after waiting on the network).
+    // Not sure: check first, as before, and if nothing is open offer a button that wakes Spotify.
     ev.preventDefault();
-    var ready = deviceFresh() ? Promise.resolve(state.device) : checkDevice().then(function () { return state.device; });
-    ready.then(function (d) {
-      if (!d) {
-        toast(state.deviceError ? 'Couldn’t check your devices (' + state.deviceError + ').' : 'Spotify isn’t open on any device.', { href: item.url, text: 'Open in Spotify' });
+    if (deviceFresh()) { playNow(item, opts); return; }
+    if (noDeviceKnown()) { wakeSpotify(item, opts); return; }
+    checkDevice().then(function () {
+      if (!state.started) return;
+      if (state.device) return playNow(item, opts);
+      if (state.deviceError) {
+        toast('Couldn’t check your devices (' + state.deviceError + ').', { href: item.url, text: 'Open in Spotify' });
         return;
       }
-      return play(item, opts).catch(function (e) {
-        if (e.message === 'signed-out') return renderSignIn();
-        state.device = null; state.deviceAt = 0; showStatus();
-        toast('Couldn’t play (' + e.message + ').', { href: item.url, text: 'Open in Spotify' });
+      // The network wait used up the tap, so the button gives a fresh one to wake Spotify from.
+      toast('Spotify isn’t open on any device.', null, {
+        text: wakeMode() === 'shortcut' ? 'Wake Spotify' : 'Open in Spotify',
+        fn: function () { wakeSpotify(item, opts); }
       });
     });
   }
 
+  // ---------- auto-wake: start Spotify, then play the tapped item when it shows up ----------
+  function wakeMode() {
+    var v = null;
+    try { v = localStorage.getItem(K.wake); } catch (e) {}
+    return (v === 'shortcut' || v === '"shortcut"') ? 'shortcut' : 'link';
+  }
+  function setWakeMode(m) { try { localStorage.setItem(K.wake, m === 'shortcut' ? 'shortcut' : 'link'); } catch (e) {} }
+  // Test hook: a harness can define window.libNavigate to catch the jump instead of leaving the page.
+  function navigate(url) {
+    if (typeof window.libNavigate === 'function') { window.libNavigate(url); return; }
+    location.href = url;
+  }
+  function savePending(item, opts) {
+    var p = {
+      item: { kind: item.kind, id: item.id, name: item.name, uri: item.uri, url: item.url, ctx: item.ctx, positionMs: item.positionMs },
+      opts: { shuffle: !!(opts && opts.shuffle) },
+      at: Date.now()
+    };
+    set(K.pending, p);
+    return p;
+  }
+  function readPending() {
+    var p = get(K.pending);
+    if (!p) return null;
+    if (!p.item || typeof p.at !== 'number' || Date.now() - p.at > WAKE_MAX_MS || p.at > Date.now() + 60000) { del(K.pending); return null; }
+    return p;
+  }
+  function wakeSpotify(item, opts) {
+    savePending(item, opts);
+    navigate(wakeMode() === 'shortcut' ? SHORTCUT_URL : item.url);
+    // Normally the page is hidden by now and resumes on return. If it's still showing
+    // (a confirmation prompt, or Spotify opened elsewhere), start watching for a device anyway.
+    setTimeout(function () { if (!document.hidden) resumePending(false); }, 2000);
+  }
+  function showWake(name) {
+    $('wake').hidden = !name;
+    $('wakeText').textContent = name ? 'Starting “' + name + '”…' : '';
+  }
+  function stopWake() {
+    var w = state.wake;
+    w.running = false;
+    clearTimeout(w.timer); w.timer = null;
+    showWake(null);
+  }
+  // Runs on load, on return to the page, and from "Try again". Never loops on its own:
+  // after one timeout the pending tap waits for a manual retry.
+  function resumePending(manual) {
+    var w = state.wake;
+    if (!state.started || w.running || document.hidden) return;
+    var p = readPending();
+    if (!p || (p.manual && !manual)) return;
+    if (manual) { p.at = Date.now(); set(K.pending, p); }
+    w.running = true; w.at = p.at;
+    var until = Date.now() + WAKE_FOR_MS;
+    showWake(p.item.name);
+    function mine() { var cur = readPending(); return !!cur && cur.at === p.at; }
+    function tick() {
+      w.timer = null;
+      if (!w.running || w.at !== p.at) return;
+      if (document.hidden) { stopWake(); return; }   // picks up again on return
+      if (!mine()) { stopWake(); return; }           // cancelled, or another tab played it
+      fetchDevices().then(function () { return state.device; }, function (e) {
+        if (e.message === 'signed-out') throw e;
+        return null;
+      }).then(function (d) {
+        if (!w.running || w.at !== p.at) return;
+        if (d) {
+          if (!mine()) { stopWake(); return; }
+          del(K.pending);   // claim it before playing, so nothing can play it twice
+          stopWake();
+          return playNow(p.item, p.opts);
+        }
+        if (Date.now() + WAKE_POLL_MS > until) {
+          stopWake();
+          if (manual) {
+            del(K.pending);
+            toast('Spotify still isn’t showing up. Start something in Spotify, then tap again.');
+          } else {
+            p.manual = true; set(K.pending, p);
+            toast('Spotify didn’t show up yet.', null, { text: 'Try again', fn: function () { resumePending(true); } });
+          }
+          return;
+        }
+        w.timer = setTimeout(tick, WAKE_POLL_MS);
+      }).catch(function (e) {
+        stopWake();
+        if (e && e.message === 'signed-out') renderSignIn();
+      });
+    }
+    tick();
+  }
+
   // ---------- diagnostics ----------
-  var VERSION = 'v2.1 (2026-11-21)';
-  function openDiag() { $('diag').hidden = false; $('diagClose').focus(); runDiag(); }
+  var VERSION = 'v2.2 (2026-11-22)';
+  function openDiag() { $('diag').hidden = false; $('wakeShortcut').checked = wakeMode() === 'shortcut'; $('diagClose').focus(); runDiag(); }
   function closeDiag() { $('diag').hidden = true; }
   function runDiag() {
     var out = [];
@@ -926,6 +1121,9 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     var miss = missingScopes();
     line('Permissions missing: ' + (miss.length ? miss.join(', ') : 'none'));
     line('Device picked: ' + (state.device ? state.device.name + ' (' + state.device.type + ')' : 'none') + (state.deviceError ? ' · error: ' + state.deviceError : ''));
+    line('Wake mode: ' + wakeMode());
+    var pend = readPending();
+    line('Pending: ' + (pend ? pend.item.name + ' (' + Math.round((Date.now() - pend.at) / 1000) + 's ago' + (pend.manual ? ', waiting for Try again' : '') + ')' : 'none'));
     line('');
     function probe(label, path, show) {
       return api(path).then(function (r) {
@@ -1141,13 +1339,14 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     var out = [];
     if (canSave(item)) out.push(heartBtn(item));
     if (item.kind === 'track' || item.kind === 'episode') out.push(iconBtn(ICON.plus, 'Add “' + item.name + '” to queue', function () { addToQueue(item); }));
-    if (canOpen(item)) out.push(iconBtn(ICON.open, 'Open songs in “' + item.name + '”', function () { openDetail(item); }));
+    if (canOpen(item)) out.push(iconBtn(ICON.open, (isPod(item) ? 'Open episodes in “' : 'Open songs in “') + item.name + '”', function () { openDetail(item); }));
     return out;
   }
   function coverFor(item, extra) {
     var round = item.kind === 'artist' ? ' round' : '';
     var cls = 'cover' + round + (extra ? ' ' + extra : '');
     if (item.kind === 'liked') return el('div', { class: 'cover liked' + (extra ? ' ' + extra : ''), 'aria-hidden': 'true', text: '♥' });
+    if (item.kind === 'episodes') { var c = el('div', { class: 'cover eps' + (extra ? ' ' + extra : ''), 'aria-hidden': 'true' }); c.innerHTML = ICON.bookmark; return c; }
     if (item.num != null) return el('div', { class: 'cover num', 'aria-hidden': 'true', text: String(item.num) });
     return item.img ? el('img', { class: cls, src: item.img, alt: '', loading: 'lazy' }) : el('div', { class: cls, 'aria-hidden': 'true' });
   }
@@ -1156,7 +1355,11 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
       coverFor(item),
       el('div', { class: 'meta' }, [el('div', { class: 'name', text: item.name }), el('div', { class: 'sub', text: item.sub })])
     ]);
-    a.addEventListener('click', function (ev) { onItemClick(item, ev); });
+    a.addEventListener('click', function (ev) {
+      // Spotify can't play a show as a whole, so podcast rows open their episode list.
+      if (isPod(item)) { ev.preventDefault(); openDetail(item); return; }
+      onItemClick(item, ev);
+    });
     var li = el('li', { class: 'row' }, [a]);
     var acts = actionButtons(item);
     if (acts.length) li.appendChild(el('div', { class: 'acts' }, acts));
@@ -1164,12 +1367,12 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   }
   function renderSearch(main) {
     var s = state.search;
-    if (s.q.length < 2) { main.appendChild(el('p', { class: 'empty', text: 'Type a song, artist, album or playlist to search all of Spotify.' })); return; }
+    if (s.q.length < 2) { main.appendChild(el('p', { class: 'empty', text: 'Type a song, artist, album, playlist or podcast to search all of Spotify.' })); return; }
     if (s.loading) { main.appendChild(el('p', { class: 'empty', text: 'Searching…' })); return; }
     if (s.error) { main.appendChild(el('p', { class: 'err', text: s.error })); return; }
     var r = s.results;
     if (!r) return;
-    var groups = [['Songs', r.tracks], ['Artists', r.artists], ['Albums', r.albums], ['Playlists', r.playlists]];
+    var groups = [['Songs', r.tracks], ['Artists', r.artists], ['Albums', r.albums], ['Playlists', r.playlists], ['Podcasts', r.shows || []], ['Episodes', r.episodes || []]];
     var any = false;
     var all = [];
     groups.forEach(function (g) {
@@ -1214,14 +1417,22 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     if (f === 'playlists' || f === 'all') items = items.concat(d.playlists || []);
     if (f === 'albums' || f === 'all') items = items.concat(d.albums || []);
     if (f === 'artists' || f === 'all') items = items.concat(d.artists || []);
+    if ((f === 'podcasts' || f === 'all') && d.episodesTotal != null) items.push(savedEpisodesItem(d));
+    if (f === 'podcasts' || f === 'all') items = items.concat(d.shows || []);
     if (f === 'artists' && !d.artists) {
       main.appendChild(el('p', { class: d.artists === null ? 'err' : 'empty', text: d.artists === null
         ? (missingScopes().length ? 'Followed artists need one more sign-in. Tap “Sign in again” above.' : 'Couldn’t load your followed artists. Tap Refresh to try again.')
         : 'Loading your artists…' }));
       return;
     }
+    if (f === 'podcasts' && !d.shows && d.episodesTotal == null) {
+      main.appendChild(el('p', { class: d.shows === null ? 'err' : 'empty', text: d.shows === null
+        ? 'Couldn’t load your podcasts. Tap Refresh to try again.'
+        : 'Loading your podcasts…' }));
+      return;
+    }
     items = matches(items);
-    if (!items.length) { main.appendChild(el('p', { class: 'empty', text: state.query.trim() ? 'Nothing matches “' + state.query + '”.' : (f === 'artists' ? 'You don’t follow any artists yet.' : 'Nothing here yet.') })); return; }
+    if (!items.length) { main.appendChild(el('p', { class: 'empty', text: state.query.trim() ? 'Nothing matches “' + state.query + '”.' : (f === 'artists' ? 'You don’t follow any artists yet.' : f === 'podcasts' ? 'You haven’t saved any podcasts yet.' : 'Nothing here yet.') })); return; }
     var ul = el('ul', { class: 'list' });
     items.forEach(function (i) { ul.appendChild(itemRow(i)); });
     main.appendChild(ul);
@@ -1253,10 +1464,18 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     if (item.kind === 'album') return '/albums/' + encodeURIComponent(item.id) + '/tracks?limit=50&offset=0';
     if (item.kind === 'liked') return '/me/tracks?limit=50&offset=0';
     if (item.kind === 'playlist' && canList(item)) return '/playlists/' + encodeURIComponent(item.id) + '/items?limit=50&offset=0';
+    if (item.kind === 'show') return '/shows/' + encodeURIComponent(item.id) + '/episodes?limit=50&offset=0';
+    if (item.kind === 'episodes') return '/me/episodes?limit=50&offset=0';
     return null;
   }
   function mapDetail(parent, it) {
     if (!it) return null;
+    if (parent.kind === 'show') return mapEpisode(it, false);
+    if (parent.kind === 'episodes') {
+      var ep = mapEpisode(it.episode, true);
+      if (ep && state.saved[ep.uri] === undefined) state.saved[ep.uri] = true;
+      return ep;
+    }
     if (parent.kind === 'album') return mapTrack(it, { num: it.track_number, noImg: true, sub: names(it.artists), ctx: parent.uri });
     if (it.is_local) return null;
     var t = it.item || it.track;
@@ -1299,10 +1518,20 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     back.appendChild(el('span', { text: 'Back' }));
     back.addEventListener('click', goBack);
     var playA = el('a', { class: 'btn', href: it.url, text: 'Play' });
-    playA.addEventListener('click', function (ev) { onItemClick(it, ev); });
-    var shufA = el('a', { class: 'btn secondary', href: it.url, text: 'Shuffle' });
-    shufA.addEventListener('click', function (ev) { onItemClick(it, ev, { shuffle: true }); });
-    var btns = [playA, shufA];
+    var btns = [playA];
+    if (isPod(it)) {
+      // No show context to play, so Play starts the newest episode you haven't finished.
+      playA.addEventListener('click', function (ev) {
+        var t = firstUnplayed(d.items);
+        if (!t) { ev.preventDefault(); toast(d.loading ? 'Episodes are still loading.' : 'No episodes to play.'); return; }
+        onItemClick(t, ev);
+      });
+    } else {
+      playA.addEventListener('click', function (ev) { onItemClick(it, ev); });
+      var shufA = el('a', { class: 'btn secondary', href: it.url, text: 'Shuffle' });
+      shufA.addEventListener('click', function (ev) { onItemClick(it, ev, { shuffle: true }); });
+      btns.push(shufA);
+    }
     if (canSave(it)) btns.push(heartBtn(it));
     main.appendChild(el('section', { class: 'dhead' }, [
       back,
@@ -1316,6 +1545,10 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     main.appendChild(el('div', { class: 'dfoot', id: 'dfoot' }));
     appendDetailRows(d.items);
     paintDetailFoot();
+  }
+  function firstUnplayed(items) {
+    for (var i = 0; i < items.length; i++) { if (!items[i].played) return items[i]; }
+    return items[0] || null;
   }
   function appendDetailRows(items) {
     var ul = $('dlist');
@@ -1339,13 +1572,14 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
       f.appendChild(retry);
       return;
     }
-    if (d.loading) { f.appendChild(el('p', { class: 'empty', text: 'Loading songs…' })); return; }
+    var noun = isPod(d.item) ? 'episodes' : 'songs';
+    if (d.loading) { f.appendChild(el('p', { class: 'empty', text: 'Loading ' + noun + '…' })); return; }
     if (d.next) {
       var more = el('button', { class: 'btn secondary', type: 'button', text: 'Load more' });
       more.addEventListener('click', function () { loadDetail(d.next); });
       f.appendChild(more);
     } else if (!d.items.length) {
-      f.appendChild(el('p', { class: 'empty', text: 'No songs here.' }));
+      f.appendChild(el('p', { class: 'empty', text: 'No ' + noun + ' here.' }));
     }
   }
   function loadDetail(url) {
@@ -1368,7 +1602,7 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
       if (state.detail !== d) return;
       d.loading = false;
       if (e.message === 'signed-out') return renderSignIn();
-      d.error = 'Couldn’t load songs (' + e.message + ').';
+      d.error = 'Couldn’t load ' + (isPod(d.item) ? 'episodes' : 'songs') + ' (' + e.message + ').';
       paintDetailFoot();
     });
   }
@@ -1377,6 +1611,7 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   function stopApp() {
     state.started = false;
     clearTimeout(state.pollTimer); state.pollTimer = null;
+    stopWake();
     state.player = null;
     state.detail = null; state.pushed = false;
     $('top').classList.remove('detail');
@@ -1451,6 +1686,7 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
     checkDevice();
     refresh();
     schedulePoll(0);
+    resumePending(false);
   }
 
   // ---------- wiring ----------
@@ -1477,6 +1713,11 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   $('diagBack').addEventListener('click', closeDiag);
   $('diagRun').addEventListener('click', runDiag);
   $('diagCopy').addEventListener('click', copyDiag);
+  $('wakeShortcut').addEventListener('change', function (e) {
+    setWakeMode(e.target.checked ? 'shortcut' : 'link');
+    toast(e.target.checked ? 'Taps will run your Wake Spotify shortcut when Spotify isn’t open' : 'Taps will open the item in Spotify when Spotify isn’t open');
+  });
+  $('wakeCancel').addEventListener('click', function () { del(K.pending); stopWake(); toast('Cancelled'); });
   $('pPrev').innerHTML = ICON.prev;
   $('pNext').innerHTML = ICON.next;
   $('pShuffle').innerHTML = ICON.shuffle;
@@ -1505,11 +1746,22 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   });
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) { clearTimeout(state.pollTimer); state.pollTimer = null; return; }
-    if (state.started && get(K.token)) { checkDevice(); schedulePoll(0); }
+    if (state.started && get(K.token)) { checkDevice(); schedulePoll(0); resumePending(false); }
+  });
+  // Coming back with the Back button can restore the page from memory without a visibility change.
+  window.addEventListener('pageshow', function (e) {
+    if (e.persisted && state.started && get(K.token)) { checkDevice(); schedulePoll(0); resumePending(false); }
   });
 
   if (location.hash === '#detail') { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} }
   var params = new URLSearchParams(location.search);
+  readPending();   // drops a pending tap older than 3 minutes
+  if (params.has('wake')) {
+    // The Wake Spotify shortcut opens ?wake=1; the pending tap itself is in storage.
+    params.delete('wake');
+    var qs = params.toString();
+    try { history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '')); } catch (e) {}
+  }
   if (params.has('code') || params.has('error')) {
     handleCallback(params).then(function (ok) { if (ok) startApp(); });
   } else if (!get(K.client)) {
