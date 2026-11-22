@@ -1,0 +1,531 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Library">
+<meta name="theme-color" content="#101418">
+<title>My Library</title>
+<style>
+/* Layout: one column for a phone. Sticky top bar (status + search + filters), then a list of covers you tap to play. */
+:root {
+  --bg: #f4f5f2;
+  --surface: #ffffff;
+  --fg: #15191c;
+  --muted: #5d6870;
+  --line: #d9ddd8;
+  --accent: #1f7a4d;
+  --accent-fg: #ffffff;
+  --warn: #9a5b00;
+  --chip: #e8ebe6;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101418;
+    --surface: #182027;
+    --fg: #e7ecef;
+    --muted: #96a3ad;
+    --line: #26313a;
+    --accent: #4cc38a;
+    --accent-fg: #08140e;
+    --warn: #e0a54a;
+    --chip: #202a32;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101418;
+  --surface: #182027;
+  --fg: #e7ecef;
+  --muted: #96a3ad;
+  --line: #26313a;
+  --accent: #4cc38a;
+  --accent-fg: #08140e;
+  --warn: #e0a54a;
+  --chip: #202a32;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1.4;
+  padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+}
+.wrap {
+  max-width: 640px;
+  margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+header.top {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--bg);
+  padding-top: calc(12px + env(safe-area-inset-top, 0px));
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.toprow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+h1 { font-size: 1.5rem; margin: 0; letter-spacing: -0.01em; }
+.status {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 0.85rem; color: var(--muted); margin-top: 6px;
+  min-height: 1.2em;
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.dot.on { background: var(--accent); }
+.dot.off { background: var(--warn); }
+.search {
+  width: 100%; margin-top: 10px;
+  font: inherit; font-size: 16px;
+  padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--fg);
+}
+.filters { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.chip {
+  font: inherit; font-size: 0.9rem; font-weight: 600;
+  padding: 6px 14px; border-radius: 999px; border: 0;
+  background: var(--chip); color: var(--fg); cursor: pointer; min-height: 36px;
+}
+.chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.iconbtn {
+  font: inherit; font-size: 0.85rem; background: none; border: 1px solid var(--line);
+  color: var(--muted); border-radius: 8px; padding: 6px 10px; cursor: pointer;
+}
+ul.list { list-style: none; margin: 8px 0 0; padding: 0; }
+ul.list li { border-bottom: 1px solid var(--line); }
+a.item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 2px; color: inherit; text-decoration: none; min-width: 0;
+}
+a.item:active { opacity: 0.6; }
+.cover {
+  width: 56px; height: 56px; border-radius: 6px; flex: none;
+  background: var(--chip); object-fit: cover;
+}
+.cover.liked {
+  display: grid; place-items: center;
+  background: linear-gradient(135deg, #4a3fbf, #8fb3e8); color: #fff; font-size: 26px;
+}
+.meta { min-width: 0; flex: 1; }
+.name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sub { font-size: 0.85rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.empty { color: var(--muted); padding: 24px 2px; }
+.card {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+  padding: 16px; margin-top: 16px; display: flex; flex-direction: column; gap: 12px;
+}
+.card h2 { font-size: 1.15rem; margin: 0; }
+.card p { margin: 0; }
+.card ol { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 6px; }
+.mono {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.85rem;
+  background: var(--chip); border-radius: 6px; padding: 8px 10px; overflow-wrap: anywhere;
+  user-select: all; -webkit-user-select: all;
+}
+.btn {
+  font: inherit; font-weight: 600; border: 0; border-radius: 10px;
+  padding: 12px 16px; min-height: 44px; cursor: pointer;
+  background: var(--accent); color: var(--accent-fg); text-align: center; text-decoration: none;
+}
+.btn.secondary { background: var(--chip); color: var(--fg); }
+.field {
+  width: 100%; font: inherit; font-size: 16px; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--fg);
+}
+.toast {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 10px;
+  font-size: 0.9rem; max-width: calc(100% - 32px); z-index: 10;
+  display: flex; gap: 12px; align-items: center;
+}
+.toast a { color: var(--bg); font-weight: 700; }
+.err { color: var(--warn); font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top" id="top" hidden>
+    <div class="toprow">
+      <h1>Library</h1>
+      <button class="iconbtn" id="refreshBtn" type="button">Refresh</button>
+    </div>
+    <div class="status" id="status"><span class="dot" id="dot"></span><span id="statusText">Checking for Spotify on your devices…</span></div>
+    <input class="search" id="search" type="search" placeholder="Filter by name" autocomplete="off" autocorrect="off" spellcheck="false">
+    <div class="filters" role="group" aria-label="Show">
+      <button class="chip" type="button" data-filter="playlists" aria-pressed="true">Playlists</button>
+      <button class="chip" type="button" data-filter="albums" aria-pressed="false">Albums</button>
+      <button class="chip" type="button" data-filter="all" aria-pressed="false">All</button>
+    </div>
+  </header>
+
+  <main id="main"></main>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+(function () {
+  'use strict';
+
+  var SCOPES = [
+    'playlist-read-private',
+    'playlist-read-collaborative',
+    'user-library-read',
+    'user-read-playback-state',
+    'user-modify-playback-state'
+  ].join(' ');
+  var API = 'https://api.spotify.com/v1';
+  var AUTH = 'https://accounts.spotify.com';
+  var K = {
+    client: 'lib-client-id',
+    token: 'lib-token',        // {access, refresh, expires}
+    verifier: 'lib-verifier',
+    state: 'lib-state',
+    cache: 'lib-cache',        // {at, me, playlists, albums, likedTotal}
+    filter: 'lib-filter'
+  };
+  var REDIRECT = location.origin + location.pathname.replace(/index\.html$/, '');
+
+  var state = { data: null, filter: 'playlists', query: '', device: null, deviceAt: 0 };
+
+  // ---------- storage helpers ----------
+  function get(k) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch (e) { return null; } }
+  function set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+  function del(k) { try { localStorage.removeItem(k); } catch (e) {} }
+
+  function $(id) { return document.getElementById(id); }
+  function el(tag, attrs, kids) {
+    var n = document.createElement(tag);
+    if (attrs) Object.keys(attrs).forEach(function (a) {
+      if (a === 'text') n.textContent = attrs[a];
+      else if (a === 'class') n.className = attrs[a];
+      else n.setAttribute(a, attrs[a]);
+    });
+    (kids || []).forEach(function (c) { if (c) n.appendChild(c); });
+    return n;
+  }
+
+  var toastTimer = null;
+  function toast(msg, link) {
+    var t = $('toast');
+    t.textContent = '';
+    t.appendChild(el('span', { text: msg }));
+    if (link) t.appendChild(el('a', { href: link.href, text: link.text }));
+    t.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.hidden = true; }, link ? 8000 : 3000);
+  }
+
+  // ---------- PKCE auth ----------
+  function randomString(len) {
+    var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    var bytes = crypto.getRandomValues(new Uint8Array(len));
+    var out = '';
+    for (var i = 0; i < len; i++) out += chars[bytes[i] % chars.length];
+    return out;
+  }
+  function b64url(buf) {
+    var s = String.fromCharCode.apply(null, new Uint8Array(buf));
+    return btoa(s).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+  }
+  function login() {
+    var client = get(K.client);
+    if (!client) return renderSetup();
+    var verifier = randomString(64);
+    var st = randomString(16);
+    set(K.verifier, verifier);
+    set(K.state, st);
+    crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)).then(function (hash) {
+      var p = new URLSearchParams({
+        response_type: 'code',
+        client_id: client,
+        scope: SCOPES,
+        code_challenge_method: 'S256',
+        code_challenge: b64url(hash),
+        redirect_uri: REDIRECT,
+        state: st
+      });
+      location.assign(AUTH + '/authorize?' + p.toString());
+    });
+  }
+  function saveToken(j) {
+    var old = get(K.token) || {};
+    set(K.token, {
+      access: j.access_token,
+      refresh: j.refresh_token || old.refresh,   // Spotify may or may not return a new one
+      expires: Date.now() + (j.expires_in - 60) * 1000
+    });
+  }
+  function tokenRequest(body) {
+    return fetch(AUTH + '/api/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(body)
+    }).then(function (r) {
+      return r.json().then(function (j) {
+        if (!r.ok) { var e = new Error(j.error_description || j.error || ('HTTP ' + r.status)); e.code = j.error; throw e; }
+        return j;
+      });
+    });
+  }
+  function handleCallback(params) {
+    var code = params.get('code');
+    var err = params.get('error');
+    history.replaceState(null, '', REDIRECT);
+    if (err) { renderSignIn('Spotify sign-in was cancelled or failed (' + err + ').'); return Promise.resolve(false); }
+    if (params.get('state') !== get(K.state)) { renderSignIn('Sign-in check failed. Please try again.'); return Promise.resolve(false); }
+    return tokenRequest({
+      grant_type: 'authorization_code',
+      code: code,
+      redirect_uri: REDIRECT,
+      client_id: get(K.client),
+      code_verifier: get(K.verifier)
+    }).then(function (j) {
+      saveToken(j); del(K.verifier); del(K.state); return true;
+    }).catch(function (e) {
+      renderSignIn('Could not finish sign-in: ' + e.message); return false;
+    });
+  }
+  function accessToken() {
+    var t = get(K.token);
+    if (!t) return Promise.reject(new Error('signed-out'));
+    if (t.access && Date.now() < t.expires) return Promise.resolve(t.access);
+    if (!t.refresh) return Promise.reject(new Error('signed-out'));
+    return tokenRequest({ grant_type: 'refresh_token', refresh_token: t.refresh, client_id: get(K.client) })
+      .then(function (j) { saveToken(j); return j.access_token; })
+      .catch(function (e) {
+        if (e.code === 'invalid_grant') { del(K.token); throw new Error('signed-out'); }
+        throw e;
+      });
+  }
+  function api(path, opts) {
+    opts = opts || {};
+    return accessToken().then(function (tok) {
+      return fetch(path.indexOf('http') === 0 ? path : API + path, {
+        method: opts.method || 'GET',
+        headers: Object.assign({ Authorization: 'Bearer ' + tok }, opts.body ? { 'Content-Type': 'application/json' } : {}),
+        body: opts.body ? JSON.stringify(opts.body) : undefined
+      });
+    }).then(function (r) {
+      if (r.status === 401) { var t = get(K.token); if (t) { t.expires = 0; set(K.token, t); } }
+      if (r.status === 204) return { ok: true, status: 204, json: null };
+      return r.text().then(function (txt) {
+        var j = null; try { j = txt ? JSON.parse(txt) : null; } catch (e) {}
+        return { ok: r.ok, status: r.status, json: j };
+      });
+    });
+  }
+  function pages(path, pick) {
+    var out = [];
+    function next(url) {
+      return api(url).then(function (r) {
+        if (!r.ok) throw new Error((r.json && r.json.error && r.json.error.message) || ('HTTP ' + r.status));
+        (r.json.items || []).forEach(function (it) { var v = pick(it); if (v) out.push(v); });
+        return r.json.next ? next(r.json.next) : out;
+      });
+    }
+    return next(path);
+  }
+
+  // ---------- data ----------
+  function img(images) {
+    if (!images || !images.length) return '';
+    var best = images[images.length - 1];
+    for (var i = 0; i < images.length; i++) { if ((images[i].width || 300) <= 300) { best = images[i]; break; } }
+    return best.url || '';
+  }
+  function loadData() {
+    var me = api('/me').then(function (r) { return r.ok ? { id: r.json.id, name: r.json.display_name } : null; });
+    var playlists = pages('/me/playlists?limit=50', function (p) {
+      if (!p) return null;
+      var count = (p.items && p.items.total) || (p.tracks && p.tracks.total) || 0;
+      return {
+        kind: 'playlist', id: p.id, name: p.name || 'Untitled', uri: p.uri,
+        url: 'https://open.spotify.com/playlist/' + p.id,
+        img: img(p.images),
+        sub: 'Playlist' + (p.owner && p.owner.display_name ? ' · ' + p.owner.display_name : '') + (count ? ' · ' + count + ' songs' : '')
+      };
+    });
+    var albums = pages('/me/albums?limit=50', function (it) {
+      var a = it && it.album; if (!a) return null;
+      return {
+        kind: 'album', id: a.id, name: a.name, uri: a.uri,
+        url: 'https://open.spotify.com/album/' + a.id,
+        img: img(a.images),
+        sub: 'Album · ' + (a.artists || []).map(function (x) { return x.name; }).join(', ')
+      };
+    });
+    var liked = api('/me/tracks?limit=1').then(function (r) { return r.ok ? r.json.total : null; });
+    return Promise.all([me, playlists, albums, liked]).then(function (v) {
+      var data = { at: Date.now(), me: v[0], playlists: v[1], albums: v[2], likedTotal: v[3] };
+      set(K.cache, data);
+      return data;
+    });
+  }
+
+  // ---------- devices + playback ----------
+  function checkDevice() {
+    return api('/me/player/devices').then(function (r) {
+      var list = (r.ok && r.json && r.json.devices) || [];
+      var pick = list.filter(function (d) { return d.is_active; })[0] ||
+                 list.filter(function (d) { return d.type === 'Smartphone'; })[0] || null;
+      state.device = pick; state.deviceAt = Date.now();
+      showStatus();
+      return pick;
+    }).catch(function (e) {
+      if (e.message === 'signed-out') return renderSignIn();
+      state.device = null; showStatus();
+    });
+  }
+  function showStatus() {
+    var d = state.device;
+    $('dot').className = 'dot ' + (d ? 'on' : 'off');
+    $('statusText').textContent = d
+      ? 'Ready: taps play on ' + d.name
+      : 'Spotify isn’t open on any device. Taps open the Spotify app.';
+  }
+  function play(item) {
+    var d = state.device;
+    var body = item.kind === 'liked'
+      ? (state.data && state.data.me ? { context_uri: 'spotify:user:' + state.data.me.id + ':collection' } : null)
+      : { context_uri: item.uri };
+    if (!body) return Promise.reject(new Error('no-user'));
+    return api('/me/player/play?device_id=' + encodeURIComponent(d.id), { method: 'PUT', body: body }).then(function (r) {
+      if (r.ok) { toast('Playing “' + item.name + '” on ' + d.name); return; }
+      var msg = (r.json && r.json.error && r.json.error.message) || ('HTTP ' + r.status);
+      throw new Error(msg);
+    });
+  }
+  function onItemClick(item, ev) {
+    var fresh = state.device && (Date.now() - state.deviceAt < 90 * 1000);
+    if (!fresh) return; // let the link open the Spotify app
+    ev.preventDefault();
+    play(item).catch(function (e) {
+      state.device = null; showStatus();
+      toast('Couldn’t play (' + e.message + ').', { href: item.url, text: 'Open in Spotify' });
+    });
+  }
+
+  // ---------- rendering ----------
+  function itemRow(item) {
+    var cover = item.kind === 'liked'
+      ? el('div', { class: 'cover liked', 'aria-hidden': 'true', text: '♥' })
+      : (item.img ? el('img', { class: 'cover', src: item.img, alt: '', loading: 'lazy' }) : el('div', { class: 'cover', 'aria-hidden': 'true' }));
+    var a = el('a', { class: 'item', href: item.url }, [
+      cover,
+      el('div', { class: 'meta' }, [el('div', { class: 'name', text: item.name }), el('div', { class: 'sub', text: item.sub })])
+    ]);
+    a.addEventListener('click', function (ev) { onItemClick(item, ev); });
+    return el('li', null, [a]);
+  }
+  function renderList() {
+    var main = $('main');
+    main.textContent = '';
+    var d = state.data;
+    if (!d) { main.appendChild(el('p', { class: 'empty', text: 'Loading your library…' })); return; }
+    var q = state.query.trim().toLowerCase();
+    var items = [];
+    if (state.filter !== 'albums' && d.likedTotal != null) {
+      items.push({ kind: 'liked', name: 'Liked Songs', uri: null, url: 'https://open.spotify.com/collection/tracks', sub: 'Playlist · ' + d.likedTotal + ' songs' });
+    }
+    if (state.filter !== 'albums') items = items.concat(d.playlists || []);
+    if (state.filter !== 'playlists') items = items.concat(d.albums || []);
+    if (q) items = items.filter(function (i) { return (i.name + ' ' + i.sub).toLowerCase().indexOf(q) !== -1; });
+    if (!items.length) { main.appendChild(el('p', { class: 'empty', text: q ? 'Nothing matches “' + state.query + '”.' : 'Nothing here yet.' })); return; }
+    var ul = el('ul', { class: 'list' });
+    items.forEach(function (i) { ul.appendChild(itemRow(i)); });
+    main.appendChild(ul);
+  }
+  function setFilter(f) {
+    state.filter = f; set(K.filter, f);
+    document.querySelectorAll('.chip').forEach(function (c) { c.setAttribute('aria-pressed', String(c.dataset.filter === f)); });
+    renderList();
+  }
+
+  function renderSetup(errMsg) {
+    $('top').hidden = true;
+    var main = $('main'); main.textContent = '';
+    var input = el('input', { class: 'field', id: 'clientId', type: 'text', placeholder: 'Paste your Client ID', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false' });
+    var save = el('button', { class: 'btn', type: 'button', text: 'Save and sign in with Spotify' });
+    var copy = el('button', { class: 'btn secondary', type: 'button', text: 'Copy this address' });
+    var addr = el('div', { class: 'mono', id: 'redirect', text: REDIRECT });
+    copy.addEventListener('click', function () {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(REDIRECT).then(function () { toast('Copied'); }, function () { toast('Select the address and copy it'); });
+      } else { toast('Select the address and copy it'); }
+    });
+    save.addEventListener('click', function () {
+      var v = input.value.trim();
+      if (!/^[0-9a-f]{32}$/i.test(v)) { err.textContent = 'That doesn’t look like a Client ID. It’s 32 letters and numbers, from your app’s Settings page.'; return; }
+      set(K.client, v); login();
+    });
+    var err = el('p', { class: 'err', text: errMsg || '' });
+    main.appendChild(el('section', { class: 'card' }, [
+      el('h2', { text: 'One-time setup' }),
+      el('p', { text: 'In your Spotify developer app, set the Redirect URI to this exact address:' }),
+      addr, copy,
+      el('p', { text: 'Then paste the app’s Client ID here. It isn’t a password; it only identifies your app.' }),
+      input, save, err
+    ]));
+  }
+  function renderSignIn(msg) {
+    $('top').hidden = true;
+    var main = $('main'); main.textContent = '';
+    var go = el('button', { class: 'btn', type: 'button', text: 'Sign in with Spotify' });
+    go.addEventListener('click', login);
+    var reset = el('button', { class: 'btn secondary', type: 'button', text: 'Change Client ID' });
+    reset.addEventListener('click', function () { del(K.client); del(K.token); renderSetup(); });
+    main.appendChild(el('section', { class: 'card' }, [
+      el('h2', { text: 'Sign in' }),
+      el('p', { text: 'Sign in once on this phone. You’ll stay signed in until Spotify asks again (about every 6 months).' }),
+      msg ? el('p', { class: 'err', text: msg }) : null,
+      go, reset
+    ]));
+  }
+
+  function refresh() {
+    return loadData().then(function (d) { state.data = d; renderList(); }).catch(function (e) {
+      if (e.message === 'signed-out') return renderSignIn();
+      if (!state.data) { $('main').textContent = ''; $('main').appendChild(el('p', { class: 'err', text: 'Couldn’t load your library: ' + e.message })); }
+      else toast('Couldn’t refresh: ' + e.message);
+    });
+  }
+  function startApp() {
+    $('top').hidden = false;
+    state.filter = get(K.filter) || 'playlists';
+    state.data = get(K.cache);
+    setFilter(state.filter);
+    checkDevice();
+    refresh();
+  }
+
+  // ---------- wiring ----------
+  $('search').addEventListener('input', function (e) { state.query = e.target.value; renderList(); });
+  document.querySelectorAll('.chip').forEach(function (c) { c.addEventListener('click', function () { setFilter(c.dataset.filter); }); });
+  $('refreshBtn').addEventListener('click', function () { checkDevice(); refresh(); toast('Refreshing…'); });
+  document.addEventListener('visibilitychange', function () { if (!document.hidden && get(K.token)) checkDevice(); });
+
+  var params = new URLSearchParams(location.search);
+  if (params.has('code') || params.has('error')) {
+    handleCallback(params).then(function (ok) { if (ok) startApp(); });
+  } else if (!get(K.client)) {
+    renderSetup();
+  } else if (!get(K.token)) {
+    renderSignIn();
+  } else {
+    startApp();
+  }
+})();
+</script>
+</body>
+</html>
