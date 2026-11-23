@@ -420,6 +420,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
 .cardplay:active { opacity: 0.7; }
 .acover { flex: none; display: flex; }   /* artist view: holds the picture, which arrives a moment later */
 .cover.round.dcover { border-radius: 50%; }
+/* v2.13: Spotify answered 429 (too many requests); a slim line at the bottom of the header while the page waits */
+.coolbar {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; margin-top: 8px; padding: 6px 10px;
+  border-radius: 8px; background: var(--chip); color: var(--fg); font-size: 0.82rem; line-height: 1.3;
+}
+.coolbar .cleft { color: var(--warn); font-weight: 700; font-variant-numeric: tabular-nums; margin-left: auto; }
 </style>
 </head>
 <body>
@@ -454,6 +460,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       <button class="schip" type="button" data-stype="show" aria-pressed="false">Podcasts</button>
       <button class="schip" type="button" data-stype="episode" aria-pressed="false">Episodes</button>
     </div>
+    <div class="coolbar" id="cool" hidden><span id="coolText" role="status"></span><span class="cleft" id="coolLeft" aria-hidden="true"></span></div>
   </header>
   <div class="banner" id="banner" role="status" hidden>
     <span>New features need one more sign-in</span>
@@ -492,7 +499,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     </div>
     <img class="npf-cover" id="npCover" alt="">
     <div class="npf-row">
-      <div class="meta"><div class="npf-title" id="npName"></div><div class="sub" id="npBy"></div><div class="idleline" id="npIdle" role="status" hidden></div></div>
+      <div class="meta"><div class="npf-title" id="npName"></div><div class="sub" id="npBy"></div><div class="idleline" id="npIdle" role="status" hidden></div><div class="idleline" id="npCool" hidden></div></div>
       <button class="act heart" id="npHeart" type="button" data-uri="" data-name="" data-kind="track" aria-pressed="false" aria-label="Like this song"></button>
     </div>
     <div class="slider" id="npSeek" role="slider" tabindex="0" aria-label="Position" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"><div class="strack"><div class="sfill"></div><div class="sthumb"></div></div></div>
@@ -622,19 +629,38 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     theme: 'lib-theme',          // 'light' | 'dark'; unset = match the phone
     searchFirst: 'lib-search-first', // the group shown first in Search Spotify → All
     lastplay: 'lib-lastplay',    // v2.10: {item, context, positionMs, deviceId, at[, shuffle, repeat]}: the last song or episode seen playing
-    epHistory: 'lib-ep-history'  // v2.11: [{uri, id, name, show:{id, name, images}, duration_ms, positionMs, played, at[, checkedAt]}], newest first
+    epHistory: 'lib-ep-history', // v2.11: [{uri, id, name, show:{id, name, images}, duration_ms, positionMs, played, at[, checkedAt]}], newest first
+    // v2.13 rate limits. Shared by every copy of the page that shares this storage (Safari tabs on one origin).
+    cool: 'lib-cooloff',         // {until, reason, retryAfter, quotaMs, quotaAt, last429:{at, reason, retryAfter, what}}
+    poller: 'lib-poller',        // {id, at, every}: the one visible copy that runs the player check
+    playerCache: 'lib-player-cache', // {at, by, json}: the last /me/player answer, for the other copies
+    meter: 'lib-reqmeter'        // {minute index: requests}, last 60 minutes, all copies
   };
+  // v2.13 rate limits. Spotify counts an app's requests in a rolling 30-second window (and Development Mode apps
+  // have a separate, unpublished quota); either one answers 429. The page then sends nothing at all until the
+  // cool-off ends, in every copy that shares this storage.
+  var COOL_DEFAULT_MS = 30 * 1000;          // 429 without a readable Retry-After
+  var COOL_QUOTA_MS = 10 * 60 * 1000;       // QUOTA_EXCEEDED: at least this long…
+  var COOL_QUOTA_MAX_MS = 2 * 60 * 60 * 1000; // …doubling on each repeat within an hour, up to this
+  var COOL_QUOTA_REPEAT_MS = 60 * 60 * 1000;
+  var COOL_CAP_MS = 24 * 60 * 60 * 1000;    // sanity cap on a Retry-After value
+  var COOL_TEXT = 'Spotify asked this page to slow down.';
+  var IDLE_AFTER_MS = 10 * 60 * 1000;       // nothing played this long: the player check slows to IDLE_POLL_MS
+  var IDLE_POLL_MS = 60 * 1000;
+  var DEV_COALESCE_MS = 15 * 1000;          // device checks on return to the page: at most one per 15 s
+  var LATEST_MANUAL_MS = 5 * 60 * 1000;     // Latest episodes Refresh: at most once per 5 minutes
+  var MY_ID = Math.random().toString(36).slice(2, 10);   // this copy of the page, for the one-poller lock
   // v2.11 podcast listening history: Spotify's recently played leaves out podcast episodes, so the page keeps its own.
   var EP_HIST_MAX = 60;                      // entries kept
   var EP_HIST_MS = 60 * 24 * 60 * 60 * 1000; // entries older than 60 days are dropped
   var EP_HIST_WRITE_MS = 15000;              // storage writes for one episode at most this often (memory is always current)
   var EP_PLAYED_TAIL_MS = 60000;             // within the last minute counts as played
-  var RESUME_MS = 2 * 60 * 1000;             // fresh resume points (GET /episodes/{id}) at most this often
-  var RESUME_MAX = 8;                        // episodes asked per refresh
-  var RESUME_PARALLEL = 4;                   // requests in flight at once
+  var RESUME_MS = 10 * 60 * 1000;            // fresh resume points (GET /episodes/{id}) at most this often (v2.13: was 2 min)
+  var RESUME_MAX = 5;                        // episodes asked per refresh (v2.13: was 8)
+  var RESUME_PARALLEL = 2;                   // requests in flight at once (v2.13: was 4)
   var RESUME_LOCAL_MS = 2 * 60 * 1000;       // the page heard an episode this recently: its own position beats Spotify's
   var LASTPLAY_MS = 6 * 60 * 60 * 1000;   // the last playback stays on screen (as paused) this long after Spotify goes idle
-  var HOME_RECENT_MS = 10 * 60 * 1000;    // Home: recently played is asked for at most this often
+  var HOME_RECENT_MS = 15 * 60 * 1000;    // Home: recently played is asked for at most this often (v2.13: was 10 min)
   var HOME_JUMP = 8, HOME_LATEST = 5, HOME_PLAYLISTS = 6;
   var IDLE_TEXT = 'Spotify is asleep. Press play to wake it.';
   var WAKE_FIRST = 'Press play first to wake Spotify.';
@@ -642,7 +668,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   var RECENT_SEARCHES_MAX = 8;
   var QUEUED_MAX = 100;
   var QUEUED_MS = 24 * 60 * 60 * 1000;
-  var NP_POLL_MS = 5000;          // Now Playing check while the full screen is open and on screen
+  var NP_POLL_MS = 10000;         // Now Playing check while the full screen is open and on screen (v2.13: was 5 s)
   var FILTERS = ['home', 'playlists', 'albums', 'artists', 'podcasts', 'recent', 'all', 'search'];
   // Search Spotify result types. key: the page object in the /search answer; map: row mapper.
   var SEARCH_TYPES = ['all', 'track', 'artist', 'album', 'playlist', 'show', 'episode'];
@@ -657,20 +683,18 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   var SEARCH_LIMIT = 10;          // Spotify's current maximum per type
   var SEARCH_MAX_OFFSET = 1000;   // Spotify's highest allowed offset
   var SEARCH_GROUP_ROWS = 5;      // rows per group in the All view
-  var POLL_MS = 10000;
+  var POLL_MS = 20000;            // v2.13: was 10 s
   var FRESH_MS = 90 * 1000;
   var NO_DEVICE_MS = 2 * 60 * 1000;   // how long an empty device list counts as "known: nothing open"
   var WAKE_MAX_MS = 3 * 60 * 1000;    // a pending tap older than this is dropped
-  var WAKE_POLL_MS = 1000;        // after the fast phase
-  var WAKE_FAST_MS = 400;         // check this often right after you come back
-  var WAKE_FAST_FOR_MS = 6000;    // length of the fast phase
-  var WAKE_FOR_MS = 20000;
-  var WAIT_POLL_MS = 1000;        // 'wait' mode: check for Spotify this often…
-  var WAIT_FOR_MS = 60000;        // …for this long per window
-  var LATEST_MS = 30 * 60 * 1000; // Latest episodes: refetch at most this often on its own
+  var WAKE_POLL_MS = 1500;        // 'link'/'shortcut' wake: check this often… (v2.13: was 0.4 s, then 1 s)
+  var WAKE_FOR_MS = 20000;        // …for this long
+  var WAIT_POLL_MS = 3000;        // 'wait' mode: check for Spotify this often… (v2.13: was 1 s)
+  var WAIT_FOR_MS = 60000;        // …for this long per window (at most 20 checks)
+  var LATEST_MS = 2 * 60 * 60 * 1000; // Latest episodes: refetch at most this often on its own (v2.13: was 30 min)
   var LATEST_PER_SHOW = 5;
   var LATEST_KEEP = 50;
-  var LATEST_PARALLEL = 4;        // show requests in flight at once
+  var LATEST_PARALLEL = 2;        // show requests in flight at once (v2.13: was 4)
   var SHORTCUT_URL = 'shortcuts://run-shortcut?name=' + encodeURIComponent('Wake Spotify');
   var NO_DEVICE = 'Spotify needs to be open on a device first: your phone, computer or speaker.';
   var REDIRECT = location.origin + location.pathname.replace(/index\.html$/, '');
@@ -690,7 +714,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     sheetLoading: false, sheetError: '', sheetReturn: null,
     wake: { running: false, timer: null, gen: 0 },
     podTab: 'latest',
-    latest: { cache: null, loading: false, error: '', triedAt: 0, seq: 0 }
+    latest: { cache: null, loading: false, error: '', triedAt: 0, seq: 0 },
+    // v2.13: request budget
+    lastActiveAt: 0,   // last time something was seen playing (or a control was used): the player check slows after 10 min
+    lastPollAt: 0,     // last /me/player request from this copy
+    pollForce: false,  // the next check follows your own command, so it runs even if another copy is the poller
+    bgHoldUntil: 0     // background extras (recently played, resume points, Latest) wait until then, so they don't burst
   };
   var searchTimer = null;
   var searchCache = {};   // 'type\nquery' -> entry (see runSearch); this session only
@@ -764,6 +793,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function onFail(prefix) {
     return function (e) {
       if (e && e.message === 'signed-out') return renderSignIn();
+      if (isCool(e)) return coolToast();   // v2.13: nothing was sent; say when to try again
       toast(prefix + ' (' + (e && e.message ? e.message : 'unknown error') + ').');
     };
   }
@@ -863,9 +893,164 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       });
     return refreshing;
   }
+  // ---------- rate limits (v2.13) ----------
+  // Any 429 starts a cool-off: until = now + Retry-After (30 s when the header is missing or unreadable;
+  // a cross-origin answer exposes it only if Spotify lists it in Access-Control-Expose-Headers). A quota 429
+  // (reason QUOTA_EXCEEDED) waits at least 10 minutes, doubling when it comes back within an hour of the
+  // previous quota cool-off ending, up to 2 hours. The record lives in localStorage, so every copy of the page
+  // that shares this storage respects it, and api() reads it before every request. While it runs nothing is
+  // sent: background checks are skipped silently (they reject with a `cool` error that every handler ignores),
+  // and taps show one toast saying when to try again.
+  var coolMem = null;   // the record, when storage is blocked
+  function readCool() { var c = get(K.cool) || coolMem; return (c && typeof c === 'object') ? c : null; }
+  function coolUntil() {
+    var c = readCool(), now = Date.now();
+    if (!c || typeof c.until !== 'number' || c.until <= now) return 0;
+    if (c.until > now + COOL_CAP_MS + 60000) return 0;   // unreadable, or the clock jumped: ignore it
+    return c.until;
+  }
+  function coolLeft() { var u = coolUntil(); return u ? u - Date.now() : 0; }
+  function isCool(e) { return !!(e && e.cool); }
+  function coolErr() { var e = new Error('cooling off'); e.cool = true; return e; }
+  // "3:45 PM": rounded up to the minute, so "after" is never early.
+  function clock(ms) {
+    var d = new Date(Math.ceil(ms / 60000) * 60000), h = d.getHours(), m = d.getMinutes();
+    return (h % 12 || 12) + ':' + (m < 10 ? '0' : '') + m + ' ' + (h < 12 ? 'AM' : 'PM');
+  }
+  function clockSec(ms) {
+    var d = new Date(ms), h = d.getHours(), m = d.getMinutes(), s = d.getSeconds();
+    return (h % 12 || 12) + ':' + (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s + ' ' + (h < 12 ? 'AM' : 'PM');
+  }
+  function coolText() { var u = coolUntil(); return COOL_TEXT + (u ? ' Try again after ' + clock(u) + '.' : ''); }
+  var coolToastAt = 0;
+  // One toast per tap: a tap that would have sent several requests (shuffle + play) still shows it once.
+  function coolToast() {
+    if (Date.now() - coolToastAt < 2500 && !$('toast').hidden) return;
+    coolToastAt = Date.now();
+    toast(coolText());
+  }
+  // For taps: true (and the toast) while cooling off, so the caller sends nothing.
+  function coolBlocked() { if (!coolLeft()) return false; coolToast(); return true; }
+  function noteRateLimit(r, j, what) {
+    var now = Date.now(), raw = null;
+    try { raw = r.headers && r.headers.get ? r.headers.get('Retry-After') : null; } catch (e) { raw = null; }
+    var secs = NaN;
+    if (raw != null && /^\s*\d+(\.\d+)?\s*$/.test(raw)) secs = parseFloat(raw);
+    else if (raw) { var t = Date.parse(raw); if (t) secs = Math.max(0, (t - now) / 1000); }   // an HTTP date
+    var reason = (j && j.error && typeof j.error === 'object' && j.error.reason) || '';
+    var quota = reason === 'QUOTA_EXCEEDED';
+    var ms = isNaN(secs) ? COOL_DEFAULT_MS : Math.min(COOL_CAP_MS, Math.round(secs * 1000));
+    var prev = readCool() || {}, active = coolUntil();
+    var quotaMs = prev.quotaMs || 0, quotaEnd = prev.quotaEnd || 0;
+    if (quota) {
+      // Answers to requests sent before a quota cool-off began don't double it again.
+      if (!(active && prev.reason === 'quota')) {
+        quotaMs = (quotaMs && quotaEnd && now - quotaEnd < COOL_QUOTA_REPEAT_MS) ? Math.min(COOL_QUOTA_MAX_MS, quotaMs * 2) : COOL_QUOTA_MS;
+      }
+      ms = Math.max(ms, quotaMs);
+    }
+    var until = Math.max(active || 0, now + ms);
+    if (quota) quotaEnd = until;
+    var c = {
+      until: until, reason: quota || (active && prev.reason === 'quota') ? 'quota' : 'rate',
+      retryAfter: raw, quotaMs: quotaMs, quotaEnd: quotaEnd,
+      last429: { at: now, reason: reason || 'rate limit', retryAfter: raw, what: what }
+    };
+    coolMem = c;
+    set(K.cool, c);
+    paintCool();
+  }
+  // The slim line under the header (and on the Now Playing screen), with a countdown. When the cool-off
+  // ends, checks start again once, a few seconds apart (afterCool).
+  var coolTimer = null, coolShown = false;
+  function fmtLeft(ms) {
+    var s = Math.ceil(ms / 1000), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+    return (h ? h + ':' + (m < 10 ? '0' : '') : '') + m + ':' + (ss < 10 ? '0' : '') + ss + ' left';
+  }
+  function paintCool() {
+    clearTimeout(coolTimer); coolTimer = null;
+    var left = coolLeft();
+    var n = $('npCool');
+    if (left > 0 && state.started) {
+      var t = coolText();
+      if ($('coolText').textContent !== t) $('coolText').textContent = t;
+      $('coolLeft').textContent = fmtLeft(left);
+      $('cool').hidden = false;
+      if (n.textContent !== t) n.textContent = t;
+      n.hidden = false;
+      coolShown = true;
+      coolTimer = setTimeout(paintCool, (left % 1000 || 1000) + 30);
+      return;
+    }
+    $('cool').hidden = true;
+    n.hidden = true;
+    if (coolShown) { coolShown = false; if (state.started) afterCool(); }
+  }
+  // No burst after a cool-off: the player check first (only in the copy that holds the poller lock, with a
+  // little jitter so two copies don't line up), then saved-state checks, then the background extras.
+  function afterCool() {
+    var now = Date.now();
+    state.bgHoldUntil = now + 6000;
+    schedulePoll(1500 + Math.floor(Math.random() * 1500));
+    setTimeout(function () {
+      if (state.started && !coolLeft() && state.checkQueue.length && !state.checkTimer) state.checkTimer = setTimeout(flushChecks, 0);
+    }, 4000);
+    if (!state.data) setTimeout(function () { if (state.started && !state.data && !coolLeft()) refresh(); }, 3000);
+    bgReady();   // arms the timer for the extras
+  }
+  // Background extras (recently played, resume points, Latest episodes) wait until state.bgHoldUntil, and
+  // start at least BG_GAP_MS apart from each other, whatever asks for them (renders call them often).
+  // Returns true when the caller may go ahead now (and claims the slot); otherwise a timer asks again later.
+  var BG_GAP_MS = 2500;
+  var bgTimer = null, bgLastAt = 0;
+  function bgReady() {
+    if (coolLeft()) return false;
+    var now = Date.now();
+    var wait = Math.max(state.bgHoldUntil - now, bgLastAt + BG_GAP_MS - now);
+    if (wait <= 0 || bgLastAt > now + 60000) { bgLastAt = now; return true; }
+    if (!bgTimer) bgTimer = setTimeout(function () {
+      bgTimer = null;
+      if (!state.started || document.hidden || coolLeft()) return;
+      maybeLoadHomeRecent();   // each one checks whether it's due; the first due one takes the slot
+      maybeRefreshResume();
+      maybeLoadLatest();
+    }, wait + 50);
+    return false;
+  }
+  // Request meter (Diagnostics): this copy's requests in memory, plus per-minute counts for all copies in storage.
+  var reqLog = [];   // [{t, w}], last hour
+  function meterNote(what) {
+    var now = Date.now();
+    reqLog.push({ t: now, w: what.replace(/\/[A-Za-z0-9]{22}(?=\/|$)/g, '/{id}') });
+    while (reqLog.length && now - reqLog[0].t > 3600000) reqLog.shift();
+    var m = Math.floor(now / 60000), b = get(K.meter);
+    if (!b || typeof b !== 'object') b = {};
+    b[m] = (b[m] || 0) + 1;
+    Object.keys(b).forEach(function (k) { if (m - (+k) >= 60 || +k > m + 1) delete b[k]; });
+    set(K.meter, b);
+  }
+  function meterCount(ms) {
+    var now = Date.now(), n = 0;
+    for (var i = reqLog.length - 1; i >= 0 && now - reqLog[i].t < ms; i--) n++;
+    return n;
+  }
+  function meterShared(minutes) {
+    var b = get(K.meter) || {}, m = Math.floor(Date.now() / 60000), n = 0;
+    Object.keys(b).forEach(function (k) { if (m - (+k) < minutes && +k <= m) n += (+b[k] || 0); });
+    return n;
+  }
+  function meterTop(ms) {
+    var now = Date.now(), by = {};
+    reqLog.forEach(function (x) { if (now - x.t < ms) by[x.w] = (by[x.w] || 0) + 1; });
+    return Object.keys(by).sort(function (a, b) { return by[b] - by[a]; }).slice(0, 6).map(function (k) { return k + ' ' + by[k]; }).join(', ');
+  }
   function api(path, opts) {
     opts = opts || {};
+    var what = (opts.method || 'GET') + ' ' + path.replace(API, '').split('?')[0];
+    if (coolLeft()) return Promise.reject(coolErr());   // v2.13: nothing is sent while cooling off
     return accessToken().then(function (tok) {
+      if (coolLeft()) throw coolErr();   // another copy hit the limit while the token renewed
+      meterNote(what);
       return fetch(path.indexOf('http') === 0 ? path : API + path, {
         method: opts.method || 'GET',
         headers: Object.assign({ Authorization: 'Bearer ' + tok }, opts.body ? { 'Content-Type': 'application/json' } : {}),
@@ -878,11 +1063,16 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         var j = null; try { j = txt ? JSON.parse(txt) : null; } catch (e) {}
         if (r.status === 403 && /scope/i.test(txt || '')) { state.scopeProblem = true; updateBanner(); }
         var res = { ok: r.ok, status: r.status, json: j };
-        if (!r.ok) logError((opts.method || 'GET') + ' ' + path.replace(API, '').split('?')[0], r.status, errMsg(res));
+        if (!r.ok) logError(what, r.status, errMsg(res));
+        if (r.status === 429) {
+          // Handled like a skipped request from here on: silent for background checks, one toast for taps.
+          noteRateLimit(r, j, what);
+          var ce = coolErr(); ce.status = 429; throw ce;
+        }
         return res;
       });
     }, function (e) {
-      if (e && e.message !== 'signed-out') logError((opts.method || 'GET') + ' ' + path.replace(API, '').split('?')[0], 'network', e.message);
+      if (e && e.message !== 'signed-out' && !isCool(e)) logError(what, 'network', e.message);
       throw e;
     });
   }
@@ -980,7 +1170,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // Spotify gives episode dates without a time, so same-day shows keep your saved order.
   // Shows the feed hasn't covered yet go last, in saved order.
   function showsByNewest(shows) {
-    maybeLoadLatest();   // fetches only when the 30-minute cache is stale
+    maybeLoadLatest();   // fetches only when the cache is stale (2 hours, v2.13)
     var c = state.latest && state.latest.cache;
     if (!c || !c.items) return shows;
     var newest = c.newest || {};
@@ -1154,13 +1344,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var playlists = pages('/me/playlists?limit=50', mapPlaylist);
     var albums = pages('/me/albums?limit=50', function (it) { return mapAlbum(it && it.album); });
     // Artists are optional: an older sign-in without user-follow-read must not break the library.
+    // (v2.13: a cool-off isn't a failure; it fails the whole load, so a half-loaded library is never cached.)
     var artists = pages('/me/following?type=artist&limit=50', mapArtist, 'artists').catch(function (e) {
-      if (e.message === 'signed-out') throw e;
+      if (e.message === 'signed-out' || isCool(e)) throw e;
       return null;
     });
     var liked = api('/me/tracks?limit=1').then(function (r) { return r.ok && r.json ? r.json.total : null; });
     // Podcasts are optional too: a failure leaves the rest of the library intact.
-    function optional(e) { if (e.message === 'signed-out') throw e; return null; }
+    function optional(e) { if (e.message === 'signed-out' || isCool(e)) throw e; return null; }
     var shows = pages('/me/shows?limit=50', function (it) { return mapShow(it && it.show); }).catch(optional);
     var episodes = api('/me/episodes?limit=1').then(function (r) { return r.ok && r.json && typeof r.json.total === 'number' ? r.json.total : null; }).catch(optional);
     return Promise.all([me, playlists, albums, liked, artists, shows, episodes]).then(function (v) {
@@ -1192,16 +1383,38 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function opensOnTap(item) { return !!item && (canOpen(item) || item.kind === 'artist'); }
   // A podcast or the Saved episodes collection: opens an episode list instead of playing.
   function isPod(item) { return item.kind === 'show' || item.kind === 'episodes'; }
+  // v2.13: what's known is kept for this browser session (sessionStorage survives Safari reloading the tab),
+  // so a URI is never asked about twice. The page's own ♥ taps update it.
+  var SAVED_SESSION = 'lib-saved';
+  var savedWriteTimer = null;
+  function loadSavedSession() {
+    try {
+      var o = JSON.parse(sessionStorage.getItem(SAVED_SESSION) || 'null');
+      if (o && typeof o === 'object') Object.keys(o).forEach(function (u) { if (state.saved[u] === undefined && typeof o[u] === 'boolean') state.saved[u] = o[u]; });
+    } catch (e) {}
+  }
+  function saveSavedSession() {
+    clearTimeout(savedWriteTimer);
+    savedWriteTimer = setTimeout(function () {
+      try {
+        var keys = Object.keys(state.saved), o = {};
+        keys.slice(-3000).forEach(function (u) { if (typeof state.saved[u] === 'boolean') o[u] = state.saved[u]; });
+        sessionStorage.setItem(SAVED_SESSION, JSON.stringify(o));
+      } catch (e) {}
+    }, 1000);
+  }
   function requestSaved(uris) {
     if (state.containsOff) return;
     uris.forEach(function (u) {
       if (u && state.saved[u] === undefined && !state.checking[u]) { state.checking[u] = true; state.checkQueue.push(u); }
     });
-    if (state.checkQueue.length && !state.checkTimer) state.checkTimer = setTimeout(flushChecks, 60);
+    // While cooling off the queue just waits; afterCool() sends it.
+    if (state.checkQueue.length && !state.checkTimer && !coolLeft()) state.checkTimer = setTimeout(flushChecks, 60);
   }
   function savableUris(items) { return items.filter(canSave).map(function (i) { return i.uri; }); }
   function flushChecks() {
     state.checkTimer = null;
+    if (coolLeft()) return;   // kept for afterCool()
     var q = state.checkQueue;
     state.checkQueue = [];
     for (var i = 0; i < q.length; i += 40) checkBatch(q.slice(i, i + 40));
@@ -1213,8 +1426,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         if (state.saved[u] === undefined) state.saved[u] = r.json[i] === true;
         delete state.checking[u];
       });
+      saveSavedSession();
       paintHearts();
-    }).catch(function () {
+    }).catch(function (e) {
+      if (isCool(e)) {
+        // Not an answer: ask again once the cool-off ends (they stay marked as being checked).
+        batch.forEach(function (u) { if (state.saved[u] === undefined) state.checkQueue.push(u); else delete state.checking[u]; });
+        return;
+      }
       // Unavailable (e.g. not offered to Development Mode apps): stop asking this session.
       // Hearts stay outlined and a tap saves unless we already know it's saved.
       batch.forEach(function (u) { delete state.checking[u]; });
@@ -1238,6 +1457,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function toggleSave(uri, name, kind, forceSave) {
     if (!uri || state.busy[uri]) return;
+    if (coolBlocked()) return;   // v2.13
     var was = state.saved[uri];
     var save = forceSave === true ? true : was !== true;
     state.busy[uri] = true;
@@ -1246,6 +1466,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     api('/me/library?uris=' + encodeURIComponent(uri), { method: save ? 'PUT' : 'DELETE' }).then(function (r) {
       delete state.busy[uri];
       if (!r.ok) throw new Error(errMsg(r));
+      saveSavedSession();
       if (!save) toast('Removed “' + name + '”', null, { text: 'Undo', fn: function () { toggleSave(uri, name, kind, true); } });
       else if (forceSave) toast('Saved “' + name + '” again');
       else toast(kind === 'track' ? 'Added to Liked Songs' : 'Saved to your library');
@@ -1377,7 +1598,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (err && err.message === 'signed-out') return renderSignIn();
       e.loading = false;
       var msg = err && err.message ? err.message : 'unknown error';
-      if (first) e.error = 'Search failed: ' + msg;
+      if (isCool(err)) {   // v2.13: nothing was sent; the entry counts as failed, so it's asked again later
+        if (first) e.error = coolText(); else e.moreError = coolText();
+        if (showingSearch(e)) coolToast();
+      }
+      else if (first) e.error = 'Search failed: ' + msg;
       else e.moreError = 'Couldn’t load more (' + msg + ').';
       if (!showingSearch(e)) return;
       if (first) renderList(); else paintSearchFoot(e);
@@ -1475,20 +1700,26 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (seq !== state.recentSeq) return;
       if (e.message === 'signed-out') return renderSignIn();
       state.recent.loading = false;
-      state.recent.error = 'Couldn’t load recently played (' + e.message + ').';
+      if (isCool(e)) {
+        // v2.13: nothing was sent. Home tries again after the cool-off; Recent says why it's empty.
+        state.recentTriedAt = 0;
+        state.recent.error = state.filter === 'recent' && !state.recent.items ? coolText() : '';
+        if (state.filter === 'recent' && !state.detail) coolToast();
+      } else state.recent.error = 'Couldn’t load recently played (' + e.message + ').';
       renderIfRecent();
     });
   }
-  // Home: at most one recently-played request per 10 minutes, and only while Home is on screen.
+  // Home: at most one recently-played request per 15 minutes (v2.13), and only while Home is on screen.
   function maybeLoadHomeRecent() {
     if (!onHome() || document.hidden || state.recent.loading) return;
     if (Date.now() - state.recentTriedAt < HOME_RECENT_MS && state.recentTriedAt <= Date.now()) return;
+    if (!bgReady()) return;
     loadRecent();
   }
 
   // ---------- latest episodes: the newest episodes across your saved shows ----------
   // Spotify has no batch call for this, so each saved show's newest few episodes are fetched
-  // separately (a few at a time), merged newest first, and cached for 30 minutes.
+  // separately (a few at a time), merged newest first, and cached for 2 hours (v2.13; was 30 minutes).
   function onLatestView() { return state.started && !state.detail && state.filter === 'podcasts' && state.podTab === 'latest'; }
   function onHome() { return state.started && !state.detail && state.filter === 'home'; }
   function latestFresh(c) { return !!c && typeof c.at === 'number' && Date.now() - c.at < LATEST_MS && c.at < Date.now() + 60000; }
@@ -1497,10 +1728,29 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var onShows = state.started && !state.detail && state.filter === 'podcasts' && state.podTab === 'shows';
     if (onLatestView() || onShows || onHome()) renderList();
   }
+  // v2.13: on its own at most every 2 hours, and only while Home or Podcasts is on screen.
   function maybeLoadLatest() {
     var L = state.latest;
-    if (!state.started || document.hidden || L.loading || latestFresh(L.cache)) return;
-    if (Date.now() - L.triedAt < LATEST_MS) return;   // a failed try waits as long as a good one
+    if (!state.started || document.hidden || L.loading) return;
+    if (!(onHome() || onPodcastsView())) return;
+    var sc = get(K.latest);   // another copy of the page may have loaded it already
+    if (sc && Array.isArray(sc.items) && typeof sc.at === 'number' && (!L.cache || sc.at > L.cache.at) && sc.at < Date.now() + 60000) { L.cache = sc; setTimeout(rerenderLatest, 0); }
+    if (latestFresh(L.cache)) return;
+    if (Date.now() - L.triedAt < LATEST_MS && L.triedAt <= Date.now()) return;   // a failed try waits as long as a good one
+    if (!bgReady()) return;
+    loadLatest();
+  }
+  // The Refresh link next to "Updated … ago": at most once per 5 minutes.
+  function refreshLatest() {
+    var L = state.latest;
+    if (coolBlocked()) return;
+    var last = Math.max(L.triedAt || 0, (L.cache && L.cache.at) || 0);
+    var wait = last + LATEST_MANUAL_MS - Date.now();
+    if (wait > 0 && last <= Date.now()) {
+      var m = Math.max(1, Math.ceil(wait / 60000));
+      toast('Updated a moment ago. Try again in ' + m + (m === 1 ? ' minute.' : ' minutes.'));
+      return;
+    }
     loadLatest();
   }
   function mapLatest(e, s) {
@@ -1541,7 +1791,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }
     function launch() {
       while (running < LATEST_PARALLEL && next < shows.length && !aborted) {
-        if (document.hidden || signedOut) { aborted = true; break; }   // nothing while the page is hidden
+        if (document.hidden || signedOut || coolLeft()) { aborted = true; break; }   // nothing while hidden or cooling off
         one(next++);
       }
       if (running === 0) finish();
@@ -1554,6 +1804,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         (r.json.items || []).forEach(function (e, k) { var x = mapLatest(e, s); if (x) found.push({ x: x, si: si, k: k }); });
       }).catch(function (e) {
         if (e && e.message === 'signed-out') signedOut = true;
+        else if (isCool(e)) aborted = true;   // v2.13: stop here and try again after the cool-off
         failed++;
       }).then(function () { running--; launch(); });
     }
@@ -1561,7 +1812,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     setTimeout(rerenderLatest, 0);   // shows "Updating…"
   }
   function latestItem(x) {
-    // v2.11: what the page heard (or a newer resume point) beats a cache up to 30 minutes old.
+    // v2.11: what the page heard (or a newer resume point) beats a cache up to 2 hours old.
     var h = histByUri()[x.uri], c = state.latest.cache;
     if (h && (!c || histSnap(h) > c.at)) x = Object.assign({}, x, { positionMs: h.played ? 0 : (h.positionMs || 0), played: !!h.played });
     var age = daysAgo(x.date);
@@ -1703,9 +1954,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- fresh resume points (v2.11) ----------
-  // The Latest cache is up to 30 minutes old, so when Home or Podcasts shows (or on Refresh) the page asks
-  // GET /episodes/{id} for up to 8 episodes (the newest heard, then Continue listening's), 4 at a time,
-  // at most once per 2 minutes, never while the page is hidden. resume_point needs user-read-playback-position.
+  // The Latest cache is up to 2 hours old, so when Home or Podcasts shows (or on Refresh) the page asks
+  // GET /episodes/{id} for up to 5 episodes (the newest heard, then Continue listening's), 2 at a time,
+  // at most once per 10 minutes (v2.13), never while the page is hidden or cooling off. resume_point needs user-read-playback-position.
   var resumeRun = { running: false, at: 0, doneAt: 0, count: 0, failed: 0, maxInFlight: 0, ids: [] };
   function onPodcastsView() { return state.started && !state.detail && state.filter === 'podcasts'; }
   function liveUri() { var p = state.player; return (p && !state.playerIdle && p.is_playing && p.item && p.item.uri) || ''; }
@@ -1729,6 +1980,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (Date.now() - R.at < RESUME_MS && R.at <= Date.now()) return;
     var ids = resumeCandidates();
     if (!ids.length) return;
+    if (!bgReady()) return;   // v2.13: not during a cool-off, and spaced from the other background requests
     R.running = true; R.at = Date.now(); R.ids = ids; R.maxInFlight = 0;
     var got = {}, failed = 0, next = 0, running = 0, stopped = false, signedOut = false, finished = false;
     function finish() {
@@ -1740,8 +1992,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       applyResume(got);
     }
     function launch() {
-      while (running < RESUME_PARALLEL && next < ids.length) {
-        if (document.hidden || !state.started || signedOut) { stopped = true; break; }   // nothing while hidden
+      while (running < RESUME_PARALLEL && next < ids.length && !stopped) {
+        if (document.hidden || !state.started || signedOut || coolLeft()) { stopped = true; break; }   // nothing while hidden or cooling off
         one(ids[next++]);
       }
       if (running === 0) finish();
@@ -1754,6 +2006,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         got[id] = r.json;
       }).catch(function (e) {
         if (e && e.message === 'signed-out') signedOut = true;
+        else if (isCool(e)) stopped = true;
         failed++;
       }).then(function () { running--; launch(); });
     }
@@ -1902,7 +2155,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     else if (L.loading) note.appendChild(el('span', { text: 'Loading the latest episodes…' }));
     if (!L.loading) {
       var rb = el('button', { class: 'linkbtn', type: 'button', text: 'Refresh' });
-      rb.addEventListener('click', function () { loadLatest(); });
+      rb.addEventListener('click', refreshLatest);
       if (c) note.appendChild(el('span', { 'aria-hidden': 'true', text: '·' }));
       note.appendChild(rb);
     }
@@ -1959,9 +2212,19 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function checkDevice() {
     return fetchDevices().then(function (list) { state.deviceError = ''; showStatus(); return list; }, function (e) {
       if (e.message === 'signed-out') return renderSignIn();
+      if (isCool(e)) return;   // v2.13: nothing was sent; what the page knew stays as it was
       state.deviceError = e.message;
       state.devices = []; state.deviceChecked = true; recomputeDevice();
     });
+  }
+  // v2.13: coming back to the page (visibility, pageshow) checks devices at most once per 15 s,
+  // and not at all if the list was fetched in that time anyway.
+  var bgDevAt = 0;
+  function bgCheckDevice() {
+    var now = Date.now();
+    if (coolLeft() || now - Math.max(bgDevAt, state.devicesAt || 0) < DEV_COALESCE_MS) return;
+    bgDevAt = now;
+    checkDevice();
   }
   function showStatus() {
     if (!state.started) return;
@@ -2011,7 +2274,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       // Shuffle on a device that wasn't active yet can fail; try again now that it plays.
       if (opts.shuffle && !shuffleOk) shuffle().catch(function () {});
       noteStarted(item);   // v2.11: an episode goes into the podcast history right away
-      schedulePoll(600);
+      state.lastActiveAt = Date.now();
+      schedulePoll(600, true);   // v2.13: this copy checks once even if another copy is the poller
     }
     return pre.then(function () { return send(body); }).then(function (r) {
       if (r.ok) return done();
@@ -2037,6 +2301,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function playNow(item, opts) {
     return play(item, opts).catch(function (e) {
       if (e.message === 'signed-out') return renderSignIn();
+      if (isCool(e)) return coolToast();   // v2.13: the device is fine; Spotify asked the page to wait
       state.device = null; state.deviceAt = 0; state.devicesAt = 0; showStatus();   // next tap checks again
       // 404: the device went to sleep since the last check (iPhone Spotify drops off after a pause).
       // In 'wait' mode the tap waits for Control Center play instead of failing.
@@ -2054,10 +2319,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     // Not sure: check first, as before, and if nothing is open offer a button that wakes Spotify.
     // In 'wait' mode nothing opens at all: the page waits for you to press play in Control Center.
     ev.preventDefault();
+    if (coolBlocked()) return;   // v2.13: nothing is sent during a cool-off
     if (deviceFresh()) { playNow(item, opts); return; }
     if (noDeviceKnown()) { wakeSpotify(item, opts); return; }
     checkDevice().then(function () {
       if (!state.started) return;
+      if (coolLeft()) { coolToast(); return; }   // the check itself hit the limit: nothing more is sent
       if (state.device) return playNow(item, opts);
       if (state.deviceError) {
         toast('Couldn’t check your devices (' + state.deviceError + ').', { href: item.url, text: 'Open in Spotify' });
@@ -2165,7 +2432,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var gen = ++w.gen;
     var started = Date.now();
     var until = started + WAKE_FOR_MS;
-    function gap() { return (Date.now() - started < WAKE_FAST_FOR_MS) ? WAKE_FAST_MS : WAKE_POLL_MS; }
+    function gap() { return WAKE_POLL_MS; }   // v2.13: one check every 1.5 s (was 0.4 s, then 1 s)
     showWake('Starting “' + p.item.name + '”…', { pulse: true });
     function mine() { var cur = readPending(); return !!cur && cur.at === p.at; }
     function tick() {
@@ -2203,9 +2470,20 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }
     tick();
   }
-  // 'wait' mode: checks every second for up to a minute while the page is on screen. Leaving the
-  // page pauses it; coming back starts a fresh minute (the tap itself still expires after 3 minutes).
-  // Never loops on its own: one timeout waits for Try again, a second one drops the tap.
+  // 'wait' mode: checks every 3 seconds (v2.13; was every second) for up to a minute while the page is on
+  // screen, so at most 20 requests. Each check is one request: the device list and the player state take
+  // turns, and either one finding Spotify (a device, or playback after Control Center's play) ends the wait.
+  // The regular player check pauses meanwhile. Leaving the page pauses it; coming back starts a fresh minute
+  // (the tap itself still expires after 3 minutes). Never loops on its own: one timeout waits for Try again,
+  // a second one drops the tap.
+  function waitCheck(n) {
+    var none = function (e) { if (e && e.message === 'signed-out') throw e; return null; };
+    if (n % 2 === 0) return fetchDevices().then(function () { return state.device; }, none);
+    return fetchPlayer().then(function (res) {
+      setPlayer(res.p);
+      return (res.p && res.p.is_playing && res.p.device && res.p.device.id) ? state.device : null;
+    }, none);
+  }
   function waitLoop(p, manual) {
     var w = state.wake;
     clearTimeout(w.timer); w.timer = null;
@@ -2216,15 +2494,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var until = Date.now() + WAIT_FOR_MS;
     showWake('Press play in Control Center or on the lock screen. “' + p.item.name + '” starts as soon as Spotify wakes.', { pulse: true, open: true });
     function mine() { var cur = readPending(); return !!cur && cur.at === p.at; }
+    var n = 0;
     function tick() {
       w.timer = null;
       if (!w.running || w.gen !== gen) return;
       if (document.hidden) { stopWake(); return; }   // paused; a fresh minute starts on return
       if (!mine()) { stopWake(); return; }           // cancelled, replaced, or played elsewhere
-      fetchDevices().then(function () { return state.device; }, function (e) {
-        if (e.message === 'signed-out') throw e;
-        return null;
-      }).then(function (d) {
+      waitCheck(n++).then(function (d) {
         if (!w.running || w.gen !== gen) return;
         if (d) {
           if (!mine()) { stopWake(); return; }
@@ -2267,7 +2543,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.12 (2026-11-22)';
+  var VERSION = 'v2.13 (2026-11-22)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -2311,13 +2587,28 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var eh = epHistory(), R = resumeRun;
     line('Podcast history: ' + eh.length + (eh.length === 1 ? ' episode' : ' episodes') + (eh[0] ? ' (newest: ' + eh[0].name + ', ' + agoAt(eh[0].at) + ')' : ''));
     line('Resume points: ' + (R.running ? 'refreshing now' : R.doneAt ? 'last refreshed ' + agoAt(R.doneAt) + ' (' + R.count + (R.count === 1 ? ' episode' : ' episodes') + (R.failed ? ', ' + R.failed + ' failed' : '') + ')' : 'not refreshed this visit'));
+    // v2.13 request meter (counted before this report's own checks below)
+    line('Requests, this copy: ' + meterCount(30000) + ' in 30 s · ' + meterCount(600000) + ' in 10 min · ' + meterCount(3600000) + ' in 1 h');
+    line('Requests, all copies in this browser: ' + meterShared(10) + ' in 10 min · ' + meterShared(60) + ' in 1 h');
+    var top = meterTop(600000);
+    line('Most asked (10 min): ' + (top || 'nothing'));
+    var cr = readCool(), l4 = cr && cr.last429;
+    line('Last 429: ' + (l4 ? clockSec(l4.at) + ' (' + agoAt(l4.at) + ') · ' + (l4.reason || 'rate limit') + ' · Retry-After ' +
+      (l4.retryAfter == null ? 'not exposed' : l4.retryAfter + ' s') + ' · ' + (l4.what || '?') : 'none'));
+    var cl = coolLeft();
+    line('Cool-off: ' + (cl ? 'until ' + clockSec(coolUntil()) + ' (' + (cr.reason === 'quota' ? 'quota' : 'rate limit') + '), ' + fmtLeft(cl) : 'none') +
+      (cr && cr.quotaMs ? ' · next quota wait ' + ageText(Math.min(COOL_QUOTA_MAX_MS, cr.quotaMs * 2)) + ' if it comes back within an hour' : ''));
+    var pk = get(K.poller);
+    line('Player check: ' + (document.hidden ? 'paused (page hidden)' : pk && pk.id === MY_ID ? 'this copy, every ' + Math.round(pollEvery() / 1000) + ' s'
+      : lockFresh(pk, Date.now()) ? 'another copy of the page (this one shows its answers)' : 'this copy, every ' + Math.round(pollEvery() / 1000) + ' s'));
     line('');
     function probe(label, path, show) {
+      if (coolLeft()) { line(label + ' → skipped (cooling off)'); return Promise.resolve(); }
       return api(path).then(function (r) {
         var body = '';
         try { body = r.ok ? show(r.json) : errMsg(r); } catch (e) { body = 'unreadable answer'; }
         line(label + ' → ' + r.status + (body ? '  ' + body : ''));
-      }, function (e) { line(label + ' → failed: ' + e.message); });
+      }, function (e) { line(label + ' → ' + (isCool(e) ? (e.status === 429 ? '429, cooling off' : 'skipped (cooling off)') : 'failed: ' + e.message)); });
     }
     probe('Account (/me)', '/me', function (j) { return j ? 'user ' + j.id : 'empty'; })
       .then(function () {
@@ -2362,6 +2653,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     return (p && p.device && p.device.id) ? p.device : state.device;
   }
   function addToQueue(item) {
+    if (coolBlocked()) return;   // v2.13
     var d = controlDevice();
     if (!d) { toast(NO_DEVICE); return; }
     api('/me/player/queue?uri=' + encodeURIComponent(item.uri) + '&device_id=' + encodeURIComponent(d.id), { method: 'POST' }).then(function (r) {
@@ -2372,33 +2664,81 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- Now Playing bar ----------
-  function schedulePoll(ms) {
+  // force: the check follows your own command (play, a control, a device switch), so it runs once even if
+  // another copy of the page is the poller.
+  function schedulePoll(ms, force) {
     clearTimeout(state.pollTimer);
     state.pollTimer = null;
+    if (force) state.pollForce = true;
     if (!state.started || document.hidden) return;
     state.pollTimer = setTimeout(pollPlayer, ms);
+  }
+  // v2.13 cadence: every 20 s; every 10 s while the full Now Playing screen is open; every 60 s once nothing
+  // has played for 10 minutes (Spotify asleep or idle); nothing while the page is hidden.
+  function pollEvery() {
+    if (Date.now() - state.lastActiveAt > IDLE_AFTER_MS) return IDLE_POLL_MS;
+    return npShown() ? NP_POLL_MS : POLL_MS;
+  }
+  // ---------- one poller across copies (v2.13) ----------
+  // Copies of the page that share storage (several Safari tabs) run one player check between them: the copy
+  // holding 'lib-poller' asks Spotify and stores the answer in 'lib-player-cache'; the others show that answer
+  // (storage event, or on their own timer). The visible copy wins: a copy takes the lock when it comes on
+  // screen and gives it up when hidden. A lock not renewed within twice its interval counts as stale.
+  // (A Home Screen web app on iPhone keeps its own storage, so it can't share this with a Safari tab.)
+  function lockFresh(l, now) { return !!l && !!l.id && typeof l.at === 'number' && l.at <= now + 60000 && now - l.at < 2 * (l.every || POLL_MS) + 2000; }
+  function holdPoller(every) {
+    var now = Date.now(), l = get(K.poller);
+    if (l && l.id !== MY_ID && lockFresh(l, now)) return false;
+    set(K.poller, { id: MY_ID, at: now, every: every });
+    return true;
+  }
+  function takePoller() { set(K.poller, { id: MY_ID, at: Date.now(), every: pollEvery() }); }
+  function releasePoller() { var l = get(K.poller); if (l && l.id === MY_ID) del(K.poller); }
+  var playerSeenAt = 0;   // time of the newest player answer this copy has shown (its own or the cache's)
+  function storePlayerCache(json) { set(K.playerCache, { at: Date.now(), by: MY_ID, json: json || null }); }
+  function applyPlayerCache(c) {
+    if (!c || c.by === MY_ID || typeof c.at !== 'number' || c.at <= playerSeenAt || c.at > Date.now() + 60000) return false;
+    if (Date.now() - c.at > 5 * 60 * 1000) return false;   // too old to show as current
+    playerSeenAt = c.at;
+    setPlayer(c.json, { fromCache: true, at: c.at });
+    return true;
+  }
+  // One /me/player request; the answer is shared with the other copies.
+  function fetchPlayer() {
+    state.lastPollAt = Date.now();
+    return api('/me/player?additional_types=episode').then(function (r) {   // without it, podcasts come back with no item
+      playerSeenAt = Date.now();
+      if (r.status === 204 || (r.ok && !r.json)) { storePlayerCache(null); return { r: r, p: null }; }
+      if (r.ok) { storePlayerCache(r.json); return { r: r, p: r.json }; }
+      throw httpError(r);
+    });
   }
   function pollPlayer() {
     state.pollTimer = null;
     if (!state.started || document.hidden) return;
+    var force = state.pollForce;
+    state.pollForce = false;
+    var next = pollEvery();
+    if (coolLeft()) return;   // nothing is sent; afterCool() starts the checks again
+    if (!force && state.wake.running) { holdPoller(next); schedulePoll(next); return; }   // the wake check asks Spotify itself meanwhile (the lock stays renewed)
+    if (!force && !holdPoller(next)) {   // another copy is the poller: show its answer
+      applyPlayerCache(get(K.playerCache));
+      schedulePoll(next);
+      return;
+    }
     var seq = ++state.pollSeq;
-    var next = npShown() ? NP_POLL_MS : POLL_MS;   // every 5 s while the full Now Playing screen is open
-    api('/me/player?additional_types=episode').then(function (r) {   // without it, podcasts come back with no item
+    fetchPlayer().then(function (res) {
       if (seq !== state.pollSeq) return 'stale';
-      if (r.status === 204 || (r.ok && !r.json)) setPlayer(null);
-      else if (r.ok) setPlayer(r.json);
-      else {
-        if (r.status === 429) next = 30000;
-        throw new Error(errMsg(r));
-      }
+      setPlayer(res.p);
       state.pollFailed = false;
     }).catch(function (e) {
       if (e.message === 'signed-out') { renderSignIn(); return 'stop'; }
+      if (isCool(e)) return 'stop';   // the cool-off line says so; afterCool() restarts the checks
       if (!state.pollFailed) toast('Couldn’t check what’s playing (' + e.message + ').');
       state.pollFailed = true;
     }).then(function (how) {
       // A command made this answer stale and scheduled its own check; don't override it.
-      if (how !== 'stale' && how !== 'stop') schedulePoll(next);
+      if (how !== 'stale' && how !== 'stop') schedulePoll(pollEvery());
     });
   }
   // ---------- Spotify asleep: keep the last playback on screen, paused (v2.10) ----------
@@ -2499,12 +2839,15 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!item) return;
     onItemClick(item, (ev && ev.preventDefault) ? ev : { preventDefault: function () {} });
   }
-  function setPlayer(p) {
+  // o (v2.13): {fromCache, at} when the answer came from another copy of the page (at: when it was asked).
+  function setPlayer(p, o) {
+    o = o || {};
     var prevUri = state.player && state.player.item && state.player.item.uri;
+    if (p && p.is_playing) state.lastActiveAt = Math.max(state.lastActiveAt, o.at || Date.now());
     if (p && p.item) {
       state.player = p;
       state.playerIdle = false;
-      state.playerAt = Date.now();   // progress_ms is as of this answer; the Now Playing screen counts on from here
+      state.playerAt = Math.min(Date.now(), o.at || Date.now());   // progress_ms is as of this answer; the Now Playing screen counts on from here
       saveLastPlay(p, p.progress_ms || 0);
       noteEpisode(p.item, p.progress_ms || 0, !!p.is_playing, p.timestamp);   // v2.11: podcast history (episodes only)
     } else {
@@ -2525,7 +2868,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     else {
       state.active = null;
       // Nothing playing: keep the device list from going stale so taps still play directly.
-      if (Date.now() - state.devicesAt > FRESH_MS) checkDevice();
+      // (Not for an answer from another copy: that copy keeps the list fresh; a tap checks first anyway.)
+      if (!o.fromCache && Date.now() - state.devicesAt > FRESH_MS) checkDevice();
     }
     recomputeDevice();
     paintPlayer();
@@ -2568,6 +2912,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function command(method, path, optimistic) {
     // Asleep: Spotify has no device to send this to (it would answer 404), so nothing is sent.
     if (state.playerIdle) { toast(WAKE_FIRST); return Promise.resolve(); }
+    if (coolBlocked()) return Promise.resolve();   // v2.13: nothing is sent during a cool-off
+    state.lastActiveAt = Date.now();
     var p = state.player;
     var dev = p && p.device && p.device.id;
     var url = path + (dev ? (path.indexOf('?') === -1 ? '?' : '&') + 'device_id=' + encodeURIComponent(dev) : '');
@@ -2583,7 +2929,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         return;
       }
       throw new Error(errMsg(r));
-    }).catch(onFail('Couldn’t control playback')).then(function () { schedulePoll(500); });
+    }).catch(onFail('Couldn’t control playback')).then(function () { schedulePoll(500, true); });
   }
 
   // ---------- device sheet ----------
@@ -2606,6 +2952,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     renderSheet();
     fetchDevices().catch(function (e) {
       if (e.message === 'signed-out') { closeSheet(); return renderSignIn(); }
+      if (isCool(e)) { if (!(state.devices || []).length) state.sheetError = coolText(); coolToast(); return; }   // v2.13
       state.sheetError = 'Couldn’t load devices (' + e.message + ').';
     }).then(function () { state.sheetLoading = false; renderSheet(); });
   }
@@ -2629,6 +2976,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     });
   }
   function transferTo(d) {
+    if (coolBlocked()) return;   // v2.13
     var wasPlaying = !!(state.player && state.player.is_playing);
     state.pollSeq++;
     api('/me/player', { method: 'PUT', body: { device_ids: [d.id], play: wasPlaying } }).then(function (r) {
@@ -2638,7 +2986,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       recomputeDevice();
       closeSheet();
       toast('Now using ' + d.name);
-    }).catch(onFail('Couldn’t switch to ' + d.name)).then(function () { schedulePoll(600); });
+    }).catch(onFail('Couldn’t switch to ' + d.name)).then(function () { schedulePoll(600, true); });
   }
 
   // ---------- Now playing options: from what plays to the album, playlist, Liked Songs or show ----------
@@ -2706,7 +3054,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // Opens from the bar's cover or title. Progress moves locally between checks: it starts from the last
   // answer's progress_ms at the moment that answer arrived (Spotify's own `timestamp` is when playback last
   // changed, not when it answered, so it can't anchor the estimate). While this screen is open and on
-  // screen the page checks every 5 seconds instead of 10; the progress timer itself sends nothing.
+  // screen the page checks every 10 seconds instead of 20 (v2.13); the progress timer itself sends nothing.
   var npKey = '';        // item + context the option buttons were built for
   var npTick = null;     // local progress timer
   var npEndChecked = ''; // the item whose end already triggered one early check
@@ -2876,8 +3224,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }
     $('npClose').focus({ preventScroll: true });
     startNpTick();
-    // Checks every 5 s from here: the first one 5 s after the last answer.
-    schedulePoll(Math.max(0, NP_POLL_MS - (Date.now() - (state.playerAt || 0))));
+    // Checks every 10 s from here (v2.13; 60 s once nothing has played for 10 minutes): the first one an
+    // interval after the last check. During a cool-off pollPlayer sends nothing.
+    schedulePoll(Math.max(0, pollEvery() - (Date.now() - (state.lastPollAt || 0))));
   }
   function closeNp(restore, why) {
     if ($('np').hidden) return;
@@ -3024,7 +3373,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (seq !== queueSeq) return;
       if (e && e.message === 'signed-out') { closeQueue(false); closeNp(false); return renderSignIn(); }
       queueView.loading = false;
-      queueView.error = queueView.scope ? 'Up next needs one more sign-in.' : 'Couldn’t load the queue (' + (e && e.message ? e.message : 'unknown error') + ').';
+      if (isCool(e)) coolToast();
+      queueView.error = isCool(e) ? coolText() : queueView.scope ? 'Up next needs one more sign-in.' : 'Couldn’t load the queue (' + (e && e.message ? e.message : 'unknown error') + ').';
       renderQueue();
     });
   }
@@ -3092,6 +3442,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }, function (e) {
       b.removeAttribute('aria-busy');
       if (e && e.message === 'signed-out') { closeNp(false); return renderSignIn(); }
+      if (isCool(e)) return coolToast();
       toast('Couldn’t open the playlist (' + (e && e.message ? e.message : 'unknown error') + ').');
     });
   }
@@ -3362,7 +3713,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var f = state.filter;
     if (f === 'home') return renderHome(main, d);
     if (f === 'podcasts') {
-      setTimeout(maybeRefreshResume, 0);   // v2.11: fresh resume points, at most once per 2 minutes
+      setTimeout(maybeRefreshResume, 0);   // v2.11: fresh resume points, at most once per 10 minutes (v2.13)
       main.appendChild(podSeg());
       renderContinue(main);
       if (state.podTab === 'latest') return renderLatest(main);
@@ -3424,7 +3775,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   // ---------- Home (v2.10): shortcuts to your own things, nothing Spotify recommends ----------
   // Built only from what the page already loads: your library, your pins, the Latest episodes cache,
-  // Continue listening and your recently played songs (asked for at most once per 10 minutes, only while
+  // Continue listening and your recently played songs (asked for at most once per 15 minutes, only while
   // Home is on screen). The name box filters every section; with a name typed, Jump back in, Latest
   // episodes and Your playlists search all their items instead of only the first few.
   function sectHead(id, title, seeAll) {
@@ -3508,15 +3859,15 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     shown += cl.length;
     // Jump back in: your last few distinct albums from Recently played, and (v2.11) one card per podcast
     // from the page's own history, newest first.
-    setTimeout(maybeLoadHomeRecent, 0);   // after this render; at most once per 10 minutes
-    setTimeout(maybeRefreshResume, 0);    // v2.11: fresh resume points, at most once per 2 minutes
+    setTimeout(maybeLoadHomeRecent, 0);   // after this render; at most once per 15 minutes
+    setTimeout(maybeRefreshResume, 0);    // v2.11: fresh resume points, at most once per 10 minutes (v2.13)
     var jump = matches(byTime([state.recent.jump || [], jumpEpisodes()]));
     if (!q) jump = jump.slice(0, HOME_JUMP);
     cardStrip(main, 'hJump', 'Jump back in', jump, function () { setFilter('recent'); });
     shown += jump.length;
     // Latest episodes: the newest few from the Latest cache (Hide played applies).
     if (d.shows && d.shows.length) {
-      maybeLoadLatest();   // only when the 30-minute cache is stale
+      maybeLoadLatest();   // only when the cache is stale (2 hours)
       var c = state.latest.cache;
       var hide = hidePlayed();
       var eps = c ? matches(c.items.map(latestItem).filter(function (i) { return !(hide && i.played); })) : [];
@@ -3772,7 +4123,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var d = state.detail;
     if (!d || d.loading) return;
     if (!url) { d.restricted = true; paintDetailSort(); paintDetailFoot(); return; }
-    d.loading = true; d.error = ''; d.lastUrl = url;
+    d.lastUrl = url;
+    if (coolLeft()) { d.error = coolText(); paintDetailFoot(); coolToast(); return; }   // v2.13: Try again works after it
+    d.loading = true; d.error = '';
     paintDetailFoot();
     // The answer is kept even if another view is on top by then (v2.12: Back can return to this one);
     // it's drawn only while this view is the one on screen.
@@ -3795,6 +4148,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }).catch(function (e) {
       d.loading = false;
       if (e && e.message === 'signed-out') { if (state.started) renderSignIn(); return; }
+      if (isCool(e)) { d.error = coolText(); if (state.detail === d) { paintDetailFoot(); coolToast(); } return; }
       d.error = 'Couldn’t load ' + (isPod(d.item) ? 'episodes' : 'songs') + ' (' + (e && e.message ? e.message : 'unknown error') + ').';
       if (state.detail === d) paintDetailFoot();
     });
@@ -3825,6 +4179,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function loadArtist(d) {
     if (!d || d.loading) return;
+    if (coolLeft()) { d.error = coolText(); if (state.detail === d) paintArtistFoot(d); coolToast(); return; }   // v2.13
     d.loading = true; d.error = '';
     if (state.detail === d) paintArtistFoot(d);
     if (!d.infoAsked) {
@@ -3857,6 +4212,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }).catch(function (e) {
       d.loading = false;
       if (e && e.message === 'signed-out') { if (state.started) renderSignIn(); return; }
+      if (isCool(e)) { d.error = coolText(); d.infoAsked = !!d.img; if (state.detail === d) { paintArtistFoot(d); coolToast(); } return; }
       d.error = 'Couldn’t load releases (' + (e && e.message ? e.message : 'unknown error') + ').';
       if (state.detail === d) paintArtistFoot(d);
     });
@@ -3953,6 +4309,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     state.player = null;
     state.playerIdle = false;
     clearLastPlay();   // signed out: the last playback belongs to that sign-in
+    releasePoller();
+    paintCool();       // hides the cool-off line (state.started is false now)
     state.detail = null; state.detailStack = [];
     $('top').classList.remove('detail');
     $('top').hidden = true;
@@ -4011,9 +4369,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       paintHearts();
     }).catch(function (e) {
       if (e.message === 'signed-out') return renderSignIn();
+      var cool = isCool(e);   // v2.13: the library loads again after the cool-off (afterCool) if nothing was cached
       if (!state.data && !state.detail && state.filter !== 'search' && state.filter !== 'recent') {
-        $('main').textContent = ''; $('main').appendChild(el('p', { class: 'err', text: 'Couldn’t load your library: ' + e.message }));
-      } else toast('Couldn’t refresh: ' + e.message);
+        $('main').textContent = ''; $('main').appendChild(el('p', { class: 'err', text: cool ? coolText() : 'Couldn’t load your library: ' + e.message }));
+      } else if (!cool) toast('Couldn’t refresh: ' + e.message);
     });
   }
   function startApp() {
@@ -4027,11 +4386,17 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     state.data = get(K.cache);
     var lc = get(K.latest);
     state.latest.cache = (lc && Array.isArray(lc.items) && typeof lc.at === 'number') ? lc : null;
+    loadSavedSession();   // v2.13: saved-state answers from earlier in this browser session
     seedSaved(state.data, false);
     updateBanner();
+    // v2.13: the first requests go out a few seconds apart: devices, library and the player check now;
+    // recently played, resume points and Latest episodes after bgHoldUntil (see bgReady).
+    state.lastActiveAt = Date.now();
+    state.bgHoldUntil = Date.now() + 4000;
+    paintCool();          // a cool-off another copy (or an earlier visit) started still applies
     setFilter(state.filter);
-    checkDevice();
-    refresh();
+    if (!coolLeft()) { checkDevice(); refresh(); }
+    else if (!state.data) refresh();   // shows the cool-off text where the library would be
     schedulePoll(0);
     resumePending(false);
   }
@@ -4051,7 +4416,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   document.querySelectorAll('.schip').forEach(function (c) {
     c.addEventListener('click', function () { if (c.dataset.stype !== state.stype) setSearchType(c.dataset.stype, false); });
   });
-  $('refreshBtn').addEventListener('click', function () { checkDevice(); refresh(); schedulePoll(0); maybeRefreshResume(); toast('Refreshing…'); });
+  $('refreshBtn').addEventListener('click', function () {
+    if (coolBlocked()) return;   // v2.13
+    checkDevice(); refresh(); schedulePoll(0, true); maybeRefreshResume(); toast('Refreshing…');
+  });
   $('bannerBtn').addEventListener('click', login);
   $('devBtn').addEventListener('click', openSheet);
   $('sheetClose').addEventListener('click', closeSheet);
@@ -4178,18 +4546,38 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }
     while (state.detail && state.detailStack.length + 1 > want) closeDetail();
   });
+  // v2.13: coming back to the page. The visible copy takes the player check; devices are checked at most
+  // once per 15 s; the player check runs now unless it ran in the last 5 s; the background extras follow a
+  // few seconds later (bgReady). During a cool-off none of these send anything.
+  function onReturn() {
+    if (!state.started || !get(K.token)) return;
+    takePoller();
+    paintCool();
+    bgCheckDevice();
+    schedulePoll(Date.now() - state.lastPollAt < 5000 ? 5000 : 0);
+    resumePending(false);
+    state.bgHoldUntil = Math.max(state.bgHoldUntil, Date.now() + 3000);
+    bgReady();   // then recently played (Home), resume points, Latest (each only when due)
+    startNpTick();
+  }
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) {
       clearTimeout(state.pollTimer); state.pollTimer = null;
       stopNpTick();
       if (state.wake.running) stopWake();   // pause the wake check; it starts fresh on return
+      releasePoller();                      // a hidden copy never polls; another visible copy can take over
       return;
     }
-    if (state.started && get(K.token)) { checkDevice(); schedulePoll(0); resumePending(false); if (onLatestView() || onHome()) maybeLoadLatest(); maybeLoadHomeRecent(); maybeRefreshResume(); startNpTick(); }
+    onReturn();
   });
   // Coming back with the Back button can restore the page from memory without a visibility change.
-  window.addEventListener('pageshow', function (e) {
-    if (e.persisted && state.started && get(K.token)) { checkDevice(); schedulePoll(0); resumePending(false); if (onLatestView()) maybeLoadLatest(); maybeRefreshResume(); }
+  window.addEventListener('pageshow', function (e) { if (e.persisted) onReturn(); });
+  window.addEventListener('pagehide', function () { releasePoller(); });
+  // v2.13: other copies of the page (same storage) share the cool-off and the player answer.
+  window.addEventListener('storage', function (e) {
+    if (!state.started) return;
+    if (e.key === K.cool) paintCool();
+    else if (e.key === K.playerCache && !document.hidden) applyPlayerCache(get(K.playerCache));
   });
   // Safari can report focus a moment before the visibility change; start looking for Spotify right away.
   window.addEventListener('focus', function () {
