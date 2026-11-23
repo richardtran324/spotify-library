@@ -13,7 +13,7 @@ Nothing secret is stored in the file. Your sign-in stays in Safari on your phone
 
 1. Sign in at github.com (create a free account if you don't have one).
 2. Click **+** (top right) → **New repository**. Name it `spotify-library`, choose **Public**, click **Create repository**.
-3. On the new repo page, click **uploading an existing file**, drag in `index.html`, click **Commit changes**.
+3. On the new repo page, click **uploading an existing file**, drag in `index.html` together with `apple-touch-icon.png`, `icon-192.png`, `icon-512.png` and `manifest.webmanifest` (the Home Screen icon), click **Commit changes**.
 4. Go to **Settings** → **Pages**. Under **Build and deployment**, set **Source** to **Deploy from a branch**, **Branch** to `main` and `/ (root)`, then **Save**.
 5. Wait a minute and refresh. GitHub shows your address, like `https://YOUR-USERNAME.github.io/spotify-library/`.
 
@@ -35,7 +35,7 @@ Nothing secret is stored in the file. Your sign-in stays in Safari on your phone
 3. Paste the Client ID and tap **Save and sign in with Spotify**. (To get the Client ID onto the phone, open the Spotify dashboard in Safari on the phone and copy it there.)
 4. Approve access on Spotify's page. You return to your library.
 
-Optional: Share → **Add to Home Screen**. A Home Screen icon keeps its own storage, so you'll sign in once more there. If taps from the Home Screen icon don't open Spotify, use the page in a Safari tab instead.
+Optional: Share → **Add to Home Screen**. The page brings its own icon (`apple-touch-icon.png`) and name. A Home Screen icon keeps its own storage, so you'll sign in once more there. If taps from the Home Screen icon don't open Spotify, use the page in a Safari tab instead.
 
 ## Features
 
@@ -44,16 +44,29 @@ Optional: Share → **Add to Home Screen**. A Home Screen icon keeps its own sto
   - **Heart:** like a song, or save an album or someone else's playlist. A filled heart means it's in your library. Removing something shows **Undo** for a few seconds. Your own playlists, artists and Liked Songs have no heart.
   - **+:** add a song to the queue. Spotify must be open on a device.
   - **›:** open the song list for an album, playlist or Liked Songs.
-- **Song list:** shows the cover, **Play**, **Shuffle**, and the songs, 50 at a time (**Load more** for the rest). Tapping a song plays it in that album or playlist, so the following songs keep going. **Back** (or the phone's back swipe) returns to where you were in the list. Spotify only lets personal apps list the songs in playlists you own; for other playlists the page shows a note and you can still press Play.
-- **Now Playing bar:** at the bottom while something plays: cover, song, artist, device, plus Shuffle, Previous, Play/Pause, Next and a heart for the current song. It checks every 10 seconds while the page is open on screen, and stops checking when you switch away.
-  - **Tap the cover or song name** to open the **Now playing** panel. It lists what applies to what's playing:
+- **Pin:** the pin button on playlist, album, artist and podcast rows (in your library and in search results) keeps that item in a **Pinned** section at the top of its own filter (Playlists, Albums, Artists, Podcasts → Shows) and of All, whatever the sort; the rest of the list sorts as before. Tap it again to unpin. Up to 30 pins. Pins are stored only on this phone (in this browser) and are never sent to Spotify.
+- **Song list:** shows the cover, **Play**, **Shuffle**, and the songs, 50 at a time (**Load more** for the rest). Under the name, a line gives the total once everything is loaded, such as **12 songs · 48 min** or **1 hr 5 min**; while more pages remain it says **50 of 230 songs loaded** instead (no length, since it would cover only part of the list). Tapping a song plays it in that album or playlist, so the following songs keep going. **Back** (or the phone's back swipe) returns to where you were in the list. Spotify only lets personal apps list the songs in playlists you own; for other playlists the page shows a note and you can still press Play.
+- **Now Playing bar:** at the bottom while something plays: cover, song, artist, device, an **Up next** button, a heart for the current song, and Shuffle, Previous, Play/Pause, Next and **Repeat**. It checks every 10 seconds while the page is open on screen, and stops checking when you switch away.
+  - **Tap the cover or song name** to open the full **Now Playing** screen (see below).
+- **Now Playing screen:** slides up over the page. It shows a large cover, the title, the artist or podcast, and a heart.
+  - **Progress bar** with time played and time left. It moves along on its own between checks. Drag it, or tap anywhere on it, to jump there; the page tells Spotify when you let go.
+  - **Shuffle, Previous, Play/Pause, Next, Repeat.** Repeat cycles **off → all** (the album or playlist) **→ one** (this song) **→ off**; it's green while on and shows a small 1 for **one**.
+  - **Episodes** also get **Back 15 s** and **Forward 30 s**.
+  - **Volume** slider, only when the device lets apps change its volume (an iPhone usually doesn't; a computer or speaker usually does).
+  - **Playing on … · Change** opens the device list.
+  - Buttons for what applies to what's playing:
     - **Open album · …** (songs): the album's song list.
     - **Open playlist · …** when you're playing from a playlist. Your own playlists open their song list. A playlist that isn't in your library is looked up by Spotify (one request, remembered until you reload); since Spotify only lets personal apps list songs in your own playlists, it opens with the usual note and a **Play** button.
     - **Open Liked Songs** when you're playing from Liked Songs.
     - **Open show · …** (episodes): the podcast's episode list.
     - **Open in Spotify:** the song or episode in the Spotify app.
-    - **Close**, or tap outside the panel.
-  - The first option is selected when the panel opens. **Back** from the song list returns to where you were, at the same scroll position. If you were already in a song list, the new one replaces it, so **Back** still returns to the list you started from.
+  - **Up next** (top right) opens the queue (see below).
+  - Close with the down arrow at the top left, by swiping down from the top of the screen, or with Escape on a keyboard.
+  - While this screen is open and on screen, the page checks what's playing every 5 seconds instead of 10. Nothing is checked while the page is in the background.
+  - **Back** from a song list you opened here returns to where you were, at the same scroll position. If you were already in a song list, the new one replaces it, so **Back** still returns to the list you started from.
+- **Up next:** opens from the Now Playing screen or the bar. It asks Spotify once for the queue each time it opens (**Refresh** asks again) and shows what's playing and what comes next. You can't reorder it or play from it here; Spotify doesn't let apps reorder the queue.
+  - Spotify adds its own picks after your queue (autoplay) and doesn't say which songs are which. So the page remembers what you added with **+** on this page during the last 24 hours, and **Hide songs Spotify adds after my queue** (on by default, the switch at the top) shows only those, with the note **Spotify may add its own picks after these; they're hidden.** Turn it off to see everything; later songs may then be Spotify's picks.
+  - Songs you added in the Spotify app itself, or more than 24 hours ago, are hidden while the switch is on.
 - **Playing now:** in any song or episode list (albums, playlists, Liked Songs, Recent, search, podcasts), the song or episode that's playing shows its name in green with a small **Playing** label. It updates with the Now Playing check.
 - **Choosing a device:** tap the device name in the status line ("Playing on iPhone · Change") to see your open Spotify devices. Picking one moves playback there and makes it the device taps play on from then on. **Refresh** in that panel looks again.
 
@@ -70,7 +83,9 @@ A row of **Sort** chips sits above most lists. The first chip is the order the p
 - **Song lists:** albums: Track order, A–Z, Artist A–Z. Playlists: Default, Title A–Z, Artist A–Z, Recently added. Liked Songs: Recently liked, Title A–Z, Artist A–Z. Podcasts: Newest, Oldest. Saved episodes: Recently saved, Newest, Oldest.
   - These sort only the songs loaded so far (50 per page). While more pages remain, a note says **Sorted within the songs loaded so far**; **Load more** adds the next page into the sorted list.
   - Tapping a song still plays it inside its album or playlist, so what plays next follows Spotify's order, not the sorted list.
-- A–Z ignores a leading "The" and sorts numbers naturally (2 before 10). **Recent** and **Search Spotify** have no sort: they're a time log and a relevance order.
+- **Search Spotify, one kind picked:** Best match (Spotify's order), A–Z, plus **Newest** for albums and episodes and **Most songs** for playlists. Each kind remembers its own choice. While more results remain, a note says **Sorted within the results loaded so far**.
+- **Pinned** items always stay in their own section at the top, in the order you pinned them.
+- A–Z ignores a leading "The" and sorts numbers naturally (2 before 10). **Recent** and Search Spotify's **All** have no sort: they're a time log and a relevance order.
 
 ### Search Spotify
 
@@ -78,11 +93,14 @@ A row of **Sort** chips sits above most lists. The first chip is the order the p
 - A row of small outlined chips under the main filters picks what to show: **All**, **Songs**, **Artists**, **Albums**, **Playlists**, **Podcasts**, **Episodes**. The page remembers your choice.
   - **All** shows each kind in its own group, the first 5 of each, with **See all songs** (or artists, albums, …) under each group to switch to that kind.
   - **One kind** shows a single list, 10 at a time (Spotify's limit). **Load more** adds the next 10, up to Spotify's limit of about 1,000 results; the button goes away when there are no more.
+- **Recent searches:** while the box is empty, the last 8 searches you ran show as chips. Tap one to run it again with the chip that's picked; **×** removes one; **Clear** removes them all. A search is remembered once it actually runs (2 letters or more). Typing that keeps going within 30 seconds ("ta", then "taylor") keeps only the latest, and the same words in different capitals count once. They're stored only on this phone.
+- **Show first in All:** **Diagnostics → Settings → Search Spotify: show first in All** picks which group comes first (Songs by default); the others keep their usual order.
 - Switching chips searches again for the same words, but results you've already seen this session come back without asking Spotify again. Reloading the page clears them.
 - Rows work like everywhere else: tap to play, heart to save, **+** to queue, **›** to open the song list. Podcast rows open the episode list.
 
 ### Podcasts
 
+- **Continue listening:** at the top of Podcasts (both Latest and Shows), a short row of up to 10 episodes you've started but not finished, with the time left. Tap one to pick up where you left off. It uses what the page already has (the Latest episodes list, plus Saved episodes or a podcast's episode list once you've opened them this session), so it costs no extra requests. Spotify doesn't tell apps when you last played an episode, so the newest release comes first. The row is hidden when there's nothing to resume.
 - The **Podcasts** filter opens on a **Latest | Shows** switch. **Latest** (the default) is the newest episodes across all your saved podcasts; **Shows** is **Saved episodes** (the episodes you saved in Spotify) followed by the podcasts you follow, each with its episode count. **All** includes Saved episodes and your podcasts too.
 - **Latest episodes:** the 50 newest episodes across your saved podcasts (the newest 5 from each), newest first. Each row shows the podcast, when it came out (**Today**, **Yesterday**, or the date) and the length, time left, or **Played**. A green dot marks an episode from the last 7 days that you haven't started.
   - **Play newest** starts the newest episode you haven't finished.
@@ -107,7 +125,11 @@ When the iPhone's Spotify app has been idle for a while, Spotify stops listing i
 
 A tap is remembered for 3 minutes; after that the page forgets it. With the two options that open the app, if the page hasn't checked for devices recently when you tap, it checks first and then shows a button to wake Spotify, because iPhone Safari may not open another app after the page has been waiting on Spotify. (Waiting needs no button: nothing opens.) If you had picked the app or shortcut option in an earlier version, that choice stays.
 
-**Diagnostics** shows **Wake mode** (wait, link or shortcut), **Pending** (the remembered tap, its mode and how long ago, or none) and the **Latest episodes** cache.
+**Diagnostics** shows **Wake mode** (wait, link or shortcut), **Pending** (the remembered tap, its mode and how long ago, or none), **Appearance**, how many pins, queued songs and recent searches the page is keeping, and the **Latest episodes** cache.
+
+### Appearance
+
+**Diagnostics → Settings → Appearance:** **Match phone** (default), **Light** or **Dark**. Light and Dark apply right away and override the phone's setting.
 
 ## Notes
 
@@ -118,6 +140,7 @@ A tap is remembered for 3 minutes; after that the page forgets it. With the two 
 - **Search Spotify** searches the whole catalog (songs, artists, albums, playlists, podcasts, episodes). Spotify returns at most 10 of each kind per request; pick one kind with the chips to page through more (see **Search Spotify** above). Tap a result to play it the same way as library items.
 - **v2.5** adds the **Now playing** panel and the search chips. It needs no new permissions, so no extra sign-in.
 - **v2.8** adds the **Sort** chips (see **Sorting** above). No new permissions.
+- **v2.9** adds the Now Playing screen, **Up next**, **Continue listening**, pins, recent searches, Appearance, and sorting in Search Spotify. **Up next** needs one more permission (Spotify requires "currently playing" access to read the queue), so the **New features need one more sign-in** banner appears once more. Tap **Sign in again** and approve. Until then everything else works; if Spotify refuses the queue, **Up next** shows a **Sign in again** button instead.
 - If Spotify doesn't let the page check which items are already saved, hearts start outlined and a tap saves the item.
 - **Refresh** reloads your library and checks for an open Spotify device. The page also checks each time you come back to it.
 - To update the page later, upload the new `index.html` to the same repo (it replaces the old one).

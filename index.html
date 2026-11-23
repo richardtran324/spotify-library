@@ -7,6 +7,13 @@
 <meta name="apple-mobile-web-app-title" content="Library">
 <meta name="theme-color" content="#101418">
 <title>My Library</title>
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+<script>
+/* Appearance (Diagnostics → Settings), applied before the page paints so a forced theme doesn't flash. */
+try { var libTheme = JSON.parse(localStorage.getItem('lib-theme') || 'null'); if (libTheme === 'light' || libTheme === 'dark') document.documentElement.setAttribute('data-theme', libTheme); } catch (e) {}
+</script>
 <style>
 /* Layout: one column for a phone. Sticky top bar (status + search + filters), then a list of covers you tap to play.
    Rows carry small icon buttons on the right (save, queue, open). A Now Playing bar sits at the bottom while something plays. */
@@ -298,7 +305,6 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
 .pinfo .meta, .pinfo .name, .pinfo .sub { display: block; }
 a.devrow { text-decoration: none; }
 .devrow[aria-busy="true"] { opacity: 0.6; cursor: progress; }
-.npwhat { margin: -4px 0 0; white-space: normal; }
 /* The song that's playing now, in any list */
 li.row.playing .name { color: var(--accent); }
 .nowtag {
@@ -320,6 +326,77 @@ header.top.detail .schips { display: none; }
 .sortlbl { font-size: 0.8rem; font-weight: 600; color: var(--muted); margin-right: 2px; }
 .sortbar .chip { font-size: 0.85rem; padding: 5px 11px; min-height: 34px; }
 .snote { font-size: 0.8rem; color: var(--muted); margin: 6px 2px 0; }
+/* Full Now Playing screen: slides up over everything except the sheets (device picker, Up next) and the toast */
+body.npopen { overflow: hidden; }
+.npfull {
+  position: fixed; inset: 0; z-index: 15; background: var(--bg); color: var(--fg);
+  overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  animation: npUp 0.24s ease-out;
+}
+@keyframes npUp { from { transform: translateY(100%); } to { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .npfull { animation: none; } }
+.npf {
+  max-width: 480px; margin: 0 auto; min-height: 100%;
+  padding: calc(6px + env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) calc(20px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
+  display: flex; flex-direction: column; gap: 10px;
+}
+.npf-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.npf-h {
+  flex: 1; min-width: 0; margin: 0; text-align: center; font-size: 0.75rem; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.npf-cover {
+  width: min(100%, 38vh); aspect-ratio: 1 / 1; height: auto; align-self: center;
+  border-radius: 10px; object-fit: cover; background: var(--chip); display: block;
+}
+.npf-row { display: flex; align-items: center; gap: 8px; }
+.npf-title { font-size: 1.2rem; font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
+.npf-row .sub { white-space: normal; }
+.slider { position: relative; height: 40px; display: flex; align-items: center; touch-action: none; cursor: pointer; border-radius: 6px; }
+.strack { position: relative; flex: 1; height: 4px; border-radius: 2px; background: var(--line); }
+.sfill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 2px; background: var(--fg); }
+.sthumb { position: absolute; top: 50%; left: 0; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: var(--fg); }
+.slider:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.times { display: flex; justify-content: space-between; margin-top: -10px; font-size: 0.78rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.npf-ctl { display: flex; justify-content: space-between; align-items: center; padding: 0 2px; }
+.npf-ctl .act.big { width: 60px; height: 60px; }
+.npf-ctl .act.big svg { width: 30px; height: 30px; }
+.npf-skip { display: flex; justify-content: center; gap: 40px; }
+.npf-skip .act { width: 44px; height: 44px; }
+.npf-skip .act svg { width: 28px; height: 28px; }
+.npf-vol { display: flex; align-items: center; gap: 10px; color: var(--muted); }
+.npf-vol svg { width: 20px; height: 20px; flex: none; }
+.npf-vol .slider { flex: 1; }
+.npf-dev { align-self: flex-start; }
+.npf-opts { display: flex; flex-wrap: wrap; gap: 8px; }
+.npf-opts .btn { display: inline-block; line-height: 24px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Up next (queue) sheet */
+.qitem { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; padding: 8px 2px; }
+.qnote { font-size: 0.85rem; color: var(--muted); margin: 0; }
+/* Podcasts: Continue listening (a short horizontal strip) */
+.cl { display: flex; gap: 12px; overflow-x: auto; margin: 6px -16px 0; padding: 4px 16px 6px; scroll-padding: 0 16px; list-style: none; scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; }
+.cl li { flex: none; width: 112px; scroll-snap-align: start; }
+.clcard { display: flex; flex-direction: column; gap: 4px; color: inherit; text-decoration: none; border-radius: 8px; }
+.clcard:active { opacity: 0.6; }
+.clcard .cover { width: 112px; height: 112px; border-radius: 8px; }
+.clname { font-size: 0.85rem; font-weight: 600; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.clcard .sub { font-size: 0.78rem; }
+li.playing .clname { color: var(--accent); }
+/* Search Spotify: recent searches */
+.recent { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.rchip { display: inline-flex; align-items: center; max-width: 100%; border-radius: 999px; background: var(--chip); }
+.rchip .rq {
+  font: inherit; font-size: 0.9rem; color: var(--fg); background: none; border: 0; cursor: pointer;
+  padding: 6px 4px 6px 13px; min-height: 40px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-radius: 999px 0 0 999px;
+}
+.rchip .rx {
+  font: inherit; font-size: 1.05rem; line-height: 1; color: var(--muted); background: none; border: 0; cursor: pointer;
+  width: 36px; min-height: 40px; border-radius: 0 999px 999px 0;
+}
+.sethint { font-size: 0.85rem; color: var(--muted); margin: 0; }
+select.field { appearance: auto; -webkit-appearance: menulist; }
+.dsum { font-size: 0.85rem; color: var(--muted); margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -365,10 +442,11 @@ header.top.detail .schips { display: none; }
 <div class="player" id="player" hidden>
   <div class="pinner">
     <div class="prow">
-      <button class="pinfo" id="pInfo" type="button" aria-label="Now playing options" aria-haspopup="dialog">
+      <button class="pinfo" id="pInfo" type="button" aria-label="Open Now Playing" aria-haspopup="dialog">
         <img class="pcover" id="pCover" alt="">
         <span class="meta"><span class="name" id="pTitle"></span><span class="sub" id="pSub"></span></span>
       </button>
+      <button class="act" id="pQueue" type="button" aria-label="Up next" aria-haspopup="dialog"></button>
       <button class="act heart" id="pHeart" type="button" data-uri="" data-name="" data-kind="track" aria-pressed="false" aria-label="Like this song"></button>
     </div>
     <div class="pctl">
@@ -376,7 +454,42 @@ header.top.detail .schips { display: none; }
       <button class="act" id="pPrev" type="button" aria-label="Previous"></button>
       <button class="act big" id="pPlay" type="button" aria-label="Pause"></button>
       <button class="act" id="pNext" type="button" aria-label="Next"></button>
+      <button class="act" id="pRepeat" type="button" aria-label="Repeat off" aria-pressed="false"></button>
     </div>
+  </div>
+</div>
+
+<div class="npfull" id="np" role="dialog" aria-modal="true" aria-labelledby="npTitle" hidden>
+  <div class="npf" id="npPanel">
+    <div class="npf-top">
+      <button class="act" id="npClose" type="button" aria-label="Close Now Playing"></button>
+      <h2 class="npf-h" id="npTitle">Now playing</h2>
+      <button class="act" id="npQueue" type="button" aria-label="Up next" aria-haspopup="dialog"></button>
+    </div>
+    <img class="npf-cover" id="npCover" alt="">
+    <div class="npf-row">
+      <div class="meta"><div class="npf-title" id="npName"></div><div class="sub" id="npBy"></div></div>
+      <button class="act heart" id="npHeart" type="button" data-uri="" data-name="" data-kind="track" aria-pressed="false" aria-label="Like this song"></button>
+    </div>
+    <div class="slider" id="npSeek" role="slider" tabindex="0" aria-label="Position" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"><div class="strack"><div class="sfill"></div><div class="sthumb"></div></div></div>
+    <div class="times" aria-hidden="true"><span id="npElapsed">0:00</span><span id="npRemain">-0:00</span></div>
+    <div class="npf-ctl">
+      <button class="act" id="npShuffle" type="button" aria-label="Shuffle" aria-pressed="false"></button>
+      <button class="act" id="npPrev" type="button" aria-label="Previous"></button>
+      <button class="act big" id="npPlay" type="button" aria-label="Pause"></button>
+      <button class="act" id="npNext" type="button" aria-label="Next"></button>
+      <button class="act" id="npRepeat" type="button" aria-label="Repeat off" aria-pressed="false"></button>
+    </div>
+    <div class="npf-skip" id="npSkip" hidden>
+      <button class="act" id="npBack15" type="button" aria-label="Back 15 seconds"></button>
+      <button class="act" id="npFwd30" type="button" aria-label="Forward 30 seconds"></button>
+    </div>
+    <div class="npf-vol" id="npVolRow" hidden>
+      <span id="npVolIcon"></span>
+      <div class="slider" id="npVol" role="slider" tabindex="0" aria-label="Volume" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="strack"><div class="sfill"></div><div class="sthumb"></div></div></div>
+    </div>
+    <button class="linkbtn npf-dev" id="npDev" type="button"></button>
+    <div class="npf-opts" id="npOpts"></div>
   </div>
 </div>
 
@@ -392,14 +505,15 @@ header.top.detail .schips { display: none; }
   </div>
 </div>
 
-<div class="sheet" id="np" role="dialog" aria-modal="true" aria-labelledby="npTitle" hidden>
-  <div class="sheet-back" id="npBack"></div>
+<div class="sheet" id="queue" role="dialog" aria-modal="true" aria-labelledby="queueTitle" hidden>
+  <div class="sheet-back" id="queueBack"></div>
   <div class="sheet-panel">
-    <h2 id="npTitle">Now playing</h2>
-    <p class="sub npwhat" id="npWhat"></p>
-    <ul class="devlist" id="npList"></ul>
+    <h2 id="queueTitle">Up next</h2>
+    <label class="setrow"><input type="checkbox" id="qHide"><span><span class="setname">Hide songs Spotify adds after my queue</span><span class="setnote">Shows only what you added with ＋ on this page in the last 24 hours.</span></span></label>
+    <div id="qBody"></div>
     <div class="sheet-btns">
-      <button class="btn secondary" id="npClose" type="button">Close</button>
+      <button class="btn secondary" id="queueRefresh" type="button">Refresh</button>
+      <button class="btn secondary" id="queueClose" type="button">Close</button>
     </div>
   </div>
 </div>
@@ -415,6 +529,22 @@ header.top.detail .schips { display: none; }
       <label class="setrow"><input type="radio" name="wakeMode" value="link"><span><span class="setname">Open the Spotify app</span><span class="setnote">A tap opens the item in Spotify; switch back and the page plays it.</span></span></label>
       <label class="setrow"><input type="radio" name="wakeMode" value="shortcut"><span><span class="setname">Run my Wake Spotify shortcut</span><span class="setnote">A tap runs your “Wake Spotify” shortcut, which opens Spotify and comes back to the page.</span></span></label>
     </fieldset>
+    <fieldset class="setgroup" id="themeModes">
+      <legend>Appearance</legend>
+      <label class="setrow"><input type="radio" name="theme" value="auto"><span><span class="setname">Match phone</span></span></label>
+      <label class="setrow"><input type="radio" name="theme" value="light"><span><span class="setname">Light</span></span></label>
+      <label class="setrow"><input type="radio" name="theme" value="dark"><span><span class="setname">Dark</span></span></label>
+    </fieldset>
+    <label class="setgroup" for="searchFirst"><span class="setname">Search Spotify: show first in All</span></label>
+    <select class="field" id="searchFirst">
+      <option value="track">Songs</option>
+      <option value="artist">Artists</option>
+      <option value="album">Albums</option>
+      <option value="playlist">Playlists</option>
+      <option value="show">Podcasts</option>
+      <option value="episode">Episodes</option>
+    </select>
+    <p class="sethint">The other groups keep their usual order.</p>
     <h3 class="sheet-sub">Report</h3>
     <pre class="diagpre" id="diagOut">Checking…</pre>
     <div class="sheet-btns">
@@ -441,7 +571,8 @@ header.top.detail .schips { display: none; }
     'user-read-playback-state',
     'user-modify-playback-state',
     'user-read-recently-played',
-    'user-read-playback-position'
+    'user-read-playback-position',
+    'user-read-currently-playing'   // v2.9: Up next (GET /me/player/queue needs it with user-read-playback-state)
   ];
   var SCOPES = SCOPE_LIST.join(' ');
   var API = 'https://api.spotify.com/v1';
@@ -459,8 +590,19 @@ header.top.detail .schips { display: none; }
     latest: 'lib-latest',      // {at, items, failed}: newest episodes across your saved shows
     hidePlayed: 'lib-hide-played',
     searchType: 'lib-searchtype', // Search Spotify result type: 'all' (default) or one of SEARCH_TYPES
-    showSort: 'lib-showsort'     // v2.7 Shows order; read only when 'lib-sort-shows' is unset (see sortMode)
+    showSort: 'lib-showsort',    // v2.7 Shows order; read only when 'lib-sort-shows' is unset (see sortMode)
+    pins: 'lib-pins',            // [{kind, id, name, uri, url, img, sub[, ownerId, collaborative]}], oldest pin first; local only
+    recentSearches: 'lib-recent-searches', // [{q, at}], newest first
+    queued: 'lib-queued',        // [{uri, at}]: what this page added to the queue with ＋ (last 24 h)
+    queueHide: 'lib-queue-hide', // false shows the whole queue; anything else hides Spotify's own additions
+    theme: 'lib-theme',          // 'light' | 'dark'; unset = match the phone
+    searchFirst: 'lib-search-first' // the group shown first in Search Spotify → All
   };
+  var PINS_MAX = 30;
+  var RECENT_SEARCHES_MAX = 8;
+  var QUEUED_MAX = 100;
+  var QUEUED_MS = 24 * 60 * 60 * 1000;
+  var NP_POLL_MS = 5000;          // Now Playing check while the full screen is open and on screen
   var FILTERS = ['playlists', 'albums', 'artists', 'podcasts', 'recent', 'all', 'search'];
   // Search Spotify result types. key: the page object in the /search answer; map: row mapper.
   var SEARCH_TYPES = ['all', 'track', 'artist', 'album', 'playlist', 'show', 'episode'];
@@ -496,7 +638,7 @@ header.top.detail .schips { display: none; }
   var state = {
     data: null, filter: 'playlists', query: '',
     device: null, deviceAt: 0, deviceChecked: false, devices: [], devicesAt: 0, active: null,
-    player: null, pollTimer: null, pollSeq: 0, pollFailed: false,
+    player: null, playerAt: 0, pollTimer: null, pollSeq: 0, pollFailed: false,
     search: { q: '' }, stype: 'all',   // results live in searchCache, per type and query
     recent: { items: null, loading: false, error: '' }, recentSeq: 0,
     saved: {}, busy: {}, containsOff: false, checking: {}, checkQueue: [], checkTimer: null,
@@ -544,7 +686,16 @@ header.top.detail .schips { display: none; }
     play: svg('<path fill="currentColor" d="M8 5v14l11-7z"/>'),
     pause: svg('<path fill="currentColor" d="M6 5h4v14H6zM14 5h4v14h-4z"/>'),
     shuffle: svg('<path fill="currentColor" d="M10.6 9.2L5.4 4 4 5.4l5.2 5.2 1.4-1.4zM14.5 4l2 2L4 18.6 5.4 20 18 7.5l2 2V4h-5.5zm.3 9.4l-1.4 1.4 3.1 3.1-2 2.1H20v-5.5l-2 2-3.2-3.1z"/>'),
-    bookmark: svg('<path fill="currentColor" d="M6 3h12v18l-6-4.5L6 21z"/>')
+    bookmark: svg('<path fill="currentColor" d="M6 3h12v18l-6-4.5L6 21z"/>'),
+    repeat: svg('<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M17 2l3 3-3 3M4 11V9a4 4 0 0 1 4-4h12M7 22l-3-3 3-3M20 13v2a4 4 0 0 1-4 4H4"/>'),
+    repeatOne: svg('<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M17 2l3 3-3 3M4 11V9a4 4 0 0 1 4-4h12M7 22l-3-3 3-3M20 13v2a4 4 0 0 1-4 4H4"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M10.8 10.4L12.4 9v6"/>'),
+    queue: svg('<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M3 6h13M3 11h13M3 16h8"/><path fill="currentColor" d="M15 14v7l6-3.5z"/>'),
+    down: svg('<path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M5 9l7 7 7-7"/>'),
+    pin: svg('<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M9 3h6v6l3 3v2.5h-5V21h-2v-6.5H6V12l3-3z"/>'),
+    pinOn: svg('<path fill="currentColor" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M9 3h6v6l3 3v2.5h-5V21h-2v-6.5H6V12l3-3z"/>'),
+    back15: svg('<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M5.2 8.5A8 8 0 1 1 4 12"/><path fill="currentColor" d="M3.5 4v6h6z"/><text x="12.5" y="15.5" font-size="7.5" font-weight="700" text-anchor="middle" fill="currentColor" font-family="-apple-system, system-ui, sans-serif">15</text>'),
+    fwd30: svg('<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M18.8 8.5A8 8 0 1 0 20 12"/><path fill="currentColor" d="M20.5 4v6h-6z"/><text x="11.5" y="15.5" font-size="7.5" font-weight="700" text-anchor="middle" fill="currentColor" font-family="-apple-system, system-ui, sans-serif">30</text>'),
+    volume: svg('<path fill="currentColor" d="M4 9h4l5-4v14l-5-4H4z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12"/>')
   };
 
   var toastTimer = null;
@@ -733,7 +884,8 @@ header.top.detail .schips { display: none; }
       url: 'https://open.spotify.com/' + (ep ? 'episode/' : 'track/') + t.id,
       img: o.noImg ? '' : img(ep ? (t.images || (t.show && t.show.images)) : (t.album && t.album.images)),
       sub: sub, num: o.num, ctx: o.ctx,
-      artist: by   // for sorting: the song's artists, or an episode's show
+      artist: by,   // for sorting: the song's artists, or an episode's show
+      durMs: t.duration_ms || 0   // for the total length above a song list
     };
   }
   function mapAlbum(a) {
@@ -806,7 +958,14 @@ header.top.detail .schips { display: none; }
     'd-playlist': [['default', 'Default'], ['az', 'Title A–Z'], ['artist', 'Artist A–Z'], ['added', 'Recently added']],
     'd-liked': [['default', 'Recently liked'], ['az', 'Title A–Z'], ['artist', 'Artist A–Z']],
     'd-show': [['newest', 'Newest'], ['oldest', 'Oldest']],
-    'd-episodes': [['saved', 'Recently saved'], ['newest', 'Newest'], ['oldest', 'Oldest']]
+    'd-episodes': [['saved', 'Recently saved'], ['newest', 'Newest'], ['oldest', 'Oldest']],
+    // Search Spotify with one result type: 's-<type>'. Best match is Spotify's own order.
+    's-track': [['best', 'Best match'], ['az', 'A–Z']],
+    's-artist': [['best', 'Best match'], ['az', 'A–Z']],
+    's-album': [['best', 'Best match'], ['az', 'A–Z'], ['newest', 'Newest']],
+    's-playlist': [['best', 'Best match'], ['az', 'A–Z'], ['songs', 'Most songs']],
+    's-show': [['best', 'Best match'], ['az', 'A–Z']],
+    's-episode': [['best', 'Best match'], ['az', 'A–Z'], ['newest', 'Newest']]
   };
   // A–Z ignores a leading "The" and compares like a person would (case and accents aside, 2 before 10).
   function sortText(s) { return String(s || '').replace(/^the\s+/i, ''); }
@@ -835,7 +994,13 @@ header.top.detail .schips { display: none; }
     'd-playlist': { az: byName, artist: function (a, b) { return cmpText(a.artist, b.artist); }, added: function (a, b) { return cmpDesc(a.added, b.added); } },
     'd-liked': { az: byName, artist: function (a, b) { return cmpText(a.artist, b.artist); } },
     'd-show': { oldest: function (a, b) { return cmpAsc(a.date, b.date); } },
-    'd-episodes': { newest: function (a, b) { return cmpDesc(a.date, b.date); }, oldest: function (a, b) { return cmpAsc(a.date, b.date); } }
+    'd-episodes': { newest: function (a, b) { return cmpDesc(a.date, b.date); }, oldest: function (a, b) { return cmpAsc(a.date, b.date); } },
+    's-track': { az: byName },
+    's-artist': { az: byName },
+    's-album': { az: byName, newest: function (a, b) { return cmpDesc(a.released, b.released); } },
+    's-playlist': { az: byName, songs: function (a, b) { return (b.count || 0) - (a.count || 0); } },
+    's-show': { az: byName },
+    's-episode': { az: byName, newest: function (a, b) { return cmpDesc(a.date, b.date); } }
   };
   function sortMode(view) {
     var opts = SORTS[view];
@@ -929,7 +1094,8 @@ header.top.detail .schips { display: none; }
       img: img(e.images && e.images.length ? e.images : (e.show && e.show.images)),
       sub: ['Episode', by, when].filter(Boolean).join(' · '),
       positionMs: pos, played: played,
-      date: e.release_date || ''   // for sorting
+      date: e.release_date || '',   // for sorting
+      durMs: dur, showName: (e.show && e.show.name) || ''   // for the total length and Continue listening
     };
   }
   function loadData() {
@@ -1061,8 +1227,64 @@ header.top.detail .schips { display: none; }
     e.type = type; e.q = q;
     cachePut(type, q, e);
     state.search = { q: q };
+    addRecentSearch(q);
     renderList();
     fetchSearchPage(type, q, e);
+  }
+  // ---------- recent searches (Search Spotify, shown while the box is empty) ----------
+  // Saved each time a search actually runs. Typing with pauses runs several searches ("ta", "taylor");
+  // a search that extends or shortens the newest entry within 30 seconds replaces it instead of adding one.
+  function recentSearches() {
+    var a = get(K.recentSearches);
+    if (!Array.isArray(a)) return [];
+    return a.filter(function (x) { return x && typeof x.q === 'string' && x.q.length >= 2; }).slice(0, RECENT_SEARCHES_MAX);
+  }
+  function addRecentSearch(q) {
+    q = String(q || '').trim();
+    if (q.length < 2) return;
+    var lq = q.toLowerCase();
+    var a = recentSearches();
+    var top = a[0];
+    if (top && top.q.toLowerCase() !== lq && Date.now() - (top.at || 0) < 30000) {
+      var lt = top.q.toLowerCase();
+      if (lq.indexOf(lt) === 0 || lt.indexOf(lq) === 0) a.shift();   // still typing the same search
+    }
+    a = a.filter(function (x) { return x.q.toLowerCase() !== lq; });
+    a.unshift({ q: q, at: Date.now() });
+    set(K.recentSearches, a.slice(0, RECENT_SEARCHES_MAX));
+  }
+  function removeRecentSearch(q) {
+    var lq = q.toLowerCase();
+    set(K.recentSearches, recentSearches().filter(function (x) { return x.q.toLowerCase() !== lq; }));
+  }
+  function renderRecentSearches(main) {
+    var list = recentSearches();
+    if (!list.length) return false;
+    main.appendChild(el('h2', { class: 'sect', id: 'recentHead', text: 'Recent searches' }));
+    var box = el('div', { class: 'recent', role: 'group', 'aria-labelledby': 'recentHead' });
+    list.forEach(function (x, i) {
+      var go = el('button', { class: 'rq', type: 'button', 'data-rq': String(i), text: x.q, 'aria-label': 'Search for “' + x.q + '”' });
+      go.addEventListener('click', function () {
+        $('search').value = x.q;
+        addRecentSearch(x.q);
+        scheduleSearch(x.q, true);
+        var c = document.querySelector('.schip[aria-pressed="true"]');   // keeps the keyboard closed
+        if (c) c.focus();
+      });
+      var rm = el('button', { class: 'rx', type: 'button', 'data-rx': String(i), 'aria-label': 'Remove “' + x.q + '” from recent searches', text: '×' });
+      rm.addEventListener('click', function () {
+        removeRecentSearch(x.q);
+        renderList();
+        var n = document.querySelector('[data-rq="' + i + '"]') || document.querySelector('[data-rq="' + (i - 1) + '"]') || $('search');
+        n.focus();
+      });
+      box.appendChild(el('span', { class: 'rchip' }, [go, rm]));
+    });
+    var clear = el('button', { class: 'linkbtn', type: 'button', text: 'Clear' });
+    clear.addEventListener('click', function () { set(K.recentSearches, []); renderList(); $('search').focus(); });
+    box.appendChild(clear);
+    main.appendChild(box);
+    return true;
   }
   function searchMore(e) {
     if (!e || e.loading || !e.more) return;
@@ -1095,7 +1317,9 @@ header.top.detail .schips { display: none; }
       e.more = !!page.next && e.offset < SEARCH_MAX_OFFSET;
       if (!showingSearch(e)) return;
       if (first || !$('slist')) { renderList(); return; }
-      appendSearchRows(got, e);
+      // A chosen sort re-sorts everything loaded so far; Spotify's order just adds the new rows at the end.
+      if (sortIsDefault('s-' + type)) appendSearchRows(got, e);
+      else { paintSearchSort(e); paintSearchRows(e); }
     }).catch(function (err) {
       if (err && err.message === 'signed-out') return renderSignIn();
       e.loading = false;
@@ -1259,6 +1483,53 @@ header.top.detail .schips { display: none; }
       positionMs: x.positionMs, played: x.played,
       fresh: !x.played && !(x.positionMs > 0) && age != null && age < 7   // released in the last 7 days, not started
     };
+  }
+  // ---------- Continue listening: episodes you've started but not finished ----------
+  // Built only from what the page already has (no extra requests): the Latest episodes cache, plus
+  // episodes seen in an episode list this session (Saved episodes, a podcast). Spotify gives no
+  // "last played" time for episodes, so the newest release comes first.
+  var epSeen = {};   // uri -> {x: mapped episode, at: when it was loaded}; this session only
+  function rememberEpisodes(items) {
+    var now = Date.now();
+    items.forEach(function (i) { if (i && i.kind === 'episode' && i.uri) epSeen[i.uri] = { x: i, at: now }; });
+  }
+  function continueItems() {
+    var byUri = {};
+    var c = state.latest.cache;
+    if (c && c.items) c.items.forEach(function (x) {
+      byUri[x.uri] = { at: c.at, i: { id: x.id, uri: x.uri, name: x.name, img: x.img, showName: x.showName, date: x.date, durMs: x.durMs, positionMs: x.positionMs, played: x.played } };
+    });
+    Object.keys(epSeen).forEach(function (u) {
+      var s = epSeen[u];
+      if (!byUri[u] || s.at > byUri[u].at) byUri[u] = { at: s.at, i: s.x };   // the newer snapshot wins
+    });
+    var out = Object.keys(byUri).map(function (u) { return byUri[u].i; })
+      .filter(function (i) { return i.positionMs > 0 && !i.played; });
+    out.sort(function (a, b) { return cmpDesc(a.date, b.date); });
+    return out.slice(0, 10).map(function (i) {
+      return {
+        kind: 'episode', id: i.id, name: i.name, uri: i.uri, url: 'https://open.spotify.com/episode/' + i.id, img: i.img,
+        positionMs: i.positionMs, played: false, date: i.date,
+        sub: epWhen(false, i.positionMs, i.durMs) || i.showName || ''
+      };
+    });
+  }
+  function renderContinue(main) {
+    var items = matches(continueItems());
+    if (!items.length) return;
+    main.appendChild(el('h2', { class: 'sect', id: 'clHead', text: 'Continue listening' }));
+    var ul = el('ul', { class: 'cl', 'aria-labelledby': 'clHead' });
+    var cur = playingUri();
+    items.forEach(function (i) {
+      var a = el('a', { class: 'clcard', href: i.url, 'aria-label': 'Resume “' + i.name + '”' + (i.sub ? ', ' + i.sub : '') }, [
+        coverFor(i),
+        el('span', { class: 'clname', text: i.name }),
+        el('span', { class: 'sub', text: i.sub })
+      ]);
+      a.addEventListener('click', function (ev) { onItemClick(i, ev); });   // plays from positionMs
+      ul.appendChild(el('li', { 'data-puri': i.uri, class: cur && cur === i.uri ? 'playing' : null }, [a]));
+    });
+    main.appendChild(ul);
   }
   function podSeg() {
     var g = el('div', { class: 'seg', role: 'group', 'aria-label': 'Podcasts view' });
@@ -1661,12 +1932,24 @@ header.top.detail .schips { display: none; }
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.8 (2026-11-22)';
+  var VERSION = 'v2.9 (2026-11-22)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
   }
-  function openDiag() { $('diag').hidden = false; paintWakeModes(); $('diagClose').focus(); runDiag(); }
+  // Appearance: 'auto' follows the phone; Light or Dark sets data-theme on <html> (the CSS has a block for each).
+  function themeMode() { var v = get(K.theme); return v === 'light' || v === 'dark' ? v : 'auto'; }
+  function applyTheme() {
+    var m = themeMode();
+    if (m === 'auto') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', m);
+  }
+  function paintSettings() {
+    var t = themeMode();
+    document.querySelectorAll('input[name="theme"]').forEach(function (r) { r.checked = r.value === t; });
+    $('searchFirst').value = searchFirst();
+  }
+  function openDiag() { $('diag').hidden = false; paintWakeModes(); paintSettings(); $('diagClose').focus(); runDiag(); }
   function closeDiag() { $('diag').hidden = true; }
   function runDiag() {
     var out = [];
@@ -1684,6 +1967,8 @@ header.top.detail .schips { display: none; }
     var pend = readPending();
     line('Pending: ' + (pend ? pend.item.name + ' (' + (pend.mode || 'link') + ', ' + Math.round((Date.now() - pend.at) / 1000) + 's ago' + (pend.manual ? ', waiting for Try again' : '') + ')' : 'none'));
     var lc = state.latest.cache;
+    line('Appearance: ' + themeMode() + ' · Search shows first: ' + searchFirst());
+    line('Pinned: ' + readPins().length + ' · Queued with ＋ (24 h): ' + readQueued().length + ' · Recent searches: ' + recentSearches().length);
     line('Latest episodes: ' + (lc ? lc.items.length + ' cached, updated ' + ago(new Date(lc.at).toISOString()) + (lc.failed ? ', ' + lc.failed + ' show(s) failed' : '') : 'not loaded'));
     line('');
     function probe(label, path, show) {
@@ -1738,7 +2023,7 @@ header.top.detail .schips { display: none; }
     var d = controlDevice();
     if (!d) { toast(NO_DEVICE); return; }
     api('/me/player/queue?uri=' + encodeURIComponent(item.uri) + '&device_id=' + encodeURIComponent(d.id), { method: 'POST' }).then(function (r) {
-      if (r.ok) { toast('Added to queue'); return; }
+      if (r.ok) { rememberQueued(item.uri); toast('Added to queue'); return; }
       if (r.status === 404) { toast(NO_DEVICE); return; }
       throw new Error(errMsg(r));
     }).catch(onFail('Couldn’t add to queue'));
@@ -1755,7 +2040,7 @@ header.top.detail .schips { display: none; }
     state.pollTimer = null;
     if (!state.started || document.hidden) return;
     var seq = ++state.pollSeq;
-    var next = POLL_MS;
+    var next = npShown() ? NP_POLL_MS : POLL_MS;   // every 5 s while the full Now Playing screen is open
     api('/me/player').then(function (r) {
       if (seq !== state.pollSeq) return 'stale';
       if (r.status === 204 || (r.ok && !r.json)) setPlayer(null);
@@ -1775,7 +2060,11 @@ header.top.detail .schips { display: none; }
     });
   }
   function setPlayer(p) {
+    var prevUri = state.player && state.player.item && state.player.item.uri;
     state.player = p && p.item ? p : null;
+    state.playerAt = Date.now();   // progress_ms is as of this answer; the Now Playing screen counts on from here
+    var nowUri = state.player && state.player.item.uri;
+    if (prevUri && nowUri !== prevUri) consumeQueued(prevUri);
     if (p && p.device && p.device.id) { state.active = p.device; state.deviceAt = Date.now(); }
     else {
       state.active = null;
@@ -1807,6 +2096,7 @@ header.top.detail .schips { display: none; }
     var lab = p.is_playing ? 'Pause' : 'Play';
     if (pb.getAttribute('aria-label') !== lab || !pb.firstChild) { pb.setAttribute('aria-label', lab); pb.innerHTML = p.is_playing ? ICON.pause : ICON.play; }
     $('pShuffle').setAttribute('aria-pressed', String(!!p.shuffle_state));
+    paintRepeat($('pRepeat'));
     var h = $('pHeart');
     h.setAttribute('data-uri', item.uri || '');
     h.setAttribute('data-name', item.name || '');
@@ -1816,6 +2106,7 @@ header.top.detail .schips { display: none; }
     if (item.uri) requestSaved([item.uri]);
     bar.hidden = false;
     document.body.classList.add('has-player');
+    paintNp();
   }
   function command(method, path, optimistic) {
     var p = state.player;
@@ -1831,8 +2122,8 @@ header.top.detail .schips { display: none; }
   }
 
   // ---------- device sheet ----------
-  function openSheet() {
-    state.sheetReturn = document.activeElement;
+  function openSheet(from) {   // from: optional opener to return focus to (an event object is ignored)
+    state.sheetReturn = (from && from.nodeType === 1) ? from : document.activeElement;
     $('sheet').hidden = false;
     renderSheet();
     loadSheetDevices();
@@ -1885,7 +2176,7 @@ header.top.detail .schips { display: none; }
     }).catch(onFail('Couldn’t switch to ' + d.name)).then(function () { schedulePoll(600); });
   }
 
-  // ---------- "Now playing" sheet: from the bar to the album, playlist, Liked Songs or show ----------
+  // ---------- Now playing options: from what plays to the album, playlist, Liked Songs or show ----------
   var plMemo = {};    // playlist id -> promise of a mapped playlist (GET /playlists/{id}), this session
   var plKnown = {};   // playlist id -> mapped playlist, once that request answered
   var npReturn = null;
@@ -1946,45 +2237,346 @@ header.top.detail .schips { display: none; }
     if (it.external_urls && it.external_urls.spotify) return it.external_urls.spotify;
     return it.id ? 'https://open.spotify.com/' + (it.type === 'episode' ? 'episode/' : 'track/') + it.id : '';
   }
+  // ---------- full Now Playing screen ----------
+  // Opens from the bar's cover or title. Progress moves locally between checks: it starts from the last
+  // answer's progress_ms at the moment that answer arrived (Spotify's own `timestamp` is when playback last
+  // changed, not when it answered, so it can't anchor the estimate). While this screen is open and on
+  // screen the page checks every 5 seconds instead of 10; the progress timer itself sends nothing.
+  var npKey = '';        // item + context the option buttons were built for
+  var npTick = null;     // local progress timer
+  var npEndChecked = ''; // the item whose end already triggered one early check
+  function npShown() { return !$('np').hidden; }
+  function bigImg(images) {
+    if (!images || !images.length) return '';
+    var best = images[0];
+    images.forEach(function (i) { if ((i.width || 0) > (best.width || 0)) best = i; });
+    return best.url || '';
+  }
+  // Where playback is now, estimated from the last answer.
+  function curPos() {
+    var p = state.player;
+    if (!p || !p.item) return 0;
+    var pos = p.progress_ms || 0;
+    if (p.is_playing) pos += Date.now() - (state.playerAt || Date.now());
+    var dur = p.item.duration_ms || 0;
+    return Math.max(0, dur ? Math.min(pos, dur) : pos);
+  }
+  function fmtTime(ms) {
+    var s = Math.max(0, Math.floor(ms / 1000));
+    var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+    return (h ? h + ':' + (m < 10 ? '0' : '') : '') + m + ':' + (ss < 10 ? '0' : '') + ss;
+  }
+  // A slider made of plain elements (role="slider"), so a tap anywhere on the bar jumps there on an
+  // iPhone too (a native range input only moves by dragging its thumb). Dragging shows the new value
+  // and sends it once, on release; arrow keys send one request after you stop pressing.
+  function makeSlider(node, o) {
+    var s = { value: 0, dragging: false, keyTimer: null };
+    var fill = node.querySelector('.sfill'), thumb = node.querySelector('.sthumb'), track = node.querySelector('.strack');
+    s.max = function () { return Math.max(0, o.max() || 0); };
+    s.busy = function () { return s.dragging || !!s.keyTimer; };
+    s.paint = function (v) {
+      var max = s.max();
+      var f = max ? Math.min(1, Math.max(0, v / max)) : 0;
+      fill.style.width = (f * 100) + '%';
+      thumb.style.left = (f * 100) + '%';
+      node.setAttribute('aria-valuemax', String(Math.round(max)));
+      node.setAttribute('aria-valuenow', String(Math.round(v)));
+      node.setAttribute('aria-valuetext', o.text(v));
+    };
+    s.set = function (v) { if (s.busy()) return; s.value = v; s.paint(v); };
+    function fromX(x) {
+      var r = track.getBoundingClientRect();
+      var f = r.width ? (x - r.left) / r.width : 0;
+      return Math.round(Math.min(1, Math.max(0, f)) * s.max());
+    }
+    function move(v) { s.value = v; s.paint(v); if (o.input) o.input(v); }
+    node.addEventListener('pointerdown', function (e) {
+      if ((e.button != null && e.button > 0) || !s.max()) return;
+      s.dragging = true;
+      try { node.setPointerCapture(e.pointerId); } catch (err) {}
+      move(fromX(e.clientX));
+      e.preventDefault();
+    });
+    node.addEventListener('pointermove', function (e) { if (s.dragging) move(fromX(e.clientX)); });
+    node.addEventListener('pointerup', function (e) {
+      if (!s.dragging) return;
+      s.dragging = false;
+      move(fromX(e.clientX));
+      o.commit(s.value);
+    });
+    node.addEventListener('pointercancel', function () { s.dragging = false; });   // the next repaint restores it
+    node.addEventListener('keydown', function (e) {
+      var max = s.max(), v = s.value;
+      if (!max) return;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowUp') v += o.step;
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') v -= o.step;
+      else if (e.key === 'Home') v = 0;
+      else if (e.key === 'End') v = max;
+      else return;
+      e.preventDefault();
+      move(Math.min(max, Math.max(0, v)));
+      clearTimeout(s.keyTimer);
+      s.keyTimer = setTimeout(function () { s.keyTimer = null; o.commit(s.value); }, 500);
+    });
+    return s;
+  }
+  var seekSlider = null, volSlider = null;   // set up in wiring
+  function npDuration() { var p = state.player; return (p && p.item && p.item.duration_ms) || 0; }
+  function seekTo(ms) {
+    var p = state.player;
+    if (!p || !p.item) return;
+    var dur = p.item.duration_ms || 0;
+    ms = Math.round(Math.max(0, dur ? Math.min(ms, dur) : ms));
+    command('PUT', '/me/player/seek?position_ms=' + ms, function (x) { x.progress_ms = ms; state.playerAt = Date.now(); });
+  }
+  function seekBy(delta) { seekTo(curPos() + delta); }
+  function setVolume(v) {
+    v = Math.round(Math.min(100, Math.max(0, v)));
+    command('PUT', '/me/player/volume?volume_percent=' + v, function (x) { if (x.device) x.device.volume_percent = v; });
+  }
+  // Repeat cycles off → context (the album or playlist) → track → off.
+  var REPEAT_NEXT = { off: 'context', context: 'track', track: 'off' };
+  var REPEAT_LABEL = { off: 'Repeat off', context: 'Repeat all', track: 'Repeat one' };
+  function repeatState() { var r = state.player && state.player.repeat_state; return REPEAT_LABEL[r] ? r : 'off'; }
+  function cycleRepeat() {
+    var n = REPEAT_NEXT[repeatState()];
+    command('PUT', '/me/player/repeat?state=' + n, function (x) { x.repeat_state = n; });
+  }
+  function paintRepeat(b) {
+    var r = repeatState();
+    if (b.getAttribute('data-state') === r && b.firstChild) return;
+    b.setAttribute('data-state', r);
+    b.setAttribute('aria-pressed', String(r !== 'off'));
+    b.setAttribute('aria-label', REPEAT_LABEL[r] + ' (tap to change)');
+    b.innerHTML = r === 'track' ? ICON.repeatOne : ICON.repeat;
+  }
+  // Play/Pause freezes or restarts the local progress estimate where it is.
+  function togglePlay() {
+    var p = state.player;
+    if (p && p.is_playing) command('PUT', '/me/player/pause', function (x) { x.progress_ms = curPos(); state.playerAt = Date.now(); x.is_playing = false; });
+    else command('PUT', '/me/player/play', function (x) { x.progress_ms = curPos(); state.playerAt = Date.now(); x.is_playing = true; });
+  }
+  function toggleShuffle() {
+    var on = !(state.player && state.player.shuffle_state);
+    command('PUT', '/me/player/shuffle?state=' + on, function (x) { x.shuffle_state = on; });
+  }
+  function setInert(on) {
+    ['.wrap', '#player'].forEach(function (sel) {
+      var n = document.querySelector(sel);
+      if (!n) return;
+      if (on) n.setAttribute('inert', ''); else n.removeAttribute('inert');
+    });
+  }
+  function startNpTick() {
+    clearInterval(npTick);
+    npTick = (npShown() && !document.hidden) ? setInterval(paintProgress, 500) : null;
+  }
+  function stopNpTick() { clearInterval(npTick); npTick = null; }
   function openNp() {
     var p = state.player;
     if (!p || !p.item) return;
-    npReturn = document.activeElement;
-    var it = p.item;
-    $('npWhat').textContent = (it.name || '') + (it.type === 'episode'
-      ? (it.show && it.show.name ? ' · ' + it.show.name : '')
-      : (it.artists && it.artists.length ? ' · ' + names(it.artists) : ''));
-    var ul = $('npList');
-    ul.textContent = '';
-    var opts = npOptions(p);
-    opts.forEach(function (o) {
-      var name = el('span', { class: 'devname', text: o.label });
-      var b = el('button', { class: 'devrow', type: 'button' }, [el('span', null, [name])]);
-      if (o.playlistId && o.label === 'Open playlist') {
-        // Not in your library: fetch the name now so the row can show it.
-        playlistById(o.playlistId).then(function (pl) {
-          if (document.body.contains(name)) name.textContent = 'Open playlist · ' + pl.name;
-        }, function () {});
-      }
-      b.addEventListener('click', function () { npChoose(o, b); });
-      ul.appendChild(el('li', null, [b]));
-    });
-    var url = spotifyUrl(it);
-    if (url) {
-      var a = el('a', { class: 'devrow', href: url }, [el('span', null, [el('span', { class: 'devname', text: 'Open in Spotify' })])]);
-      a.addEventListener('click', function () { closeNp(false); });
-      ul.appendChild(el('li', null, [a]));
-    }
+    npReturn = $('pInfo');   // closing always returns to the bar
+    npKey = '';
     $('np').hidden = false;
-    var first = ul.querySelector('.devrow');
-    (first || $('npClose')).focus();
+    $('np').scrollTop = 0;
+    document.body.classList.add('npopen');
+    setInert(true);
+    paintNp();
+    $('npClose').focus();
+    startNpTick();
+    // Checks every 5 s from here: the first one 5 s after the last answer.
+    schedulePoll(Math.max(0, NP_POLL_MS - (Date.now() - (state.playerAt || 0))));
   }
   function closeNp(restore) {
     if ($('np').hidden) return;
     $('np').hidden = true;
+    document.body.classList.remove('npopen');
+    setInert(false);
+    stopNpTick();
     var r = npReturn;
     npReturn = null;
     if (restore !== false && r && r.focus && document.body.contains(r)) r.focus();
+  }
+  function paintTimes(pos) {
+    var dur = npDuration();
+    $('npElapsed').textContent = fmtTime(pos);
+    $('npRemain').textContent = '-' + fmtTime(Math.max(0, dur - pos));
+  }
+  function paintProgress() {
+    var p = state.player;
+    if (!npShown() || !p || !p.item || !seekSlider) return;
+    var dur = p.item.duration_ms || 0;
+    if (seekSlider.busy()) return;   // your drag owns the bar until you let go
+    var pos = curPos();
+    seekSlider.set(pos);
+    paintTimes(pos);
+    // The item ran out locally: check once, soon, for what plays next.
+    if (p.is_playing && dur && pos >= dur && npEndChecked !== p.item.uri) { npEndChecked = p.item.uri; schedulePoll(1500); }
+  }
+  function paintNp() {
+    if (!npShown()) return;
+    var p = state.player, it = p && p.item;
+    if (!it) return;
+    var ep = it.type === 'episode';
+    var src = bigImg(ep ? (it.images || (it.show && it.show.images)) : (it.album && it.album.images));
+    var cover = $('npCover');
+    if (src) { if (cover.getAttribute('src') !== src) cover.setAttribute('src', src); }
+    else cover.removeAttribute('src');
+    $('npName').textContent = it.name || '';
+    $('npBy').textContent = ep ? ((it.show && it.show.name) || 'Podcast') : names(it.artists);
+    var h = $('npHeart');
+    h.setAttribute('data-uri', it.uri || '');
+    h.setAttribute('data-name', it.name || '');
+    h.setAttribute('data-kind', ep ? 'episode' : 'track');
+    h.hidden = !it.uri;
+    paintHeart(h);
+    var pb = $('npPlay');
+    var lab = p.is_playing ? 'Pause' : 'Play';
+    if (pb.getAttribute('aria-label') !== lab || !pb.firstChild) { pb.setAttribute('aria-label', lab); pb.innerHTML = p.is_playing ? ICON.pause : ICON.play; }
+    $('npShuffle').setAttribute('aria-pressed', String(!!p.shuffle_state));
+    paintRepeat($('npRepeat'));
+    $('npSkip').hidden = !ep;   // Back 15 s / Forward 30 s for episodes
+    var dev = p.device;
+    var vol = !!(dev && dev.supports_volume);
+    $('npVolRow').hidden = !vol;
+    if (vol && volSlider) volSlider.set(typeof dev.volume_percent === 'number' ? dev.volume_percent : 0);
+    var db = $('npDev');
+    db.textContent = dev && dev.name ? 'Playing on ' + dev.name + ' · Change' : 'Choose a device';
+    db.setAttribute('aria-label', dev && dev.name ? 'Playing on ' + dev.name + ' · Change device' : 'Choose a device');
+    var key = (it.uri || '') + '|' + ((p.context && p.context.uri) || '');
+    if (key !== npKey) { npKey = key; paintNpOpts(p); }
+    paintProgress();
+  }
+  // Compact buttons: Open album / playlist / Liked Songs / show, Open in Spotify.
+  function paintNpOpts(p) {
+    var box = $('npOpts');
+    box.textContent = '';
+    npOptions(p).forEach(function (o) {
+      var b = el('button', { class: 'btn small secondary', type: 'button', text: o.label });
+      if (o.playlistId && o.label === 'Open playlist') {
+        // Not in your library: fetch the name now so the button can show it.
+        playlistById(o.playlistId).then(function (pl) {
+          if (document.body.contains(b)) b.textContent = 'Open playlist · ' + pl.name;
+        }, function () {});
+      }
+      b.addEventListener('click', function () { npChoose(o, b); });
+      box.appendChild(b);
+    });
+    var url = spotifyUrl(p.item);
+    if (url) {
+      var a = el('a', { class: 'btn small secondary', href: url, text: 'Open in Spotify' });
+      a.addEventListener('click', function () { closeNp(false); });
+      box.appendChild(a);
+    }
+  }
+
+  // ---------- Up next (queue) ----------
+  // Spotify's queue answer doesn't say which songs you queued and which it added itself (autoplay),
+  // so the page remembers what it queued with ＋ (24 hours, at most 100) and, by default, shows only those.
+  var queueReturn = null;
+  var queueSeq = 0;
+  var queueView = { loading: false, error: '', scope: false, data: null };
+  function queueHide() { return get(K.queueHide) !== false; }
+  function readQueued() {
+    var a = get(K.queued);
+    if (!Array.isArray(a)) return [];
+    var now = Date.now();
+    return a.filter(function (x) { return x && typeof x.uri === 'string' && typeof x.at === 'number' && now - x.at < QUEUED_MS && x.at < now + 60000; });
+  }
+  function rememberQueued(uri) {
+    var a = readQueued();
+    a.push({ uri: uri, at: Date.now() });
+    while (a.length > QUEUED_MAX) a.shift();
+    set(K.queued, a);
+  }
+  // A queued song that has finished playing no longer counts as waiting (one entry per play).
+  function consumeQueued(uri) {
+    var a = readQueued();
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].uri === uri) { a.splice(i, 1); set(K.queued, a); return; }
+    }
+  }
+  // from: the button that opened it (iPhone Safari doesn't focus a tapped button, so activeElement can't say).
+  function openQueue(from) {
+    queueReturn = (from && from.nodeType === 1) ? from : document.activeElement;
+    $('queue').hidden = false;
+    $('qHide').checked = queueHide();
+    loadQueue();
+    $('queueClose').focus();
+  }
+  function closeQueue(restore) {
+    if ($('queue').hidden) return;
+    $('queue').hidden = true;
+    queueSeq++;
+    var r = queueReturn;
+    queueReturn = null;
+    if (restore !== false && r && r.focus && document.body.contains(r)) r.focus();
+  }
+  function loadQueue() {
+    var seq = ++queueSeq;
+    queueView.loading = true; queueView.error = ''; queueView.scope = false;
+    renderQueue();
+    api('/me/player/queue').then(function (r) {
+      if (seq !== queueSeq) return;
+      queueView.loading = false;
+      if (r.status === 204 || (r.ok && !r.json)) queueView.data = { current: null, queue: [] };
+      else if (r.ok) queueView.data = { current: r.json.currently_playing || null, queue: r.json.queue || [] };
+      else {
+        if ((r.status === 401 || r.status === 403) && missingScopes().indexOf('user-read-currently-playing') !== -1) queueView.scope = true;
+        throw new Error(errMsg(r));
+      }
+      renderQueue();
+    }).catch(function (e) {
+      if (seq !== queueSeq) return;
+      if (e && e.message === 'signed-out') { closeQueue(false); closeNp(false); return renderSignIn(); }
+      queueView.loading = false;
+      queueView.error = queueView.scope ? 'Up next needs one more sign-in.' : 'Couldn’t load the queue (' + (e && e.message ? e.message : 'unknown error') + ').';
+      renderQueue();
+    });
+  }
+  function queueRow(t) {
+    var m = mapTrack(t);
+    if (!m) return null;
+    return el('li', { class: 'row' }, [el('div', { class: 'qitem' }, [
+      coverFor(m),
+      el('div', { class: 'meta' }, [el('div', { class: 'name', text: m.name }), el('div', { class: 'sub', text: m.artist })])
+    ])]);
+  }
+  function renderQueue() {
+    var body = $('qBody');
+    body.textContent = '';
+    var q = queueView;
+    if (q.error) {
+      body.appendChild(el('p', { class: 'err', text: q.error }));
+      if (q.scope) {
+        var si = el('button', { class: 'btn small', type: 'button', text: 'Sign in again' });
+        si.addEventListener('click', login);
+        body.appendChild(si);
+      }
+      return;
+    }
+    if (!q.data) { body.appendChild(el('p', { class: 'empty', text: 'Loading the queue…' })); return; }
+    var hide = queueHide();
+    if (q.data.current) {
+      var row = queueRow(q.data.current);
+      if (row) {
+        body.appendChild(el('h3', { class: 'sheet-sub', text: 'Now playing' }));
+        body.appendChild(el('ul', { class: 'list compact' }, [row]));
+      }
+    }
+    var list = q.data.queue.filter(Boolean);
+    if (hide) {
+      var left = {};
+      readQueued().forEach(function (x) { left[x.uri] = (left[x.uri] || 0) + 1; });
+      list = list.filter(function (t) { if (t.uri && left[t.uri] > 0) { left[t.uri]--; return true; } return false; });
+    }
+    body.appendChild(el('h3', { class: 'sheet-sub', text: hide ? 'Added by you' : 'Next in queue' }));
+    var rows = list.map(queueRow).filter(Boolean);
+    if (rows.length) body.appendChild(el('ul', { class: 'list compact' }, rows));
+    else body.appendChild(el('p', { class: 'empty', text: hide ? 'Nothing you added with ＋ is waiting.' : 'The queue is empty.' }));
+    body.appendChild(el('p', { class: 'qnote', text: hide
+      ? 'Spotify may add its own picks after these; they’re hidden.'
+      : 'Later songs may be Spotify’s own picks; Spotify doesn’t mark which.' }));
   }
   function npOpenDetail(item) {
     closeNp(false);
@@ -2009,6 +2601,60 @@ header.top.detail .schips { display: none; }
     });
   }
 
+  // ---------- pinned favorites (stored on this phone only, never sent to Spotify) ----------
+  var PIN_KINDS = { playlist: 'playlists', album: 'albums', artist: 'artists', show: 'podcasts' };
+  function canPin(item) { return !!(item && item.uri && item.id && PIN_KINDS[item.kind]); }
+  function readPins() {
+    var a = get(K.pins);
+    if (!Array.isArray(a)) return [];
+    return a.filter(function (p) { return p && p.uri && p.id && PIN_KINDS[p.kind]; }).slice(0, PINS_MAX);
+  }
+  function isPinned(uri) { return readPins().some(function (p) { return p.uri === uri; }); }
+  function pinRecord(item) {
+    var p = { kind: item.kind, id: item.id, name: item.name || '', uri: item.uri, url: item.url || '', img: item.img || '', sub: item.sub || '' };
+    if (item.kind === 'playlist') { p.ownerId = item.ownerId || ''; p.collaborative = !!item.collaborative; }   // for the heart and the song list
+    return p;
+  }
+  function paintPin(b) {
+    var on = isPinned(b.getAttribute('data-pin'));
+    var name = b.getAttribute('data-name') || '';
+    b.setAttribute('aria-pressed', String(on));
+    b.setAttribute('aria-label', (on ? 'Unpin “' : 'Pin “') + name + '”');
+    b.innerHTML = on ? ICON.pinOn : ICON.pin;
+  }
+  function togglePin(item) {
+    var pins = readPins();
+    var was = pins.some(function (p) { return p.uri === item.uri; });
+    if (!was && pins.length >= PINS_MAX) { toast('You can pin up to ' + PINS_MAX + '. Unpin one first.'); return; }
+    pins = was ? pins.filter(function (p) { return p.uri !== item.uri; }) : pins.concat([pinRecord(item)]);
+    set(K.pins, pins);
+    toast((was ? 'Unpinned “' : 'Pinned “') + item.name + '”');
+    var bs = document.querySelectorAll('.pinbtn');
+    for (var i = 0; i < bs.length; i++) { if (bs[i].getAttribute('data-pin') === item.uri) paintPin(bs[i]); }
+    // In a library list the row moves into (or out of) Pinned; keep the scroll position and the focus.
+    if (!state.detail && state.filter !== 'search' && state.filter !== 'recent') {
+      var y = window.pageYOffset || document.documentElement.scrollTop || 0;
+      renderList();
+      window.scrollTo(0, y);
+      var nb = document.querySelector('.pinbtn[data-pin="' + item.uri.replace(/"/g, '') + '"]');
+      if (nb) nb.focus({ preventScroll: true });
+    }
+  }
+  function pinBtn(item) {
+    var b = el('button', { class: 'act pinbtn', type: 'button', 'data-pin': item.uri, 'data-name': item.name });
+    paintPin(b);
+    b.addEventListener('click', function () { togglePin(item); });
+    return b;
+  }
+  // Pinned items for a library tab (all four kinds for All), in the order you pinned them.
+  // The library's own copy is used when it has one, so names, counts and owners stay current.
+  function pinsFor(f, d) {
+    var lib = {};
+    [].concat(d.playlists || [], d.albums || [], d.artists || [], d.shows || []).forEach(function (x) { if (x && x.uri) lib[x.uri] = x; });
+    return readPins().filter(function (p) { return f === 'all' || PIN_KINDS[p.kind] === f; })
+      .map(function (p) { return lib[p.uri] || p; });
+  }
+
   // ---------- rendering ----------
   function heartBtn(item) {
     var b = el('button', { class: 'act heart', type: 'button', 'data-uri': item.uri, 'data-name': item.name, 'data-kind': item.kind, 'aria-pressed': 'false' });
@@ -2026,6 +2672,7 @@ header.top.detail .schips { display: none; }
     var out = [];
     if (canSave(item)) out.push(heartBtn(item));
     if (item.kind === 'track' || item.kind === 'episode') out.push(iconBtn(ICON.plus, 'Add “' + item.name + '” to queue', function () { addToQueue(item); }));
+    if (canPin(item)) out.push(pinBtn(item));
     if (canOpen(item)) out.push(iconBtn(ICON.open, (isPod(item) ? 'Open episodes in “' : 'Open songs in “') + item.name + '”', function () { openDetail(item); }));
     return out;
   }
@@ -2080,7 +2727,11 @@ header.top.detail .schips { display: none; }
   }
   function renderSearch(main) {
     var s = state.search;
-    if (s.q.length < 2) { main.appendChild(el('p', { class: 'empty', text: 'Type a song, artist, album, playlist or podcast to search all of Spotify.' })); return; }
+    if (s.q.length < 2) {
+      if (!s.q && renderRecentSearches(main)) return;
+      main.appendChild(el('p', { class: 'empty', text: 'Type a song, artist, album, playlist or podcast to search all of Spotify.' }));
+      return;
+    }
     var e = currentSearch();
     if (!e || (e.loading && (e.type === 'all' ? !e.results : !e.items.length))) { main.appendChild(el('p', { class: 'empty', text: 'Searching…' })); return; }
     if (e.error) { main.appendChild(el('p', { class: 'err', text: e.error })); return; }
@@ -2089,6 +2740,9 @@ header.top.detail .schips { display: none; }
     if (!r) return;
     // All: each group shows its first few rows, with "See all …" to switch to that type.
     var groups = [['track', r.tracks], ['artist', r.artists], ['album', r.albums], ['playlist', r.playlists], ['show', r.shows || []], ['episode', r.episodes || []]];
+    // Diagnostics → Settings can put one group first; the rest keep this order.
+    var firstType = searchFirst();
+    groups.sort(function (a, b) { return (b[0] === firstType) - (a[0] === firstType); });
     var any = false;
     var all = [];
     groups.forEach(function (g) {
@@ -2114,10 +2768,36 @@ header.top.detail .schips { display: none; }
       main.appendChild(el('p', { class: 'empty', text: 'No ' + STYPE[e.type].label.toLowerCase() + ' for “' + q + '”.' }));
       return;
     }
+    main.appendChild(el('div', { id: 'ssort' }));
     var ul = el('ul', { class: 'list', id: 'slist' });
     main.appendChild(ul);
     main.appendChild(el('div', { class: 'dfoot', id: 'sfoot' }));
-    appendSearchRows(e.items, e);
+    paintSearchSort(e);
+    if (sortIsDefault('s-' + e.type)) appendSearchRows(e.items, e);
+    else paintSearchRows(e);
+  }
+  // Sort chips for one result type, plus the same "loaded so far" note as song lists.
+  function paintSearchSort(e) {
+    var box = $('ssort');
+    if (!box) return;
+    var view = 's-' + e.type;
+    var a = document.activeElement;
+    var had = a && box.contains(a) ? a.getAttribute('data-sort') : null;
+    box.textContent = '';
+    if (e.items.length < 2) return;
+    box.appendChild(sortBar(view, function () { paintSearchSort(e); paintSearchRows(e); }));
+    if (!sortIsDefault(view) && e.more) box.appendChild(el('p', { class: 'snote', text: 'Sorted within the results loaded so far' }));
+    if (had) { var nb = box.querySelector('[data-sort="' + had + '"]'); if (nb) nb.focus({ preventScroll: true }); }
+  }
+  function paintSearchRows(e) {
+    var ul = $('slist');
+    if (!ul) return;
+    ul.textContent = '';
+    appendSearchRows(sortList('s-' + e.type, e.items), e);
+  }
+  function searchFirst() {
+    var v = get(K.searchFirst);
+    return STYPE[v] ? v : 'track';
   }
   function appendSearchRows(items, e) {
     var ul = $('slist');
@@ -2174,6 +2854,7 @@ header.top.detail .schips { display: none; }
     var f = state.filter;
     if (f === 'podcasts') {
       main.appendChild(podSeg());
+      renderContinue(main);
       if (state.podTab === 'latest') return renderLatest(main);
     }
     if (f === 'artists' && !d.artists) {
@@ -2203,9 +2884,30 @@ header.top.detail .schips { display: none; }
         ? liked.concat(d.playlists || [], d.albums || [], d.artists || [], savedEps, d.shows || [])
         : liked.concat(savedEps, sortList(view, base));
     }
+    // Pinned: first in its own tab and in All, in pin order, whatever the sort. The rest of the list
+    // leaves them out and sorts as before.
+    var pinned = pinsFor(f, d);
+    var pinnedUris = {};
+    pinned.forEach(function (p) { pinnedUris[p.uri] = true; });
+    if (pinned.length) items = items.filter(function (i) { return !i.uri || !pinnedUris[i.uri]; });
+    var pinShown = matches(pinned);
+    if (pinShown.length) {
+      main.appendChild(el('h2', { class: 'sect', text: 'Pinned' }));
+      var pul = el('ul', { class: 'list' });
+      pinShown.forEach(function (i) { pul.appendChild(itemRow(i)); });
+      main.appendChild(pul);
+      requestSaved(savableUris(pinShown));
+    }
     if (base.length > 1 || (f === 'podcasts' && base.length)) main.appendChild(sortBar(view, renderList));
     items = matches(items);
-    if (!items.length) { main.appendChild(el('p', { class: 'empty', text: state.query.trim() ? 'Nothing matches “' + state.query + '”.' : (f === 'artists' ? 'You don’t follow any artists yet.' : f === 'podcasts' ? 'You haven’t saved any podcasts yet.' : 'Nothing here yet.') })); return; }
+    if (pinShown.length && items.length) {
+      main.appendChild(el('h2', { class: 'sect', text: { playlists: 'Playlists', albums: 'Albums', artists: 'Artists', podcasts: 'Podcasts', all: 'Library' }[f] || 'Library' }));
+    }
+    if (!items.length) {
+      if (pinShown.length && !state.query.trim()) return;   // everything here is pinned
+      main.appendChild(el('p', { class: 'empty', text: state.query.trim() ? (pinShown.length ? 'Nothing else matches “' : 'Nothing matches “') + state.query + '”.' : (f === 'artists' ? 'You don’t follow any artists yet.' : f === 'podcasts' ? 'You haven’t saved any podcasts yet.' : 'Nothing here yet.') }));
+      return;
+    }
     var ul = el('ul', { class: 'list' });
     items.forEach(function (i) { ul.appendChild(itemRow(i)); });
     main.appendChild(ul);
@@ -2317,7 +3019,7 @@ header.top.detail .schips { display: none; }
       back,
       el('div', { class: 'drow' }, [
         coverFor(it, 'dcover'),
-        el('div', { class: 'meta' }, [el('h2', { class: 'dname', text: it.name }), el('div', { class: 'sub', text: it.sub })])
+        el('div', { class: 'meta' }, [el('h2', { class: 'dname', text: it.name }), el('div', { class: 'sub', text: it.sub }), el('div', { class: 'dsum', id: 'dsum' })])
       ]),
       el('div', { class: 'dbtns' }, btns)
     ]));
@@ -2367,10 +3069,29 @@ header.top.detail .schips { display: none; }
     items.forEach(function (i) { ul.appendChild(itemRow(i)); });
     requestSaved(savableUris(items));
   }
+  // "12 songs · 48 min" once the whole list is loaded; "50 of 230 songs loaded" while more pages remain
+  // (no length then, since it would only cover part of the list).
+  function paintDetailSum() {
+    var d = state.detail;
+    var box = $('dsum');
+    if (!d || !box) return;
+    var pod = isPod(d.item);
+    function count(n) { return n + ' ' + (pod ? (n === 1 ? 'episode' : 'episodes') : (n === 1 ? 'song' : 'songs')); }
+    var txt = '';
+    if (d.restricted) txt = d.item.count ? count(d.item.count) : '';
+    else if (d.next) txt = d.items.length + ' of ' + count(d.total != null ? d.total : d.items.length) + ' loaded';
+    else if (d.items.length) {
+      var ms = d.items.reduce(function (s, i) { return s + (i.durMs || 0); }, 0);
+      txt = count(d.items.length) + (ms > 0 ? ' · ' + fmtDur(ms) : '');
+    }
+    box.textContent = txt;
+    box.hidden = !txt;
+  }
   function paintDetailFoot() {
     var d = state.detail;
     var f = $('dfoot');
     if (!d || !f) return;
+    paintDetailSum();
     f.textContent = '';
     if (d.restricted) {
       f.appendChild(el('p', { class: 'empty', text: 'Spotify only lets personal apps list songs in your own playlists. Tap Play to hear this one.' }));
@@ -2407,6 +3128,8 @@ header.top.detail .schips { display: none; }
       var mapped = (r.json.items || []).map(function (it) { return mapDetail(d.item, it); }).filter(Boolean);
       d.items = d.items.concat(mapped);
       d.next = r.json.next || null;
+      if (typeof r.json.total === 'number') d.total = r.json.total;
+      if (isPod(d.item)) rememberEpisodes(mapped);   // for Continue listening
       // In the default order new rows go at the end; a chosen sort re-sorts everything loaded so far.
       if (sortIsDefault(detailView(d.item))) appendDetailRows(mapped);
       else paintDetailList();
@@ -2432,6 +3155,7 @@ header.top.detail .schips { display: none; }
     $('top').hidden = true;
     $('banner').hidden = true;
     closeSheet();
+    closeQueue(false);
     closeNp(false);
     paintPlayer();
   }
@@ -2530,10 +3254,61 @@ header.top.detail .schips { display: none; }
   $('sheetClose').addEventListener('click', closeSheet);
   $('sheetBack').addEventListener('click', closeSheet);
   $('sheetRefresh').addEventListener('click', loadSheetDevices);
-  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') { closeSheet(); closeDiag(); closeNp(); } });
+  // Escape closes the topmost layer only: a sheet first, then the Now Playing screen.
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    if (!$('sheet').hidden) closeSheet();
+    else if (!$('queue').hidden) closeQueue();
+    else if (!$('diag').hidden) closeDiag();
+    else closeNp();
+  });
   $('pInfo').addEventListener('click', openNp);
   $('npClose').addEventListener('click', function () { closeNp(); });
-  $('npBack').addEventListener('click', function () { closeNp(); });
+  $('npDev').addEventListener('click', function () { openSheet($('npDev')); });
+  $('pQueue').addEventListener('click', function () { openQueue($('pQueue')); });
+  $('npQueue').addEventListener('click', function () { openQueue($('npQueue')); });
+  $('queueClose').addEventListener('click', function () { closeQueue(); });
+  $('queueBack').addEventListener('click', function () { closeQueue(); });
+  $('queueRefresh').addEventListener('click', loadQueue);
+  $('qHide').addEventListener('change', function () { set(K.queueHide, $('qHide').checked); renderQueue(); });
+  document.querySelectorAll('input[name="theme"]').forEach(function (r) {
+    r.addEventListener('change', function () {
+      if (!r.checked) return;
+      if (r.value === 'light' || r.value === 'dark') set(K.theme, r.value); else del(K.theme);
+      applyTheme();
+    });
+  });
+  $('searchFirst').addEventListener('change', function () {
+    set(K.searchFirst, $('searchFirst').value);
+    if (state.started && state.filter === 'search' && !state.detail) renderList();
+  });
+  // Swipe down from the top of the Now Playing screen closes it (not while dragging a slider).
+  (function () {
+    var np = $('np'), sy = null, sx = 0;
+    np.addEventListener('touchstart', function (e) {
+      sy = null;
+      if (np.scrollTop > 0 || e.touches.length !== 1 || (e.target.closest && e.target.closest('.slider'))) return;
+      sy = e.touches[0].clientY; sx = e.touches[0].clientX;
+    }, { passive: true });
+    np.addEventListener('touchend', function (e) {
+      if (sy == null) return;
+      var t = e.changedTouches[0];
+      var dy = t.clientY - sy, dx = Math.abs(t.clientX - sx);
+      sy = null;
+      if (dy > 90 && dx < 60) closeNp();
+    }, { passive: true });
+  })();
+  seekSlider = makeSlider($('npSeek'), {
+    max: npDuration, step: 5000,
+    text: function (v) { return fmtTime(v) + ' of ' + fmtTime(npDuration()); },
+    input: function (v) { paintTimes(v); },
+    commit: function (v) { seekTo(v); }
+  });
+  volSlider = makeSlider($('npVol'), {
+    max: function () { return 100; }, step: 5,
+    text: function (v) { return Math.round(v) + '%'; },
+    commit: function (v) { setVolume(v); }
+  });
   $('diagBtn').addEventListener('click', openDiag);
   $('diagClose').addEventListener('click', closeDiag);
   $('diagBack').addEventListener('click', closeDiag);
@@ -2559,25 +3334,30 @@ header.top.detail .schips { display: none; }
     if (!p) { stopWake(); toast('Tap the item again.'); return; }
     wakeSpotify(p.item, p.opts, 'link');
   });
-  $('pPrev').innerHTML = ICON.prev;
-  $('pNext').innerHTML = ICON.next;
-  $('pShuffle').innerHTML = ICON.shuffle;
-  $('pPlay').innerHTML = ICON.pause;
-  $('pPrev').addEventListener('click', function () { command('POST', '/me/player/previous'); });
-  $('pNext').addEventListener('click', function () { command('POST', '/me/player/next'); });
-  $('pPlay').addEventListener('click', function () {
-    var p = state.player;
-    if (p && p.is_playing) command('PUT', '/me/player/pause', function (x) { x.is_playing = false; });
-    else command('PUT', '/me/player/play', function (x) { x.is_playing = true; });
+  // The bar and the full Now Playing screen share the same controls.
+  ['p', 'np'].forEach(function (pre) {
+    $(pre + 'Prev').innerHTML = ICON.prev;
+    $(pre + 'Next').innerHTML = ICON.next;
+    $(pre + 'Shuffle').innerHTML = ICON.shuffle;
+    $(pre + 'Play').innerHTML = ICON.pause;
+    $(pre + 'Repeat').innerHTML = ICON.repeat;
+    $(pre + 'Queue').innerHTML = ICON.queue;
+    $(pre + 'Prev').addEventListener('click', function () { command('POST', '/me/player/previous'); });
+    $(pre + 'Next').addEventListener('click', function () { command('POST', '/me/player/next'); });
+    $(pre + 'Play').addEventListener('click', togglePlay);
+    $(pre + 'Shuffle').addEventListener('click', toggleShuffle);
+    $(pre + 'Repeat').addEventListener('click', cycleRepeat);
+    $(pre + 'Heart').addEventListener('click', function () {
+      var h = $(pre + 'Heart');
+      toggleSave(h.getAttribute('data-uri'), h.getAttribute('data-name'), h.getAttribute('data-kind'));
+    });
   });
-  $('pShuffle').addEventListener('click', function () {
-    var on = !(state.player && state.player.shuffle_state);
-    command('PUT', '/me/player/shuffle?state=' + on, function (x) { x.shuffle_state = on; });
-  });
-  $('pHeart').addEventListener('click', function () {
-    var h = $('pHeart');
-    toggleSave(h.getAttribute('data-uri'), h.getAttribute('data-name'), h.getAttribute('data-kind'));
-  });
+  $('npClose').innerHTML = ICON.down;
+  $('npBack15').innerHTML = ICON.back15;
+  $('npFwd30').innerHTML = ICON.fwd30;
+  $('npVolIcon').innerHTML = ICON.volume;
+  $('npBack15').addEventListener('click', function () { seekBy(-15000); });
+  $('npFwd30').addEventListener('click', function () { seekBy(30000); });
   window.addEventListener('popstate', function () {
     if (location.hash === '#detail') {
       if (!state.detail) { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} }
@@ -2588,10 +3368,11 @@ header.top.detail .schips { display: none; }
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) {
       clearTimeout(state.pollTimer); state.pollTimer = null;
+      stopNpTick();
       if (state.wake.running) stopWake();   // pause the wake check; it starts fresh on return
       return;
     }
-    if (state.started && get(K.token)) { checkDevice(); schedulePoll(0); resumePending(false); if (onLatestView()) maybeLoadLatest(); }
+    if (state.started && get(K.token)) { checkDevice(); schedulePoll(0); resumePending(false); if (onLatestView()) maybeLoadLatest(); startNpTick(); }
   });
   // Coming back with the Back button can restore the page from memory without a visibility change.
   window.addEventListener('pageshow', function (e) {
