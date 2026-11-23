@@ -844,11 +844,20 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
       throw e;
     });
   }
-  var errorLog = [];
+  // Kept in localStorage too, so errors survive a reload and show up in Diagnostics.
+  var errorLog = (function () { var v = get('lib-errors'); return Array.isArray(v) ? v.slice(-12) : []; })();
   function logError(what, status, msg) {
-    errorLog.push(new Date().toLocaleTimeString() + '  ' + what + ' → ' + status + ' ' + msg);
+    errorLog.push(new Date().toLocaleString() + '  ' + what + ' → ' + status + ' ' + msg);
     if (errorLog.length > 12) errorLog.shift();
+    set('lib-errors', errorLog);
   }
+  window.addEventListener('error', function (e) {
+    logError('Page', 'error', (e && e.message ? e.message : 'unknown') + (e && e.lineno ? ' (line ' + e.lineno + ')' : ''));
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e && e.reason;
+    logError('Page', 'promise', r && r.message ? r.message : String(r));
+  });
   // Follows `next` links. `root` picks a nested page object (e.g. /me/following returns {artists:{items,next}}).
   function pages(path, pick, root) {
     var out = [];
@@ -1932,7 +1941,7 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.9 (2026-11-22)';
+  var VERSION = 'v2.9.1 (2026-11-22)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -1997,6 +2006,7 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
       .then(function () { return probe('Playlists', '/me/playlists?limit=1', function (j) { return (j && j.total != null ? j.total : '?') + ' total'; }); })
       .then(function () {
         line('');
+        line('Now Playing last closed: ' + (state.npClosedWhy || 'not this visit'));
         line('Recent errors:' + (errorLog.length ? '' : ' none'));
         errorLog.forEach(function (e) { line('  ' + e); });
         line('');
@@ -2041,7 +2051,7 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
     if (!state.started || document.hidden) return;
     var seq = ++state.pollSeq;
     var next = npShown() ? NP_POLL_MS : POLL_MS;   // every 5 s while the full Now Playing screen is open
-    api('/me/player').then(function (r) {
+    api('/me/player?additional_types=episode').then(function (r) {   // without it, podcasts come back with no item
       if (seq !== state.pollSeq) return 'stale';
       if (r.status === 204 || (r.ok && !r.json)) setPlayer(null);
       else if (r.ok) setPlayer(r.json);
@@ -2082,7 +2092,7 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
     if (!item || !state.started) {
       bar.hidden = true;
       document.body.classList.remove('has-player');
-      closeNp(false);
+      closeNp(false, 'nothing playing');
       return;
     }
     var ep = item.type === 'episode';
@@ -2381,14 +2391,24 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
     $('np').scrollTop = 0;
     document.body.classList.add('npopen');
     setInert(true);
-    paintNp();
-    $('npClose').focus();
+    try {
+      paintNp();
+      paintProgress();
+    } catch (err) {
+      // Never leave a half-drawn screen covering the page.
+      logError('Now Playing', 'open', err && err.message ? err.message : String(err));
+      closeNp(false);
+      toast('Couldn’t open Now Playing (' + (err && err.message ? err.message : 'error') + ').');
+      return;
+    }
+    $('npClose').focus({ preventScroll: true });
     startNpTick();
     // Checks every 5 s from here: the first one 5 s after the last answer.
     schedulePoll(Math.max(0, NP_POLL_MS - (Date.now() - (state.playerAt || 0))));
   }
-  function closeNp(restore) {
+  function closeNp(restore, why) {
     if ($('np').hidden) return;
+    state.npClosedWhy = (why || (restore === false ? 'app' : 'you')) + ' at ' + new Date().toLocaleTimeString();
     $('np').hidden = true;
     document.body.classList.remove('npopen');
     setInert(false);
@@ -3295,7 +3315,7 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
       var t = e.changedTouches[0];
       var dy = t.clientY - sy, dx = Math.abs(t.clientX - sx);
       sy = null;
-      if (dy > 90 && dx < 60) closeNp();
+      if (dy > 90 && dx < 60) closeNp(true, 'swipe down');
     }, { passive: true });
   })();
   seekSlider = makeSlider($('npSeek'), {
