@@ -396,6 +396,7 @@ li.playing .clname { color: var(--accent); }
   width: 36px; min-height: 40px; border-radius: 0 999px 999px 0;
 }
 .sethint { font-size: 0.85rem; color: var(--muted); margin: 0; }
+.slgroup { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 4px; }   /* v2.15 */
 select.field { appearance: auto; -webkit-appearance: menulist; }
 .dsum { font-size: 0.85rem; color: var(--muted); margin-top: 4px; }
 /* Spotify asleep (v2.10): the last song stays on screen as paused, with a muted line in the bar and on the Now Playing screen */
@@ -576,6 +577,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       <option value="episode">Episodes</option>
     </select>
     <p class="sethint">The other groups keep their usual order.</p>
+    <div class="setgroup slgroup"><span class="setname">Saved album and podcast lists</span>
+      <p class="sethint" id="slInfo">Saved lists: none</p>
+      <p class="sethint">Opening a saved album or podcast sends nothing to Spotify. Refresh (top right) keeps them.</p>
+      <button class="btn secondary" id="slClear" type="button">Clear saved lists</button>
+    </div>
     <h3 class="sheet-sub">Report</h3>
     <pre class="diagpre" id="diagOut">Checking…</pre>
     <div class="sheet-btns">
@@ -1038,7 +1044,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (coolWas[g] && !on) ended.push(g);
       if (!!coolWas[g] !== on) {
         coolWas[g] = on;
-        if (g === 'catalog') setTimeout(rerenderLatest, 0);   // "Paused by Spotify until..." next to Latest's Refresh
+        if (g === 'catalog') setTimeout(function () { rerenderLatest(); paintDetailNote(); }, 0);   // "Paused by Spotify until..." next to Latest's Refresh (v2.15: and an album or podcast note)
       }
     });
     if (ended.length && state.started) afterCool(ended);
@@ -1150,6 +1156,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   // v2.14: catalog answers (album tracks, a show's episodes, an artist's releases, playlist songs) are kept for
   // this visit, so opening the same view again sends nothing. Refresh (top right) forgets them.
+  // v2.15: album and podcast lists are also saved on the phone (see "saved lists"); Refresh leaves those.
   var catMemo = {};
   function apiCached(url) {
     if (catMemo[url]) return Promise.resolve(catMemo[url]);
@@ -1212,7 +1219,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!a || !a.id) return null;
     return {
       kind: 'album', id: a.id, name: a.name, uri: a.uri, url: 'https://open.spotify.com/album/' + a.id, img: img(a.images), sub: 'Album · ' + names(a.artists),
-      artist: names(a.artists), released: a.release_date || ''   // for sorting
+      artist: names(a.artists), released: a.release_date || '',   // for sorting
+      // v2.15: for the search fallback while album details are paused (first artist, song count when known)
+      artist1: (a.artists && a.artists[0] && a.artists[0].name) || '', tracks: a.total_tracks || null
     };
   }
   function mapPlaylist(p) {
@@ -1900,6 +1909,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         if (!r.ok || !r.json) throw new Error(errMsg(r));
         done[s.id] = true;
         (r.json.items || []).forEach(function (e, k) { var x = mapLatest(e, s); if (x) found.push({ x: x, si: si, k: k }); });
+        mergeShowEpisodes(s.id, r.json.items || []);   // v2.15: a saved copy of this show takes them too
       }).catch(function (e) {
         if (e && e.message === 'signed-out') signedOut = true;
         else if (isCool(e)) stopped = true;   // stop here; never asked again on its own (Refresh after the pause)
@@ -2556,7 +2566,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.14 (2026-11-22)';
+  var VERSION = 'v2.15 (2026-11-22)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -2572,6 +2582,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var t = themeMode();
     document.querySelectorAll('input[name="theme"]').forEach(function (r) { r.checked = r.value === t; });
     $('searchFirst').value = searchFirst();
+    $('slInfo').textContent = slStatsText();   // v2.15
   }
   function openDiag() { $('diag').hidden = false; paintWakeModes(); paintSettings(); $('diagClose').focus(); runDiag(); }
   function closeDiag() { $('diag').hidden = true; }
@@ -2599,6 +2610,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     line('Latest episodes: ' + (lc ? lc.items.length + ' cached, updated ' + ago(new Date(lc.at).toISOString()) + (lc.failed ? ', ' + lc.failed + ' show(s) failed' : '') : 'not loaded') +
       ' · Latest: refreshes only when you open it (up to ' + LATEST_SHOWS + ' shows, cache ' + Math.round(LATEST_MS / 3600000) + ' h)');
     var eh = epHistory();
+    line(slStatsText() + ' · albums kept until cleared, podcasts re-checked after ' + Math.round(SHOW_STALE_MS / 3600000) + ' h');   // v2.15
     line('Podcast history: ' + eh.length + (eh.length === 1 ? ' episode' : ' episodes') + (eh[0] ? ' (newest: ' + eh[0].name + ', ' + agoAt(eh[0].at) + ')' : ''));
     line('Resume points: from this page’s own podcast history (no automatic Spotify checks)');
     // v2.13 request meter (counted before this report's own checks below)
@@ -3933,10 +3945,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // ---------- song list (detail) view ----------
   function canList(p) { return isOwn(p) || p.collaborative; }
   function detailUrl(item) {
-    if (item.kind === 'album') return '/albums/' + encodeURIComponent(item.id) + '/tracks?limit=50&offset=0';
+    if (item.kind === 'album') return albumPage(item.id, 0);
     if (item.kind === 'liked') return '/me/tracks?limit=50&offset=0';
     if (item.kind === 'playlist' && canList(item)) return '/playlists/' + encodeURIComponent(item.id) + '/items?limit=50&offset=0';
-    if (item.kind === 'show') return '/shows/' + encodeURIComponent(item.id) + '/episodes?limit=50&offset=0';
+    if (item.kind === 'show') return showPage(item.id, 0);
     if (item.kind === 'episodes') return '/me/episodes?limit=50&offset=0';
     return null;
   }
@@ -3967,7 +3979,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var old = state.detail;
     var d = item.kind === 'artist'
       ? { kind: 'artist', item: item, img: '', items: [], offset: 0, more: false, total: null, loading: false, error: '', lastGot: 0 }
-      : { item: item, items: [], next: null, loading: false, error: '', restricted: false, lastUrl: null };
+      : { item: item, items: [], next: null, loading: false, error: '', restricted: false, lastUrl: null,
+          raw: [], src: 'api', savedAt: 0, checkedAt: 0, seed: false, pausedUntil: 0 };   // v2.15: saved lists and pause fallbacks
     if (old && opts.push) {
       state.detailStack.push(old);
       d.returnScroll = y; d.pushed = false;
@@ -3985,7 +3998,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     window.scrollTo(0, 0);
     if (canSave(item)) requestSaved([item.uri]);
     if (d.kind === 'artist') loadArtist(d);
-    else loadDetail(detailUrl(item));
+    else startDetail(d);
   }
   function goBack() {
     var d = state.detail;
@@ -4048,6 +4061,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       ]),
       el('div', { class: 'dbtns' }, btns)
     ]));
+    main.appendChild(el('p', { class: 'lnote', id: 'dnote', hidden: true }));   // v2.15: saved list / fallback note
     main.appendChild(el('div', { id: 'dsort' }));
     main.appendChild(el('ul', { class: 'list compact', id: 'dlist' }));
     main.appendChild(el('div', { class: 'dfoot', id: 'dfoot' }));
@@ -4104,7 +4118,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     function count(n) { return n + ' ' + (pod ? (n === 1 ? 'episode' : 'episodes') : (n === 1 ? 'song' : 'songs')); }
     var txt = '';
     if (d.restricted) txt = d.item.count ? count(d.item.count) : '';
-    else if (d.next) txt = d.items.length + ' of ' + count(d.total != null ? d.total : d.items.length) + ' loaded';
+    else if (d.src === 'search') txt = !d.items.length ? '' : (d.total && d.total > d.items.length ? d.items.length + ' of ' + count(d.total) : count(d.items.length)) + ' found';   // v2.15
+    else if (d.next) txt = d.total != null ? d.items.length + ' of ' + count(d.total) + ' loaded' : count(d.items.length) + ' loaded';
     else if (d.items.length) {
       var ms = d.items.reduce(function (s, i) { return s + (i.durMs || 0); }, 0);
       txt = count(d.items.length) + (ms > 0 ? ' · ' + fmtDur(ms) : '');
@@ -4117,6 +4132,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var f = $('dfoot');
     if (!d || !f) return;
     paintDetailSum();
+    paintDetailNote();
     f.textContent = '';
     if (d.restricted) {
       f.appendChild(el('p', { class: 'empty', text: 'Spotify only lets personal apps list songs in your own playlists. Tap Play to hear this one.' }));
@@ -4125,19 +4141,38 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (d.error) {
       f.appendChild(el('p', { class: 'err', text: d.error }));
       var retry = el('button', { class: 'btn secondary', type: 'button', text: 'Try again' });
-      retry.addEventListener('click', function () { loadDetail(d.lastUrl); });
+      retry.addEventListener('click', function () {
+        if (d.src === 'search') loadAlbumSearch(d);
+        else if (d.src === 'local') startShowLocal(d);
+        else loadDetail(d.lastUrl);
+      });
       f.appendChild(retry);
       return;
     }
     var noun = isPod(d.item) ? 'episodes' : 'songs';
-    if (d.loading) { f.appendChild(el('p', { class: 'empty', text: 'Loading ' + noun + '…' })); return; }
+    if (d.loading) { f.appendChild(el('p', { class: 'empty', text: (d.src === 'search' ? 'Searching for ' : 'Loading ') + noun + '…' })); return; }
     if (d.next) {
       var more = el('button', { class: 'btn secondary', type: 'button', text: 'Load more' });
-      more.addEventListener('click', function () { loadDetail(d.next); });
+      more.addEventListener('click', function () { if (d.src === 'search') loadAlbumSearch(d); else loadDetail(d.next); });
       f.appendChild(more);
     } else if (!d.items.length) {
-      f.appendChild(el('p', { class: 'empty', text: 'No ' + noun + ' here.' }));
+      f.appendChild(el('p', { class: 'empty', text: d.src === 'search' ? 'Search didn’t find this album’s songs. Try again after Spotify’s pause.'
+        : d.src === 'local' ? 'You haven’t saved or played an episode of this show on this phone yet.' : 'No ' + noun + ' here.' }));
     }
+  }
+  // v2.15: album and podcast lists are kept as minimal Spotify objects (d.raw) and mapped with mapDetail;
+  // a podcast's saved copy takes newer positions from the page's own history.
+  function mapRaw(d, x) {
+    if (d.item.kind === 'show') {
+      var h = histByUri()[x.uri];
+      if (h && histSnap(h) > (d.checkedAt || 0)) x = Object.assign({}, x, { resume_point: { fully_played: !!h.played, resume_position_ms: h.played ? 0 : (h.positionMs || 0) } });
+    }
+    return mapDetail(d.item, x);
+  }
+  function remapDetail(d) {
+    d.items = d.raw.map(function (x) { return mapRaw(d, x); }).filter(Boolean);
+    if (isPod(d.item)) rememberEpisodes(d.items);
+    if (state.detail === d) { paintDetailList(); paintDetailSort(); paintDetailFoot(); }
   }
   function loadDetail(url) {
     var d = state.detail;
@@ -4145,9 +4180,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!url) { d.restricted = true; paintDetailSort(); paintDetailFoot(); return; }
     d.lastUrl = url;
     var g = coolGroup(url);
-    if (!catMemo[url] && coolLeft(g)) { d.error = coolText(g); paintDetailFoot(); coolToast(g); return; }   // v2.13: Try again works after it
+    if (!catMemo[url] && coolLeft(g)) {
+      if (detailFallback(d)) return;   // v2.15: search (albums) or your saved and played episodes (podcasts)
+      if (d.src === 'cache' && d.items.length) { coolToast(g); paintDetailFoot(); return; }   // the saved list stays
+      d.error = coolText(g); paintDetailFoot(); coolToast(g); return;   // v2.13: Try again works after it
+    }
     d.loading = true; d.error = '';
     paintDetailFoot();
+    var kind = d.item.kind, first = /[?&]offset=0(&|$)/.test(url);
     // The answer is kept even if another view is on top by then (v2.12: Back can return to this one);
     // it's drawn only while this view is the one on screen. v2.14: catalog answers are kept for this visit (apiCached).
     apiCached(url).then(function (r) {
@@ -4155,10 +4195,30 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       var cur = state.detail === d;
       if (r.status === 403 && d.item.kind === 'playlist') { d.restricted = true; if (cur) { paintDetailSort(); paintDetailFoot(); } return; }
       if (!r.ok || !r.json) throw new Error(errMsg(r));
-      var mapped = (r.json.items || []).map(function (it) { return mapDetail(d.item, it); }).filter(Boolean);
-      d.items = d.items.concat(mapped);
       d.next = r.json.next || null;
       if (typeof r.json.total === 'number') d.total = r.json.total;
+      if (kind === 'album' || kind === 'show') {
+        // v2.15: kept as minimal objects and saved on this phone (lib-cache-album / lib-cache-show).
+        var raws = (r.json.items || []).filter(function (x) { return x && x.id && x.uri; }).map(kind === 'album' ? slTrack : slEpisode);
+        if (first) d.checkedAt = Date.now();
+        if (kind === 'album' && first) d.raw = raws;   // the first page (or Reload from Spotify) starts the list over
+        else if (kind === 'show' && first && d.raw.length) {
+          // Page 1 over a saved copy: Spotify's newest episodes first, then the saved ones it didn't include.
+          var ids = {};
+          raws.forEach(function (x) { ids[x.id] = true; });
+          d.raw = raws.concat(d.raw.filter(function (x) { return !ids[x.id]; }));
+        } else {
+          var have = {};
+          d.raw.forEach(function (x) { have[x.id] = true; });
+          d.raw = d.raw.concat(raws.filter(function (x) { return !have[x.id]; }));
+        }
+        if (kind === 'show' && first) d.seed = false;
+        if (kind === 'album') saveAlbumList(d); else saveShowList(d);
+        remapDetail(d);
+        return;
+      }
+      var mapped = (r.json.items || []).map(function (it) { return mapDetail(d.item, it); }).filter(Boolean);
+      d.items = d.items.concat(mapped);
       if (isPod(d.item)) rememberEpisodes(mapped);   // for Continue listening
       if (!cur) return;
       // In the default order new rows go at the end; a chosen sort re-sorts everything loaded so far.
@@ -4169,10 +4229,325 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }).catch(function (e) {
       d.loading = false;
       if (e && e.message === 'signed-out') { if (state.started) renderSignIn(); return; }
-      if (isCool(e)) { d.error = coolText(e.group); if (state.detail === d) { paintDetailFoot(); coolToast(e.group); } return; }
+      if (isCool(e)) {
+        if (state.detail === d && detailFallback(d)) return;   // v2.15
+        if (d.src === 'cache' && d.items.length) {   // v2.15: the saved list stays; the note says Spotify paused updates
+          if (state.detail === d) { paintDetailFoot(); if (!d.autoCheck) coolToast(e.group); }
+          d.autoCheck = false;
+          return;
+        }
+        d.error = coolText(e.group); if (state.detail === d) { paintDetailFoot(); coolToast(e.group); } return;
+      }
+      d.autoCheck = false;
       d.error = 'Couldn’t load ' + (isPod(d.item) ? 'episodes' : 'songs') + ' (' + (e && e.message ? e.message : 'unknown error') + ').';
       if (state.detail === d) paintDetailFoot();
+    }).then(function () { d.autoCheck = false; });
+  }
+
+  // ---------- saved lists (v2.15) ----------
+  // Spotify's Development Mode quota for catalog calls (albums, shows) runs out quickly, so album song lists
+  // and podcast episode lists are kept in localStorage: 'lib-cache-album:<id>' = {at, total, items} (up to 150
+  // albums) and 'lib-cache-show:<id>' = {at, total, items[, seed]} (up to 60 shows, the newest 50 episodes each).
+  // The oldest (by `at`) go first. Albums don't change, so a saved album is used as is: no request (Load more
+  // asks for the next page of a partial one; Reload from Spotify starts it over). A saved podcast asks for page 1
+  // only when the copy is over 12 hours old, or on Check for new episodes. The top-right Refresh leaves these
+  // alone; Diagnostics → Settings → Clear saved lists removes them.
+  // While catalog is paused: an album that isn't saved is found through search (GET /search, its own quota),
+  // and a podcast that isn't saved shows your saved episodes (library) and the page's own history of it.
+  var SL_ALBUM = 'lib-cache-album:', SL_SHOW = 'lib-cache-show:';
+  var SL_ALBUM_MAX = 150, SL_SHOW_MAX = 60, SL_SHOW_EPS = 50;
+  var SHOW_STALE_MS = 12 * 60 * 60 * 1000;
+  var SEARCH_PAGE = 10, ALBUM_SEARCH_END = 50;   // Spotify's search limit is 10 per page
+  function albumPage(id, offset) { return '/albums/' + encodeURIComponent(id) + '/tracks?limit=50&offset=' + offset; }
+  function showPage(id, offset) { return '/shows/' + encodeURIComponent(id) + '/episodes?limit=50&offset=' + offset; }
+  function slKeys(prefix) {
+    var out = [];
+    try { for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k && k.indexOf(prefix) === 0) out.push(k); } } catch (e) {}
+    return out;
+  }
+  function slGet(prefix, id) {
+    var c = id ? get(prefix + id) : null;
+    return c && typeof c === 'object' && Array.isArray(c.items) && typeof c.at === 'number' ? c : null;
+  }
+  // Writes one saved list after dropping the oldest of its kind past the cap; if storage is full, drops up to
+  // 10 more and tries once again. False (and nothing saved) when storage still refuses.
+  function slPut(prefix, id, c, max) {
+    if (!id) return false;
+    var key = prefix + id;
+    var others = slKeys(prefix).filter(function (k) { return k !== key; }).map(function (k) {
+      var v = get(k); return { k: k, at: v && typeof v.at === 'number' ? v.at : 0 };
+    }).sort(function (a, b) { return a.at - b.at; });
+    var i = 0, txt;
+    for (; i < others.length - (max - 1); i++) del(others[i].k);
+    try { txt = JSON.stringify(c); } catch (e) { return false; }
+    for (var tries = 0; tries < 2; tries++) {
+      try { localStorage.setItem(key, txt); return true; } catch (e) {}
+      for (var j = 0; j < 10 && i < others.length; j++, i++) del(others[i].k);
+    }
+    return false;
+  }
+  function slStats() {
+    var n = { albums: 0, shows: 0, chars: 0 };
+    [[SL_ALBUM, 'albums'], [SL_SHOW, 'shows']].forEach(function (p) {
+      slKeys(p[0]).forEach(function (k) {
+        n[p[1]]++;
+        try { n.chars += k.length + (localStorage.getItem(k) || '').length; } catch (e) {}
+      });
     });
+    return n;
+  }
+  function slStatsText() {
+    var n = slStats();
+    return 'Saved lists: ' + n.albums + (n.albums === 1 ? ' album, ' : ' albums, ') + n.shows + (n.shows === 1 ? ' show' : ' shows') + ' (≈ ' + Math.max(n.chars ? 1 : 0, Math.round(n.chars / 1024)) + ' KB)';
+  }
+  function clearSavedLists() {
+    slKeys(SL_ALBUM).concat(slKeys(SL_SHOW)).forEach(del);
+    var d = state.detail;
+    if (d && d.kind !== 'artist') { d.savedAt = 0; if (d.src === 'cache') d.src = 'api'; paintDetailNote(); }
+  }
+  // Minimal Spotify objects: what mapDetail and the rows need.
+  function slTrack(t) {
+    return {
+      id: t.id, uri: t.uri, name: t.name || '', artists: (t.artists || []).map(function (a) { return { name: (a && a.name) || '' }; }),
+      track_number: t.track_number || 0, disc_number: t.disc_number || 1, duration_ms: t.duration_ms || 0
+    };
+  }
+  function slEpisode(e) {
+    var o = {
+      id: e.id, uri: e.uri, name: e.name || '', release_date: e.release_date || '', duration_ms: e.duration_ms || 0,
+      images: smallImages(e.images && e.images.length ? e.images : (e.show && e.show.images)).map(function (x) { return { url: x.url }; })
+    };
+    var rp = e.resume_point;
+    if (rp) o.resume_point = { fully_played: !!rp.fully_played, resume_position_ms: rp.resume_position_ms || 0 };
+    return o;
+  }
+  function saveAlbumList(d) {
+    if (!d.raw.length) return;
+    var total = typeof d.total === 'number' ? d.total : d.raw.length;
+    var at = Date.now();
+    if (slPut(SL_ALBUM, d.item.id, { at: at, total: total, items: d.raw.map(slTrack) }, SL_ALBUM_MAX)) d.savedAt = at;
+  }
+  // `at` is when page 1 was last asked (older pages don't make the copy newer).
+  function saveShowList(d) {
+    if (!d.raw.length) return;
+    var c = { at: d.checkedAt || Date.now(), total: typeof d.total === 'number' ? d.total : null, items: d.raw.slice(0, SL_SHOW_EPS) };
+    if (d.seed) c.seed = true;
+    if (slPut(SL_SHOW, d.item.id, c, SL_SHOW_MAX)) d.savedAt = Date.now();
+  }
+  // Latest episodes asked a show's newest few: a saved copy takes them at the top. When they overlap what the
+  // copy had, nothing is missing in between, so the copy counts as checked now.
+  function mergeShowEpisodes(showId, eps) {
+    var c = slGet(SL_SHOW, showId);
+    if (!c || !eps.length) return;
+    var raws = eps.filter(function (e) { return e && e.id && e.uri; }).map(slEpisode);
+    var had = {};
+    c.items.forEach(function (x) { had[x.id] = true; });
+    var overlap = raws.some(function (x) { return had[x.id]; });
+    var ids = {};
+    raws.forEach(function (x) { ids[x.id] = true; });
+    c.items = raws.concat(c.items.filter(function (x) { return !ids[x.id]; })).slice(0, SL_SHOW_EPS);
+    if (overlap) c.at = Date.now();
+    slPut(SL_SHOW, showId, c, SL_SHOW_MAX);
+  }
+  // A podcast with no saved copy that Latest episodes knows: those episodes become its copy (no request).
+  // `seed` marks it as only the newest few: Load more asks for page 1 and merges.
+  function seedShowFromLatest(it) {
+    var c = state.latest.cache;
+    if (!c || !Array.isArray(c.items)) return null;
+    var eps = c.items.filter(function (x) { return x && x.showId === it.id && x.uri && x.id; });
+    if (!eps.length) return null;
+    var s = {
+      at: c.at, total: null, seed: true,
+      items: eps.map(function (x) {
+        return { id: x.id, uri: x.uri, name: x.name || '', release_date: x.date || '', duration_ms: x.durMs || 0, images: x.img ? [{ url: x.img }] : [],
+          resume_point: { fully_played: !!x.played, resume_position_ms: x.positionMs || 0 } };
+      })
+    };
+    slPut(SL_SHOW, it.id, s, SL_SHOW_MAX);
+    return s;
+  }
+  function showFresh(at) { return Date.now() - at < SHOW_STALE_MS && at <= Date.now() + 60000; }
+  // Opening an album or podcast: the saved copy first; during a catalog pause, the fallbacks; otherwise Spotify.
+  function startDetail(d) {
+    var it = d.item;
+    if (it.kind === 'album' && it.id) {
+      var c = slGet(SL_ALBUM, it.id);
+      if (c && c.items.length) { useAlbumCache(d, c); return; }
+    } else if (it.kind === 'show' && it.id) {
+      var s = slGet(SL_SHOW, it.id) || seedShowFromLatest(it);
+      if (s && s.items.length) { useShowCache(d, s); return; }
+    }
+    loadDetail(detailUrl(it));   // a paused catalog goes to detailFallback from there
+  }
+  // An album or podcast with nothing on screen while catalog is paused (or its request just hit a 429).
+  function detailFallback(d) {
+    if (d.items.length || d.src === 'search' || d.src === 'local') return false;
+    if (d.item.kind === 'album' && d.item.id && d.item.name) { startAlbumSearch(d); return true; }
+    if (d.item.kind === 'show' && d.item.id) { startShowLocal(d); return true; }
+    return false;
+  }
+  function useAlbumCache(d, c) {
+    d.src = 'cache'; d.savedAt = c.at;
+    d.raw = c.items.slice();
+    d.total = typeof c.total === 'number' ? c.total : d.raw.length;
+    d.next = d.raw.length < d.total ? albumPage(d.item.id, d.raw.length) : null;
+    remapDetail(d);
+  }
+  function reloadAlbum(d) {
+    if (!d || d.loading || coolBlocked('catalog')) return;
+    var url = albumPage(d.item.id, 0);
+    delete catMemo[url];
+    loadDetail(url);   // the first page replaces the list and the saved copy
+  }
+  function useShowCache(d, c) {
+    d.src = 'cache'; d.savedAt = c.at; d.checkedAt = c.at; d.seed = !!c.seed;
+    d.raw = c.items.slice();
+    d.total = typeof c.total === 'number' ? c.total : null;
+    d.next = d.seed ? showPage(d.item.id, 0) : (d.total == null || d.raw.length < d.total) ? showPage(d.item.id, d.raw.length) : null;
+    remapDetail(d);
+    if (!showFresh(c.at) && !coolLeft('catalog')) checkNewEpisodes(d, true);   // one request: page 1
+  }
+  function checkNewEpisodes(d, auto) {
+    if (!d || d.loading || state.detail !== d) return;
+    if (coolLeft('catalog')) { if (!auto) coolToast('catalog'); paintDetailFoot(); return; }
+    var url = showPage(d.item.id, 0);
+    delete catMemo[url];
+    d.autoCheck = !!auto;
+    loadDetail(url);
+  }
+  // Album songs through search while catalog is paused: track results whose album is this one, in disc and
+  // track order, 10 per page, until a page adds nothing or 50 results were looked at.
+  function albumQuery(it) {
+    function q(s) { return String(s || '').replace(/"/g, ' ').replace(/\s+/g, ' ').trim(); }
+    var a = q(it.artist1 || String(it.artist || '').split(', ')[0]);
+    return 'album:"' + q(it.name) + '"' + (a ? ' artist:"' + a + '"' : '');
+  }
+  function startAlbumSearch(d) {
+    d.src = 'search'; d.raw = []; d.items = []; d.sOff = 0; d.next = null; d.error = '';
+    d.total = d.item.tracks || null;
+    d.pausedUntil = coolUntil('catalog');
+    loadAlbumSearch(d);
+  }
+  function loadAlbumSearch(d) {
+    if (!d || d.loading) return;
+    var cur = function () { return state.detail === d; };
+    if (coolLeft('search')) { d.error = coolText('search'); if (cur()) { paintDetailFoot(); coolToast('search'); } return; }
+    d.loading = true; d.error = '';
+    if (cur()) paintDetailFoot();
+    var url = '/search?type=track&limit=' + SEARCH_PAGE + '&offset=' + (d.sOff || 0) + '&q=' + encodeURIComponent(albumQuery(d.item));
+    api(url).then(function (r) {
+      d.loading = false;
+      if (!r.ok || !r.json) throw new Error(errMsg(r));
+      var page = r.json.tracks || {};
+      var have = {}, added = 0;
+      d.raw.forEach(function (x) { have[x.id] = true; });
+      (page.items || []).forEach(function (t) {
+        if (!t || !t.id || !t.uri || !t.album || t.album.id !== d.item.id || have[t.id]) return;
+        have[t.id] = true; added++;
+        if (t.album.total_tracks) d.total = t.album.total_tracks;
+        d.raw.push(slTrack(t));
+      });
+      d.raw.sort(function (a, b) { return (a.disc_number - b.disc_number) || (a.track_number - b.track_number); });
+      d.sOff = (d.sOff || 0) + SEARCH_PAGE;
+      var complete = !!d.total && d.raw.length >= d.total;
+      d.next = (!added || complete || d.sOff >= ALBUM_SEARCH_END || !page.next) ? null : 'search';
+      // Saved like an album from Spotify only when search found every song.
+      if (complete && d.raw.length === d.total) saveAlbumList(d);
+      remapDetail(d);
+    }).catch(function (e) {
+      d.loading = false;
+      if (e && e.message === 'signed-out') { if (state.started) renderSignIn(); return; }
+      d.error = isCool(e) ? coolText(e.group) : 'Couldn’t search for this album’s songs (' + (e && e.message ? e.message : 'unknown error') + ').';
+      if (cur()) { paintDetailFoot(); if (isCool(e)) coolToast(e.group); }
+    });
+  }
+  // A podcast with no saved copy while catalog is paused: your saved episodes of it (GET /me/episodes, the
+  // library group; the newest 50 saved, kept for 10 minutes) and the page's own history of it, newest first.
+  var savedEpsMemo = null;   // {at, items}
+  function savedEpisodesPage() {
+    if (savedEpsMemo && Date.now() - savedEpsMemo.at < 10 * 60 * 1000) return Promise.resolve(savedEpsMemo.items);
+    if (coolLeft('library')) return Promise.resolve(null);
+    return api('/me/episodes?limit=50&offset=0').then(function (r) {
+      if (!r.ok || !r.json) return null;
+      var items = (r.json.items || []).map(function (it) { return it && it.episode; }).filter(function (e) { return e && e.id && e.uri; });
+      savedEpsMemo = { at: Date.now(), items: items };
+      return items;
+    }, function (e) { if (e && e.message === 'signed-out') throw e; return null; });
+  }
+  function isoDay(ms) {
+    var t = new Date(ms), m = t.getMonth() + 1, dd = t.getDate();
+    return t.getFullYear() + '-' + (m < 10 ? '0' : '') + m + '-' + (dd < 10 ? '0' : '') + dd;
+  }
+  function startShowLocal(d) {
+    if (!d || d.loading) return;
+    var id = d.item.id;
+    d.src = 'local'; d.raw = []; d.items = []; d.next = null; d.error = ''; d.checkedAt = 0;
+    d.pausedUntil = coolUntil('catalog');
+    d.loading = true;
+    if (state.detail === d) paintDetailFoot();
+    savedEpisodesPage().then(function (saved) {
+      d.loading = false;
+      var byUri = {}, list = [];
+      (saved || []).forEach(function (e) {
+        if (!e.show || e.show.id !== id || byUri[e.uri]) return;
+        byUri[e.uri] = true;
+        list.push({ x: slEpisode(e), k: e.release_date || '' });
+      });
+      epHistory().forEach(function (h) {
+        if (!h.show || h.show.id !== id || byUri[h.uri]) return;
+        byUri[h.uri] = true;
+        // No release date in the history: when it was heard stands in for it.
+        list.push({ x: { id: h.id, uri: h.uri, name: h.name || '', release_date: '', duration_ms: h.duration_ms || 0, images: smallImages(h.show.images).map(function (i) { return { url: i.url }; }) }, k: isoDay(h.at) });
+      });
+      list = list.map(function (w, i) { w.i = i; return w; }).sort(function (a, b) { return cmpDesc(a.k, b.k) || a.i - b.i; });
+      d.raw = list.map(function (w) { return w.x; });
+      remapDetail(d);   // not saved: it isn't the show's whole list
+    }).catch(function (e) {
+      d.loading = false;
+      if (e && e.message === 'signed-out') { if (state.started) renderSignIn(); return; }
+      remapDetail(d);
+    });
+  }
+  // The line under an album or podcast header: where the list came from, and its links.
+  function shortDay(ms) { try { return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); } catch (e) { return isoDay(ms); } }
+  function pausedUntilText(d) {
+    var u = coolUntil('catalog') || d.pausedUntil;
+    return u ? ' until ' + clock(u) : '';
+  }
+  function paintDetailNote() {
+    var d = state.detail, n = $('dnote');
+    if (!d || !n || d.kind === 'artist') return;
+    n.textContent = '';
+    var kind = d.item.kind, parts = [];
+    function link(text, fn) {
+      var b = el('button', { class: 'linkbtn', type: 'button', text: text });
+      b.addEventListener('click', function () { fn(d); });
+      parts.push(b);
+    }
+    if (kind === 'album') {
+      if (d.src === 'search') parts.push(el('span', { text: 'From search (Spotify paused album details' + pausedUntilText(d) + ')' }));
+      else if (d.savedAt) {
+        parts.push(el('span', { text: 'Saved on this phone' }));
+        if (!d.loading) link('Reload from Spotify', reloadAlbum);
+      }
+    } else if (kind === 'show') {
+      if (d.src === 'local') parts.push(el('span', { text: 'Your saved and played episodes from this show (Spotify paused the full list' + pausedUntilText(d) + ')' }));
+      else if (d.savedAt || d.checkedAt) {
+        var paused = coolLeft('catalog');
+        var at = d.checkedAt || d.savedAt;
+        if (paused) parts.push(el('span', { text: 'Saved ' + shortDay(at) + ' · Spotify paused updates until ' + clock(coolUntil('catalog')) }));
+        else {
+          parts.push(el('span', { text: (d.seed ? 'Newest episodes from Latest' : 'Saved on this phone') + ' · checked ' + (agoAt(at) || shortDay(at)) }));
+          if (d.loading) parts.push(el('span', { text: '· Checking…' }));
+          else link('Check for new episodes', function (dd) { checkNewEpisodes(dd, false); });
+        }
+      }
+    }
+    parts.forEach(function (p, i) {
+      if (i && p.tagName === 'BUTTON') n.appendChild(el('span', { 'aria-hidden': 'true', text: '·' }));
+      n.appendChild(p);
+    });
+    n.hidden = !parts.length;
   }
 
   // ---------- artist view (v2.12) ----------
@@ -4474,6 +4849,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (r.value === 'light' || r.value === 'dark') set(K.theme, r.value); else del(K.theme);
       applyTheme();
     });
+  });
+  $('slClear').addEventListener('click', function () {   // v2.15
+    clearSavedLists();
+    $('slInfo').textContent = slStatsText();
+    toast('Saved lists cleared.');
   });
   $('searchFirst').addEventListener('change', function () {
     set(K.searchFirst, $('searchFirst').value);
