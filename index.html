@@ -397,6 +397,17 @@ li.playing .clname { color: var(--accent); }
 .sethint { font-size: 0.85rem; color: var(--muted); margin: 0; }
 select.field { appearance: auto; -webkit-appearance: menulist; }
 .dsum { font-size: 0.85rem; color: var(--muted); margin-top: 4px; }
+/* Spotify asleep (v2.10): the last song stays on screen as paused, with a muted line in the bar and on the Now Playing screen */
+.idleline { font-size: 0.85rem; color: var(--muted); margin-top: 4px; }
+.pinfo .sub.idle { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.3; }
+/* Home (v2.10): Liked Songs shortcut, then short sections of your own things, each with an optional "See all" */
+ul.list.hero { margin-top: 12px; }
+ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); padding: 0 4px 0 10px; }
+.hero .cover { width: 64px; height: 64px; }
+.hero .name { font-size: 1.05rem; }
+.shead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 18px 2px 2px; }
+.shead .sect { margin: 0; }
+.shead .linkbtn { font-size: 0.85rem; }
 </style>
 </head>
 <body>
@@ -413,7 +424,8 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
     <div class="wake" id="wake" role="status" hidden><span class="dot pulse" id="wakeDot"></span><span class="stext" id="wakeText"></span><span class="wakebtns"><button class="linkbtn" id="wakeRetry" type="button" hidden>Try again</button><button class="linkbtn" id="wakeOpen" type="button" hidden>Open Spotify instead</button><button class="linkbtn" id="wakeCancel" type="button">Cancel</button></span></div>
     <input class="search" id="search" type="search" placeholder="Filter by name" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Filter by name">
     <div class="filters" role="group" aria-label="Show">
-      <button class="chip" type="button" data-filter="playlists" aria-pressed="true">Playlists</button>
+      <button class="chip" type="button" data-filter="home" aria-pressed="true">Home</button>
+      <button class="chip" type="button" data-filter="playlists" aria-pressed="false">Playlists</button>
       <button class="chip" type="button" data-filter="albums" aria-pressed="false">Albums</button>
       <button class="chip" type="button" data-filter="artists" aria-pressed="false">Artists</button>
       <button class="chip" type="button" data-filter="podcasts" aria-pressed="false">Podcasts</button>
@@ -468,7 +480,7 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
     </div>
     <img class="npf-cover" id="npCover" alt="">
     <div class="npf-row">
-      <div class="meta"><div class="npf-title" id="npName"></div><div class="sub" id="npBy"></div></div>
+      <div class="meta"><div class="npf-title" id="npName"></div><div class="sub" id="npBy"></div><div class="idleline" id="npIdle" role="status" hidden></div></div>
       <button class="act heart" id="npHeart" type="button" data-uri="" data-name="" data-kind="track" aria-pressed="false" aria-label="Like this song"></button>
     </div>
     <div class="slider" id="npSeek" role="slider" tabindex="0" aria-label="Position" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"><div class="strack"><div class="sfill"></div><div class="sthumb"></div></div></div>
@@ -596,14 +608,20 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
     queued: 'lib-queued',        // [{uri, at}]: what this page added to the queue with ＋ (last 24 h)
     queueHide: 'lib-queue-hide', // false shows the whole queue; anything else hides Spotify's own additions
     theme: 'lib-theme',          // 'light' | 'dark'; unset = match the phone
-    searchFirst: 'lib-search-first' // the group shown first in Search Spotify → All
+    searchFirst: 'lib-search-first', // the group shown first in Search Spotify → All
+    lastplay: 'lib-lastplay'     // v2.10: {item, context, positionMs, deviceId, at[, shuffle, repeat]}: the last song or episode seen playing
   };
+  var LASTPLAY_MS = 6 * 60 * 60 * 1000;   // the last playback stays on screen (as paused) this long after Spotify goes idle
+  var HOME_RECENT_MS = 10 * 60 * 1000;    // Home: recently played is asked for at most this often
+  var HOME_JUMP = 8, HOME_LATEST = 5, HOME_PLAYLISTS = 6;
+  var IDLE_TEXT = 'Spotify is asleep. Press play to wake it.';
+  var WAKE_FIRST = 'Press play first to wake Spotify.';
   var PINS_MAX = 30;
   var RECENT_SEARCHES_MAX = 8;
   var QUEUED_MAX = 100;
   var QUEUED_MS = 24 * 60 * 60 * 1000;
   var NP_POLL_MS = 5000;          // Now Playing check while the full screen is open and on screen
-  var FILTERS = ['playlists', 'albums', 'artists', 'podcasts', 'recent', 'all', 'search'];
+  var FILTERS = ['home', 'playlists', 'albums', 'artists', 'podcasts', 'recent', 'all', 'search'];
   // Search Spotify result types. key: the page object in the /search answer; map: row mapper.
   var SEARCH_TYPES = ['all', 'track', 'artist', 'album', 'playlist', 'show', 'episode'];
   var STYPE = {
@@ -636,11 +654,12 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
   var REDIRECT = location.origin + location.pathname.replace(/index\.html$/, '');
 
   var state = {
-    data: null, filter: 'playlists', query: '',
+    data: null, filter: 'home', query: '',
     device: null, deviceAt: 0, deviceChecked: false, devices: [], devicesAt: 0, active: null,
     player: null, playerAt: 0, pollTimer: null, pollSeq: 0, pollFailed: false,
+    playerIdle: false,   // v2.10: Spotify dropped off (204 / no item); state.player is the last playback, shown paused
     search: { q: '' }, stype: 'all',   // results live in searchCache, per type and query
-    recent: { items: null, loading: false, error: '' }, recentSeq: 0,
+    recent: { items: null, jump: null, loading: false, error: '' }, recentSeq: 0, recentTriedAt: 0,
     saved: {}, busy: {}, containsOff: false, checking: {}, checkQueue: [], checkTimer: null,
     detail: null, listScroll: 0, pushed: false,
     started: false, scopeProblem: false,
@@ -1385,41 +1404,64 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
     if (m < 60 * 24) return Math.round(m / 60) + ' h ago';
     return Math.round(m / 1440) + ' d ago';
   }
+  // Home's "Jump back in" comes from the same answer: one card per album (newest play first). A card plays
+  // its song inside the album, playlist or Liked Songs it was played from, so the next songs keep going.
+  function jumpCtx(c) {
+    if (!c || !c.uri) return null;
+    return (c.type === 'album' || c.type === 'playlist' || c.type === 'collection' || isLikedCtx(c)) ? c.uri : null;
+  }
+  // Re-renders only the views that show recently played, so a load finishing elsewhere doesn't redraw your list.
+  function renderIfRecent() { if (!state.detail && (state.filter === 'recent' || state.filter === 'home')) renderList(); }
   function loadRecent() {
     var seq = ++state.recentSeq;
-    state.recent = { items: state.recent.items, loading: true, error: '' };
-    renderList();
+    state.recentTriedAt = Date.now();
+    state.recent = { items: state.recent.items, jump: state.recent.jump, loading: true, error: '' };
+    renderIfRecent();
     api('/me/player/recently-played?limit=50').then(function (r) {
       if (seq !== state.recentSeq) return;
       if (!r.ok) throw new Error(errMsg(r));
-      var seen = {}, out = [];
+      var seen = {}, out = [], seenAlbum = {}, jump = [];
       ((r.json && r.json.items) || []).forEach(function (it) {
         var t = it && it.track;
-        if (!t || !t.id || seen[t.id]) return;
+        if (!t || !t.id) return;
+        var ak = (t.album && t.album.id) || t.id;
+        if (!seenAlbum[ak]) {
+          seenAlbum[ak] = true;
+          var j = mapTrack(t, { sub: names(t.artists), ctx: jumpCtx(it.context) });
+          if (j) jump.push(j);
+        }
+        if (seen[t.id]) return;
         seen[t.id] = true;
         var m = mapTrack(t);
         if (m) { var when = ago(it.played_at); if (when) m.sub += ' · ' + when; out.push(m); }
       });
-      state.recent = { items: out, loading: false, error: '' };
-      renderList();
+      state.recent = { items: out, jump: jump, loading: false, error: '' };
+      renderIfRecent();
     }).catch(function (e) {
       if (seq !== state.recentSeq) return;
       if (e.message === 'signed-out') return renderSignIn();
       state.recent.loading = false;
       state.recent.error = 'Couldn’t load recently played (' + e.message + ').';
-      renderList();
+      renderIfRecent();
     });
+  }
+  // Home: at most one recently-played request per 10 minutes, and only while Home is on screen.
+  function maybeLoadHomeRecent() {
+    if (!onHome() || document.hidden || state.recent.loading) return;
+    if (Date.now() - state.recentTriedAt < HOME_RECENT_MS && state.recentTriedAt <= Date.now()) return;
+    loadRecent();
   }
 
   // ---------- latest episodes: the newest episodes across your saved shows ----------
   // Spotify has no batch call for this, so each saved show's newest few episodes are fetched
   // separately (a few at a time), merged newest first, and cached for 30 minutes.
   function onLatestView() { return state.started && !state.detail && state.filter === 'podcasts' && state.podTab === 'latest'; }
+  function onHome() { return state.started && !state.detail && state.filter === 'home'; }
   function latestFresh(c) { return !!c && typeof c.at === 'number' && Date.now() - c.at < LATEST_MS && c.at < Date.now() + 60000; }
   function hidePlayed() { return get(K.hidePlayed) === true; }
   function rerenderLatest() {
     var onShows = state.started && !state.detail && state.filter === 'podcasts' && state.podTab === 'shows';
-    if (onLatestView() || onShows) renderList();
+    if (onLatestView() || onShows || onHome()) renderList();
   }
   function maybeLoadLatest() {
     var L = state.latest;
@@ -1673,15 +1715,16 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
     btn.hidden = false;
   }
   function likedCtx() { var me = state.data && state.data.me; return me && me.id ? 'spotify:user:' + me.id + ':collection' : null; }
+  // kind 'resume' (v2.10) is the last song or episode, played again after Spotify went to sleep.
+  // positionMs starts there: an episode's resume point, or where a resumed song had got to.
   function playBody(item) {
     if (item.kind === 'liked') return likedCtx() ? { context_uri: likedCtx() } : null;
-    if (item.ctx) return { context_uri: item.ctx, offset: { uri: item.uri } };
-    if (item.kind === 'track' || item.kind === 'episode') {
-      var b = { uris: [item.uri] };
-      if (item.kind === 'episode' && item.positionMs > 0) b.position_ms = item.positionMs;   // resume where you left off
-      return b;
-    }
-    return { context_uri: item.uri };
+    var b;
+    if (item.ctx) b = { context_uri: item.ctx, offset: { uri: item.uri } };
+    else if (item.kind === 'track' || item.kind === 'episode' || item.kind === 'resume') b = { uris: [item.uri] };
+    else return { context_uri: item.uri };
+    if (item.positionMs > 0) b.position_ms = Math.round(item.positionMs);   // resume where you left off
+    return b;
   }
   function play(item, opts) {
     opts = opts || {};
@@ -1703,23 +1746,34 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
       if (r.ok) return done();
       // Context play (e.g. Liked Songs collection) can be refused; retry once with just the song.
       if (body.offset && [401, 404, 429].indexOf(r.status) === -1) {
-        return send({ uris: [item.uri] }).then(function (r2) {
+        var solo = { uris: [item.uri] };
+        if (body.position_ms) solo.position_ms = body.position_ms;
+        return send(solo).then(function (r2) {
           if (r2.ok) return done();
-          throw new Error(errMsg(r2));
+          throw httpError(r2);
         });
       }
-      throw new Error(errMsg(r));
+      throw httpError(r);
     });
   }
+  function httpError(r) { var e = new Error(errMsg(r)); e.status = r.status; return e; }
   function deviceFresh() { return state.device && (Date.now() - state.deviceAt < FRESH_MS); }
   // A recent check found no device at all (not an error): safe to wake Spotify straight from the tap.
   function noDeviceKnown() {
     return state.deviceChecked && !state.device && !state.deviceError && (Date.now() - state.devicesAt < NO_DEVICE_MS);
   }
+  var goneWaitAt = 0;   // last time a 404 (device gone) turned a tap into a wait; once a minute at most, so it can't loop
   function playNow(item, opts) {
     return play(item, opts).catch(function (e) {
       if (e.message === 'signed-out') return renderSignIn();
       state.device = null; state.deviceAt = 0; state.devicesAt = 0; showStatus();   // next tap checks again
+      // 404: the device went to sleep since the last check (iPhone Spotify drops off after a pause).
+      // In 'wait' mode the tap waits for Control Center play instead of failing.
+      if (e.status === 404 && wakeMode() === 'wait' && Date.now() - goneWaitAt > WAIT_FOR_MS) {
+        goneWaitAt = Date.now();
+        waitForPlay(item, opts);
+        return;
+      }
       toast('Couldn’t play (' + e.message + ').', { href: item.url, text: 'Open in Spotify' });
     });
   }
@@ -1806,6 +1860,7 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
     $('wakeDot').className = 'dot' + (o.pulse ? ' pulse' : ' off');
     $('wakeRetry').hidden = !o.retry;
     $('wakeOpen').hidden = !o.open;
+    paintIdle();   // the header is covered while Now Playing is open, so the asleep line repeats the wait message
   }
   function stopWake() {
     var w = state.wake;
@@ -1941,7 +1996,7 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.9.1 (2026-11-22)';
+  var VERSION = 'v2.10 (2026-11-22)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -1974,7 +2029,10 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
     line('Device picked: ' + (state.device ? state.device.name + ' (' + state.device.type + ')' : 'none') + (state.deviceError ? ' · error: ' + state.deviceError : ''));
     line('Wake mode: ' + wakeMode());
     var pend = readPending();
-    line('Pending: ' + (pend ? pend.item.name + ' (' + (pend.mode || 'link') + ', ' + Math.round((Date.now() - pend.at) / 1000) + 's ago' + (pend.manual ? ', waiting for Try again' : '') + ')' : 'none'));
+    line('Pending: ' + (pend ? pend.item.name + ' (' + (pend.mode || 'link') + ', ' + Math.round((Date.now() - pend.at) / 1000) + 's ago' + (pend.manual ? ', waiting for Try again' : '') + (pend.item.kind === 'resume' ? ', resume at ' + fmtTime(pend.item.positionMs || 0) : '') + ')' : 'none'));
+    var pl = state.player, lp = readLastPlay();
+    line('Player: ' + (state.playerIdle ? 'idle (asleep)' : pl ? (pl.is_playing ? 'playing' : 'paused') : 'nothing') +
+      ' · Last state: ' + (lp ? '“' + (lp.item.name || '?') + '” at ' + fmtTime(lp.positionMs || 0) + ', ' + ageText(Date.now() - lp.at) + ' old' : 'none'));
     var lc = state.latest.cache;
     line('Appearance: ' + themeMode() + ' · Search shows first: ' + searchFirst());
     line('Pinned: ' + readPins().length + ' · Queued with ＋ (24 h): ' + readQueued().length + ' · Recent searches: ' + recentSearches().length);
@@ -2069,10 +2127,122 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
       if (how !== 'stale' && how !== 'stop') schedulePoll(next);
     });
   }
+  // ---------- Spotify asleep: keep the last playback on screen, paused (v2.10) ----------
+  // After a pause the backgrounded iPhone Spotify app drops off Spotify's device list within seconds to
+  // minutes, and /me/player then answers 204 (no item). That isn't "nothing playing": the page keeps the
+  // last song or episode on the bar and the Now Playing screen as paused (state.playerIdle), and Play
+  // resumes it at the saved position through the usual tap path (wake mode included). The last playback
+  // is kept in localStorage (and in memory, if storage is blocked) for 6 hours, so a reload keeps it too.
+  var lastPlayMem = null;
+  function saveLastPlay(p, pos) {
+    var it = p.item;
+    var o = {
+      item: {
+        uri: it.uri, id: it.id, name: it.name, type: it.type, duration_ms: it.duration_ms || 0,
+        album: it.album ? { id: it.album.id, name: it.album.name, images: it.album.images || [], uri: it.album.uri } : null,
+        artists: (it.artists || []).map(function (a) { return { name: a && a.name }; }),
+        show: it.show ? { id: it.show.id, name: it.show.name, images: it.show.images || [] } : null
+      },
+      context: p.context && p.context.uri ? { type: p.context.type || '', uri: p.context.uri } : null,
+      positionMs: Math.max(0, Math.round(pos || 0)),
+      deviceId: (p.device && p.device.id) || '',
+      shuffle: !!p.shuffle_state, repeat: p.repeat_state || 'off',   // shown on the paused screen only
+      at: Date.now()
+    };
+    lastPlayMem = o;
+    set(K.lastplay, o);
+    return o;
+  }
+  function readLastPlay() {
+    var o = get(K.lastplay) || lastPlayMem;
+    if (!o) return null;
+    if (!o.item || !o.item.uri || typeof o.at !== 'number' || Date.now() - o.at > LASTPLAY_MS || o.at > Date.now() + 60000) { clearLastPlay(); return null; }
+    return o;
+  }
+  function clearLastPlay() { lastPlayMem = null; del(K.lastplay); }
+  // Moves the saved position only (not its time): where a frozen song got to, or a seek while asleep.
+  function setLastPos(ms) {
+    var o = readLastPlay();
+    if (!o) return;
+    o.positionMs = Math.max(0, Math.round(ms));
+    lastPlayMem = o;
+    set(K.lastplay, o);
+  }
+  // A player answer rebuilt from the saved playback: paused, at the saved position, on no device.
+  function idleFrom(o) {
+    if (!o) return null;
+    return { item: o.item, context: o.context || null, is_playing: false, progress_ms: o.positionMs || 0, device: null,
+      shuffle_state: !!o.shuffle, repeat_state: o.repeat || 'off', idle: true };
+  }
+  // The device answered 404 (gone): show the last playback as asleep instead of an error.
+  function goIdle() {
+    var p = state.player;
+    state.device = null; state.deviceAt = 0; state.devicesAt = 0; state.active = null;
+    if (p && p.item) {
+      var pos = curPos();
+      if (readLastPlay()) setLastPos(pos); else saveLastPlay(p, pos);
+      state.player = idleFrom(readLastPlay());
+      state.playerIdle = !!state.player;
+      state.playerAt = Date.now();
+    }
+    showStatus();
+    paintPlayer();
+  }
+  // The muted line under the title: asleep, or (once Play saved a tap) what to do next.
+  function idleText() {
+    var pd = readPending();
+    if (pd && pd.mode === 'wait' && pd.item) {
+      if (pd.manual) return 'Spotify didn’t wake up yet. Press play to try again.';
+      return 'Press play in Control Center or on the lock screen. ' +
+        (pd.item.kind === 'resume' ? 'It picks up at ' + fmtTime(pd.item.positionMs || 0) + '.' : '“' + pd.item.name + '” starts as soon as Spotify wakes.');
+    }
+    return IDLE_TEXT;
+  }
+  function paintIdle() {
+    var idle = !!(state.started && state.playerIdle && state.player && state.player.item);
+    var t = idle ? idleText() : '';
+    var n = $('npIdle');
+    if (n.textContent !== t) n.textContent = t;
+    n.hidden = !idle;
+    var s = $('pSub');
+    s.classList.toggle('idle', idle);
+    if (idle && s.textContent !== t) s.textContent = t;
+  }
+  // Play while asleep: the last song or episode, at the saved position, through the usual tap path, so it
+  // plays at once when a device is open and otherwise follows the wake mode ('wait' saves it as pending).
+  // Albums, playlists and Liked Songs play it inside that context (offset), so the next songs follow;
+  // artist and show contexts can't be started at a song, so those play the song or episode alone.
+  function resumeItem() {
+    var p = state.player;
+    if (!p || !p.item || !p.item.uri) return null;
+    var it = p.item;
+    var c = p.context;
+    var ctx = (c && c.uri && (c.type === 'album' || c.type === 'playlist' || c.type === 'collection' || isLikedCtx(c))) ? c.uri : null;
+    return { kind: 'resume', id: it.id, name: it.name || 'Untitled', uri: it.uri, url: spotifyUrl(it), ctx: ctx, positionMs: Math.round(p.progress_ms || 0) };
+  }
+  function resumeFromIdle(ev) {
+    var item = resumeItem();
+    if (!item) return;
+    onItemClick(item, (ev && ev.preventDefault) ? ev : { preventDefault: function () {} });
+  }
   function setPlayer(p) {
     var prevUri = state.player && state.player.item && state.player.item.uri;
-    state.player = p && p.item ? p : null;
-    state.playerAt = Date.now();   // progress_ms is as of this answer; the Now Playing screen counts on from here
+    if (p && p.item) {
+      state.player = p;
+      state.playerIdle = false;
+      state.playerAt = Date.now();   // progress_ms is as of this answer; the Now Playing screen counts on from here
+      saveLastPlay(p, p.progress_ms || 0);
+    } else {
+      // Nothing from Spotify: freeze the live playback where it got to, then show the saved one as asleep.
+      if (!state.playerIdle && state.player && state.player.item) {
+        setLastPos(curPos());
+        // The device it played on has most likely dropped off too: the next tap checks the device list first.
+        state.deviceAt = 0; state.devicesAt = 0;
+      }
+      state.player = idleFrom(readLastPlay());
+      state.playerIdle = !!state.player;
+      state.playerAt = Date.now();
+    }
     var nowUri = state.player && state.player.item.uri;
     if (prevUri && nowUri !== prevUri) consumeQueued(prevUri);
     if (p && p.device && p.device.id) { state.active = p.device; state.deviceAt = Date.now(); }
@@ -2102,6 +2272,7 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
     else cover.removeAttribute('src');
     $('pTitle').textContent = item.name || '';
     $('pSub').textContent = (ep ? ((item.show && item.show.name) || 'Podcast') : names(item.artists)) + (p.device && p.device.name ? ' · ' + p.device.name : '');
+    paintIdle();   // asleep: the sub line says so instead
     var pb = $('pPlay');
     var lab = p.is_playing ? 'Pause' : 'Play';
     if (pb.getAttribute('aria-label') !== lab || !pb.firstChild) { pb.setAttribute('aria-label', lab); pb.innerHTML = p.is_playing ? ICON.pause : ICON.play; }
@@ -2119,6 +2290,8 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
     paintNp();
   }
   function command(method, path, optimistic) {
+    // Asleep: Spotify has no device to send this to (it would answer 404), so nothing is sent.
+    if (state.playerIdle) { toast(WAKE_FIRST); return Promise.resolve(); }
     var p = state.player;
     var dev = p && p.device && p.device.id;
     var url = path + (dev ? (path.indexOf('?') === -1 ? '?' : '&') + 'device_id=' + encodeURIComponent(dev) : '');
@@ -2126,7 +2299,13 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
     state.pollSeq++;   // ignore any check that started before this command
     return api(url, { method: method }).then(function (r) {
       if (r.ok) return;
-      if (r.status === 404) throw new Error('Spotify isn’t open on a device');
+      if (r.status === 404) {
+        // The device went to sleep: show the last playback as asleep. Play goes straight on to wake it.
+        goIdle();
+        if (path === '/me/player/play') resumeFromIdle();
+        else toast(WAKE_FIRST);
+        return;
+      }
       throw new Error(errMsg(r));
     }).catch(onFail('Couldn’t control playback')).then(function () { schedulePoll(500); });
   }
@@ -2271,6 +2450,13 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
     var dur = p.item.duration_ms || 0;
     return Math.max(0, dur ? Math.min(pos, dur) : pos);
   }
+  // "45 s", "12 min", "2 h 5 min" (Diagnostics).
+  function ageText(ms) {
+    var s = Math.max(0, Math.round(ms / 1000));
+    if (s < 60) return s + ' s';
+    var m = Math.round(s / 60);
+    return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h' + (m % 60 ? ' ' + (m % 60) + ' min' : '');
+  }
   function fmtTime(ms) {
     var s = Math.max(0, Math.floor(ms / 1000));
     var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
@@ -2337,6 +2523,16 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
     if (!p || !p.item) return;
     var dur = p.item.duration_ms || 0;
     ms = Math.round(Math.max(0, dur ? Math.min(ms, dur) : ms));
+    if (state.playerIdle) {
+      // Asleep: just move the saved position; the next Play resumes from here.
+      p.progress_ms = ms; state.playerAt = Date.now();
+      setLastPos(ms);
+      var pd = readPending();
+      if (pd && pd.item && pd.item.kind === 'resume' && pd.item.uri === p.item.uri) { pd.item.positionMs = ms; set(K.pending, pd); }
+      paintProgress();
+      paintIdle();
+      return;
+    }
     command('PUT', '/me/player/seek?position_ms=' + ms, function (x) { x.progress_ms = ms; state.playerAt = Date.now(); });
   }
   function seekBy(delta) { seekTo(curPos() + delta); }
@@ -2361,7 +2557,8 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
     b.innerHTML = r === 'track' ? ICON.repeatOne : ICON.repeat;
   }
   // Play/Pause freezes or restarts the local progress estimate where it is.
-  function togglePlay() {
+  function togglePlay(ev) {
+    if (state.playerIdle) { resumeFromIdle(ev); return; }   // asleep: resume the last playback (wakes Spotify per the wake mode)
     var p = state.player;
     if (p && p.is_playing) command('PUT', '/me/player/pause', function (x) { x.progress_ms = curPos(); state.playerAt = Date.now(); x.is_playing = false; });
     else command('PUT', '/me/player/play', function (x) { x.progress_ms = curPos(); state.playerAt = Date.now(); x.is_playing = true; });
@@ -2456,6 +2653,7 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
     $('npShuffle').setAttribute('aria-pressed', String(!!p.shuffle_state));
     paintRepeat($('npRepeat'));
     $('npSkip').hidden = !ep;   // Back 15 s / Forward 30 s for episodes
+    paintIdle();
     var dev = p.device;
     var vol = !!(dev && dev.supports_volume);
     $('npVolRow').hidden = !vol;
@@ -2872,6 +3070,7 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
     var d = state.data;
     if (!d) { main.appendChild(el('p', { class: 'empty', text: 'Loading your library…' })); return; }
     var f = state.filter;
+    if (f === 'home') return renderHome(main, d);
     if (f === 'podcasts') {
       main.appendChild(podSeg());
       renderContinue(main);
@@ -2931,6 +3130,108 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
     var ul = el('ul', { class: 'list' });
     items.forEach(function (i) { ul.appendChild(itemRow(i)); });
     main.appendChild(ul);
+  }
+  // ---------- Home (v2.10): shortcuts to your own things, nothing Spotify recommends ----------
+  // Built only from what the page already loads: your library, your pins, the Latest episodes cache,
+  // Continue listening and your recently played songs (asked for at most once per 10 minutes, only while
+  // Home is on screen). The name box filters every section; with a name typed, Jump back in, Latest
+  // episodes and Your playlists search all their items instead of only the first few.
+  function sectHead(id, title, seeAll) {
+    var h = el('div', { class: 'shead' }, [el('h2', { class: 'sect', id: id, text: title })]);
+    if (seeAll) {
+      var b = el('button', { class: 'linkbtn', type: 'button', 'data-see': id, text: 'See all', 'aria-label': 'See all: ' + title });
+      b.addEventListener('click', function () {
+        seeAll();
+        window.scrollTo(0, 0);
+        var c = document.querySelector('.filters .chip[aria-pressed="true"]');
+        if (c) c.focus({ preventScroll: true });
+      });
+      h.appendChild(b);
+    }
+    return h;
+  }
+  // A card's second line: short enough for a 112 px card.
+  function cardSub(i) {
+    if (i.kind === 'track') return i.artist || '';
+    if (i.kind === 'playlist') return i.count ? i.count + ' songs' : 'Playlist';
+    if (i.kind === 'album') return i.artist || 'Album';
+    if (i.kind === 'artist') return 'Artist';
+    if (i.kind === 'show') return 'Podcast';
+    return i.sub || '';
+  }
+  // A horizontal strip of cards (the same look as Continue listening). A tap does what a row in its own
+  // tab does: podcasts open their episode list, everything else plays.
+  function cardStrip(main, id, title, items, seeAll) {
+    if (!items.length) return;
+    main.appendChild(sectHead(id, title, seeAll));
+    var ul = el('ul', { class: 'cl', 'aria-labelledby': id });
+    var cur = playingUri();
+    items.forEach(function (i) {
+      var sub = cardSub(i);
+      var a = el('a', { class: 'clcard', href: i.url, 'aria-label': (isPod(i) ? 'Open “' : 'Play “') + i.name + '”' + (sub ? ', ' + sub : '') }, [
+        coverFor(i),
+        el('span', { class: 'clname', text: i.name }),
+        el('span', { class: 'sub', text: sub })
+      ]);
+      a.addEventListener('click', function (ev) {
+        if (isPod(i)) { ev.preventDefault(); openDetail(i); return; }
+        onItemClick(i, ev);
+      });
+      var li = el('li', null, [a]);
+      if (i.kind === 'track' || i.kind === 'episode') {
+        li.setAttribute('data-puri', i.uri);
+        if (cur && cur === i.uri) li.className = 'playing';
+      }
+      ul.appendChild(li);
+    });
+    main.appendChild(ul);
+  }
+  function renderHome(main, d) {
+    var q = state.query.trim();
+    var shown = 0;
+    // Liked Songs: a big row at the top (tap plays, › opens the song list).
+    if (d.likedTotal != null) {
+      var liked = matches([likedItem(d)]);
+      if (liked.length) { main.appendChild(el('ul', { class: 'list hero' }, [itemRow(liked[0])])); shown++; }
+    }
+    // Pinned: all kinds, in the order you pinned them.
+    var pins = matches(pinsFor('all', d));
+    var pinnedUris = {};
+    pinsFor('all', d).forEach(function (p) { pinnedUris[p.uri] = true; });
+    cardStrip(main, 'hPinned', 'Pinned', pins);
+    shown += pins.length;
+    // Continue listening: in-progress episodes (as on Podcasts).
+    var cl = matches(continueItems());
+    renderContinue(main);
+    shown += cl.length;
+    // Jump back in: your last few distinct albums from Recently played.
+    setTimeout(maybeLoadHomeRecent, 0);   // after this render; at most once per 10 minutes
+    var jump = matches(state.recent.jump || []);
+    if (!q) jump = jump.slice(0, HOME_JUMP);
+    cardStrip(main, 'hJump', 'Jump back in', jump, function () { setFilter('recent'); });
+    shown += jump.length;
+    // Latest episodes: the newest few from the Latest cache (Hide played applies).
+    if (d.shows && d.shows.length) {
+      maybeLoadLatest();   // only when the 30-minute cache is stale
+      var c = state.latest.cache;
+      var hide = hidePlayed();
+      var eps = c ? matches(c.items.map(latestItem).filter(function (i) { return !(hide && i.played); })) : [];
+      if (!q) eps = eps.slice(0, HOME_LATEST);
+      if (eps.length) {
+        main.appendChild(sectHead('hLatest', 'Latest episodes', function () { state.podTab = 'latest'; setFilter('podcasts'); }));
+        var ul = el('ul', { class: 'list' });
+        eps.forEach(function (i) { ul.appendChild(itemRow(i)); });
+        main.appendChild(ul);
+        requestSaved(savableUris(eps));
+        shown += eps.length;
+      }
+    }
+    // Your playlists: in the Playlists tab's current order, leaving out pinned ones (they're above).
+    var pls = matches(sortList('playlists', (d.playlists || []).filter(function (p) { return !pinnedUris[p.uri]; })));
+    if (!q) pls = pls.slice(0, HOME_PLAYLISTS);
+    cardStrip(main, 'hPlaylists', 'Your playlists', pls, function () { setFilter('playlists'); });
+    shown += pls.length;
+    if (!shown) main.appendChild(el('p', { class: 'empty', text: q ? 'Nothing on Home matches “' + state.query + '”. Try All for your whole library.' : 'Nothing here yet.' }));
   }
   function setFilter(f, focus) {
     var wasSearch = state.filter === 'search';
@@ -3170,6 +3471,8 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
     clearTimeout(state.pollTimer); state.pollTimer = null;
     stopWake();
     state.player = null;
+    state.playerIdle = false;
+    clearLastPlay();   // signed out: the last playback belongs to that sign-in
     state.detail = null; state.pushed = false;
     $('top').classList.remove('detail');
     $('top').hidden = true;
@@ -3237,7 +3540,7 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
     state.started = true;
     $('top').hidden = false;
     var f = get(K.filter);
-    state.filter = FILTERS.indexOf(f) !== -1 ? f : 'playlists';
+    state.filter = FILTERS.indexOf(f) !== -1 ? f : 'home';   // Home unless you picked another filter before
     var st = get(K.searchType);
     state.stype = SEARCH_TYPES.indexOf(st) !== -1 ? st : 'all';
     paintSearchChips();
@@ -3392,7 +3695,7 @@ select.field { appearance: auto; -webkit-appearance: menulist; }
       if (state.wake.running) stopWake();   // pause the wake check; it starts fresh on return
       return;
     }
-    if (state.started && get(K.token)) { checkDevice(); schedulePoll(0); resumePending(false); if (onLatestView()) maybeLoadLatest(); startNpTick(); }
+    if (state.started && get(K.token)) { checkDevice(); schedulePoll(0); resumePending(false); if (onLatestView() || onHome()) maybeLoadLatest(); maybeLoadHomeRecent(); startNpTick(); }
   });
   // Coming back with the Back button can restore the page from memory without a visibility change.
   window.addEventListener('pageshow', function (e) {

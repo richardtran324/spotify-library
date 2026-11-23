@@ -39,7 +39,7 @@ Optional: Share → **Add to Home Screen**. The page brings its own icon (`apple
 
 ## Features
 
-- **Filters:** Playlists (with Liked Songs), Albums, **Artists** (artists you follow; tap one to play it), **Podcasts** (see below), **Recent** (recently played songs, newest first, each song once; reloaded each time you pick it), All, and Search Spotify. The box above filters the current list by name.
+- **Filters:** **Home** (the first chip and the starting view; see **Home** below), Playlists (with Liked Songs), Albums, **Artists** (artists you follow; tap one to play it), **Podcasts** (see below), **Recent** (recently played songs, newest first, each song once; reloaded each time you pick it), All, and Search Spotify. The box above filters the current list by name. The page remembers the filter you picked last; if you never picked one, it opens on Home.
 - **Buttons on each row** (the row itself still plays the item, or opens it in Spotify):
   - **Heart:** like a song, or save an album or someone else's playlist. A filled heart means it's in your library. Removing something shows **Undo** for a few seconds. Your own playlists, artists and Liked Songs have no heart.
   - **+:** add a song to the queue. Spotify must be open on a device.
@@ -48,6 +48,7 @@ Optional: Share → **Add to Home Screen**. The page brings its own icon (`apple
 - **Song list:** shows the cover, **Play**, **Shuffle**, and the songs, 50 at a time (**Load more** for the rest). Under the name, a line gives the total once everything is loaded, such as **12 songs · 48 min** or **1 hr 5 min**; while more pages remain it says **50 of 230 songs loaded** instead (no length, since it would cover only part of the list). Tapping a song plays it in that album or playlist, so the following songs keep going. **Back** (or the phone's back swipe) returns to where you were in the list. Spotify only lets personal apps list the songs in playlists you own; for other playlists the page shows a note and you can still press Play.
 - **Now Playing bar:** at the bottom while something plays: cover, song, artist, device, an **Up next** button, a heart for the current song, and Shuffle, Previous, Play/Pause, Next and **Repeat**. It checks every 10 seconds while the page is open on screen, and stops checking when you switch away.
   - **Tap the cover or song name** to open the full **Now Playing** screen (see below).
+  - When Spotify goes to sleep after you pause, the bar stays, shows the song as paused, and says **Spotify is asleep. Press play to wake it.** (see **When Spotify goes to sleep** below).
 - **Now Playing screen:** slides up over the page. It shows a large cover, the title, the artist or podcast, and a heart.
   - **Progress bar** with time played and time left. It moves along on its own between checks. Drag it, or tap anywhere on it, to jump there; the page tells Spotify when you let go.
   - **Shuffle, Previous, Play/Pause, Next, Repeat.** Repeat cycles **off → all** (the album or playlist) **→ one** (this song) **→ off**; it's green while on and shows a small 1 for **one**.
@@ -69,6 +70,19 @@ Optional: Share → **Add to Home Screen**. The page brings its own icon (`apple
   - Songs you added in the Spotify app itself, or more than 24 hours ago, are hidden while the switch is on.
 - **Playing now:** in any song or episode list (albums, playlists, Liked Songs, Recent, search, podcasts), the song or episode that's playing shows its name in green with a small **Playing** label. It updates with the Now Playing check.
 - **Choosing a device:** tap the device name in the status line ("Playing on iPhone · Change") to see your open Spotify devices. Picking one moves playback there and makes it the device taps play on from then on. **Refresh** in that panel looks again.
+
+### Home
+
+Home is a shortcuts page made only from your own things the page already loads. Nothing on it is suggested by Spotify, and it adds no new kinds of requests. From the top:
+
+- **Liked Songs** as a large row: tap it to play, **›** to open the song list.
+- **Pinned:** everything you pinned (playlists, albums, artists, podcasts), as a row of covers you swipe sideways, in the order you pinned them. A tap does the same as in its own tab: playlists, albums and artists play; podcasts open their episode list.
+- **Continue listening:** the episodes you've started, the same row as on Podcasts.
+- **Jump back in:** your last 8 albums from Recently played (one cover per album, newest first). A tap plays that song inside the album, playlist or Liked Songs you played it from, so the next songs keep going. **See all** opens **Recent**. Home asks Spotify for recently played at most once every 10 minutes, and only while Home is on screen.
+- **Latest episodes:** the newest 5 from the Latest episodes list (Hide played applies). **See all** opens **Podcasts → Latest**.
+- **Your playlists:** the first 6 in the order picked on the Playlists tab, leaving out pinned ones (they're already above). **See all** opens **Playlists**.
+
+A section is hidden when it has nothing in it. Home has no Sort chips. The name box works on Home too: it filters every section, and while you type, **Jump back in**, **Latest episodes** and **Your playlists** look through all their items, not only the first few. For your whole library, use **All**.
 
 ### Sorting
 
@@ -111,6 +125,18 @@ A row of **Sort** chips sits above most lists. The first chip is the order the p
 - **Search Spotify** also finds podcasts and episodes, shown under **Podcasts** and **Episodes**.
 - If an episode won't play from the page, the message offers **Open in Spotify** for that episode.
 
+### When Spotify goes to sleep
+
+After you pause, the iPhone's Spotify app stops being listed as a device within seconds to minutes, and Spotify then reports nothing playing. The page no longer treats that as the end:
+
+- The bar and the Now Playing screen keep the last song or episode, shown as **paused** where it stopped, with a small line: **Spotify is asleep. Press play to wake it.** The Now Playing screen stays open.
+- **Play** (on the bar or the Now Playing screen) picks up at that spot. If Spotify is open on a device, it plays right away. If not, it follows your **When Spotify isn't running** setting; with the default, the line changes to **Press play in Control Center or on the lock screen. It picks up at 1:23.** and the page plays it once Spotify wakes, one time only. A song played from an album, playlist or Liked Songs continues inside it; a song from an artist and an episode play on their own, at the same spot.
+- **Next, Previous, Shuffle and Repeat** do nothing while Spotify is asleep and say **Press play first to wake Spotify.** Dragging the progress bar only moves the spot that Play starts from.
+- If Spotify answers that the device is gone while you use the controls, the page switches to this asleep view instead of showing an error.
+- The last playback is kept on this phone for 6 hours, so it is still there after a reload. Signing out clears it. After 6 hours without playback, the bar goes away as before.
+
+**Diagnostics** shows **Player** (playing, paused or idle (asleep)) and how old the last playback is.
+
 ### When Spotify isn't running
 
 When the iPhone's Spotify app has been idle for a while, Spotify stops listing it as a device, so the page has nothing to play on. The page remembers what you tapped and plays it as soon as Spotify is back. Choose how in **Diagnostics → Settings → When Spotify isn't running**:
@@ -141,6 +167,7 @@ A tap is remembered for 3 minutes; after that the page forgets it. With the two 
 - **v2.5** adds the **Now playing** panel and the search chips. It needs no new permissions, so no extra sign-in.
 - **v2.8** adds the **Sort** chips (see **Sorting** above). No new permissions.
 - **v2.9** adds the Now Playing screen, **Up next**, **Continue listening**, pins, recent searches, Appearance, and sorting in Search Spotify. **Up next** needs one more permission (Spotify requires "currently playing" access to read the queue), so the **New features need one more sign-in** banner appears once more. Tap **Sign in again** and approve. Until then everything else works; if Spotify refuses the queue, **Up next** shows a **Sign in again** button instead.
+- **v2.10** adds **Home** and keeps the last song on screen when Spotify goes to sleep after a pause (see **When Spotify goes to sleep**). No new permissions.
 - If Spotify doesn't let the page check which items are already saved, hearts start outlined and a tap saves the item.
 - **Refresh** reloads your library and checks for an open Spotify device. The page also checks each time you come back to it.
 - To update the page later, upload the new `index.html` to the same repo (it replaces the old one).
