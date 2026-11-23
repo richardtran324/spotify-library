@@ -609,8 +609,18 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     queueHide: 'lib-queue-hide', // false shows the whole queue; anything else hides Spotify's own additions
     theme: 'lib-theme',          // 'light' | 'dark'; unset = match the phone
     searchFirst: 'lib-search-first', // the group shown first in Search Spotify → All
-    lastplay: 'lib-lastplay'     // v2.10: {item, context, positionMs, deviceId, at[, shuffle, repeat]}: the last song or episode seen playing
+    lastplay: 'lib-lastplay',    // v2.10: {item, context, positionMs, deviceId, at[, shuffle, repeat]}: the last song or episode seen playing
+    epHistory: 'lib-ep-history'  // v2.11: [{uri, id, name, show:{id, name, images}, duration_ms, positionMs, played, at[, checkedAt]}], newest first
   };
+  // v2.11 podcast listening history: Spotify's recently played leaves out podcast episodes, so the page keeps its own.
+  var EP_HIST_MAX = 60;                      // entries kept
+  var EP_HIST_MS = 60 * 24 * 60 * 60 * 1000; // entries older than 60 days are dropped
+  var EP_HIST_WRITE_MS = 15000;              // storage writes for one episode at most this often (memory is always current)
+  var EP_PLAYED_TAIL_MS = 60000;             // within the last minute counts as played
+  var RESUME_MS = 2 * 60 * 1000;             // fresh resume points (GET /episodes/{id}) at most this often
+  var RESUME_MAX = 8;                        // episodes asked per refresh
+  var RESUME_PARALLEL = 4;                   // requests in flight at once
+  var RESUME_LOCAL_MS = 2 * 60 * 1000;       // the page heard an episode this recently: its own position beats Spotify's
   var LASTPLAY_MS = 6 * 60 * 60 * 1000;   // the last playback stays on screen (as paused) this long after Spotify goes idle
   var HOME_RECENT_MS = 10 * 60 * 1000;    // Home: recently played is asked for at most this often
   var HOME_JUMP = 8, HOME_LATEST = 5, HOME_PLAYLISTS = 6;
@@ -1404,6 +1414,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (m < 60 * 24) return Math.round(m / 60) + ' h ago';
     return Math.round(m / 1440) + ' d ago';
   }
+  function agoAt(ms) { return ms ? ago(new Date(ms).toISOString()) : ''; }
+  // Merges lists of rows that carry `at` (ms) into one, newest first; ties keep their order.
+  function byTime(lists) {
+    var all = [];
+    lists.forEach(function (l) { (l || []).forEach(function (x) { all.push({ x: x, i: all.length }); }); });
+    return all.sort(function (a, b) { return ((b.x.at || 0) - (a.x.at || 0)) || a.i - b.i; }).map(function (w) { return w.x; });
+  }
   // Home's "Jump back in" comes from the same answer: one card per album (newest play first). A card plays
   // its song inside the album, playlist or Liked Songs it was played from, so the next songs keep going.
   function jumpCtx(c) {
@@ -1424,16 +1441,17 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       ((r.json && r.json.items) || []).forEach(function (it) {
         var t = it && it.track;
         if (!t || !t.id) return;
+        var at = Date.parse(it.played_at) || 0;   // v2.11: to merge with podcast episodes by time
         var ak = (t.album && t.album.id) || t.id;
         if (!seenAlbum[ak]) {
           seenAlbum[ak] = true;
           var j = mapTrack(t, { sub: names(t.artists), ctx: jumpCtx(it.context) });
-          if (j) jump.push(j);
+          if (j) { j.at = at; jump.push(j); }
         }
         if (seen[t.id]) return;
         seen[t.id] = true;
         var m = mapTrack(t);
-        if (m) { var when = ago(it.played_at); if (when) m.sub += ' · ' + when; out.push(m); }
+        if (m) { var when = ago(it.played_at); if (when) m.sub += ' · ' + when; m.at = at; out.push(m); }
       });
       state.recent = { items: out, jump: jump, loading: false, error: '' };
       renderIfRecent();
@@ -1527,6 +1545,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     setTimeout(rerenderLatest, 0);   // shows "Updating…"
   }
   function latestItem(x) {
+    // v2.11: what the page heard (or a newer resume point) beats a cache up to 30 minutes old.
+    var h = histByUri()[x.uri], c = state.latest.cache;
+    if (h && (!c || histSnap(h) > c.at)) x = Object.assign({}, x, { positionMs: h.played ? 0 : (h.positionMs || 0), played: !!h.played });
     var age = daysAgo(x.date);
     return {
       kind: 'episode', id: x.id, name: x.name, uri: x.uri, url: 'https://open.spotify.com/episode/' + x.id, img: x.img,
@@ -1535,32 +1556,263 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       fresh: !x.played && !(x.positionMs > 0) && age != null && age < 7   // released in the last 7 days, not started
     };
   }
+  // ---------- podcast listening history (v2.11) ----------
+  // Spotify's GET /me/player/recently-played leaves out podcast episodes, so the page keeps its own list:
+  // every episode a player check (or a tap on this page) sees playing, newest first, one entry per episode,
+  // at most 60, none older than 60 days. Only what this page saw: an episode played entirely in the Spotify
+  // app while the page was closed shows up once the page sees it playing (or via Latest's resume points).
+  // Memory is always current; storage is written at most once per 15 s per episode while it plays
+  // (right away when an episode is new or moves to the top).
+  var epHist = null;      // loaded from storage on first use (or memory only, if storage is blocked)
+  var epHistVer = 0;      // bumped when the list changes
+  var epWriteAt = {};     // uri -> last storage write for that episode
+  var epHistMapVer = -1, epHistMap = {};
+  var epRenderTimer = null;
+  function histOk(h, now) {
+    return !!h && typeof h.uri === 'string' && !!h.uri && typeof h.at === 'number' && now - h.at < EP_HIST_MS && h.at < now + 60000;
+  }
+  function epHistory() {
+    if (!epHist) { var a = get(K.epHistory); epHist = Array.isArray(a) ? a : []; epHistVer++; }
+    var now = Date.now();
+    var kept = epHist.filter(function (h) { return histOk(h, now); }).slice(0, EP_HIST_MAX);
+    if (kept.length !== epHist.length) { epHist = kept; epHistVer++; }
+    return epHist;
+  }
+  function histByUri() {
+    var list = epHistory();
+    if (epHistMapVer !== epHistVer) { epHistMap = {}; list.forEach(function (h) { epHistMap[h.uri] = h; }); epHistMapVer = epHistVer; }
+    return epHistMap;
+  }
+  // When this entry's position was last known: heard by the page, or checked against Spotify's resume point.
+  function histSnap(h) { return Math.max(h.at || 0, h.checkedAt || 0); }
+  function saveEpHistory(uri) {
+    if (uri) epWriteAt[uri] = Date.now();
+    set(K.epHistory, epHist);
+  }
+  function epPlayed(pos, dur) { return dur > 0 && pos >= Math.max(dur - EP_PLAYED_TAIL_MS, dur * 0.9); }   // the 90% floor only matters for clips under 10 min
+  // The smallest useful cover (the same pick as img()), so the list stays small in storage.
+  function smallImages(images) {
+    if (!images || !images.length) return [];
+    var best = images[images.length - 1];
+    for (var i = 0; i < images.length; i++) { if ((images[i].width || 300) <= 300) { best = images[i]; break; } }
+    return best && best.url ? [{ url: best.url, width: best.width || null, height: best.height || null }] : [];
+  }
+  // it: an episode as /me/player returns it. playing: heard just now (moves to the top, `at` = now).
+  // Paused: only the position moves; first seen paused uses Spotify's timestamp (when playback last changed).
+  function noteEpisode(it, pos, playing, ts) {
+    if (!it || it.type !== 'episode' || !it.uri) return;
+    var list = epHistory();
+    var now = Date.now();
+    var idx = -1;
+    for (var i = 0; i < list.length; i++) { if (list[i].uri === it.uri) { idx = i; break; } }
+    var old = idx >= 0 ? list[idx] : null;
+    var dur = it.duration_ms || (old && old.duration_ms) || 0;
+    pos = Math.max(0, Math.round(pos || 0));
+    if (dur) pos = Math.min(pos, dur);
+    if (old && !playing && old.positionMs === pos) return;   // paused and unchanged: nothing to record
+    var sh = it.show;
+    var show = sh ? { id: sh.id || '', name: sh.name || '', images: smallImages((sh.images && sh.images.length) ? sh.images : it.images) }
+      : (old && old.show) || { id: '', name: '', images: smallImages(it.images) };
+    if (old && old.show && !show.id && old.show.id) show.id = old.show.id;
+    var at = playing ? now : old ? old.at : ((typeof ts === 'number' && ts < now + 60000 && now - ts < EP_HIST_MS) ? ts : now);
+    var e = {
+      uri: it.uri, id: it.id || (old && old.id) || it.uri.split(':').pop(), name: it.name || (old && old.name) || 'Untitled',
+      show: show, duration_ms: dur, positionMs: pos, played: epPlayed(pos, dur), at: at
+    };
+    if (old && old.checkedAt) e.checkedAt = old.checkedAt;
+    if (idx >= 0) list.splice(idx, 1);
+    var to = 0;
+    while (to < list.length && list[to].at > e.at) to++;   // keeps the list newest first
+    list.splice(to, 0, e);
+    if (list.length > EP_HIST_MAX) list.length = EP_HIST_MAX;
+    epHistVer++;
+    var moved = to !== idx;
+    if (moved || now - (epWriteAt[it.uri] || 0) >= EP_HIST_WRITE_MS) saveEpHistory(it.uri);
+    if (moved || !old || old.played !== e.played) epHistChanged();
+  }
+  // A tap on this page started an episode: record it now if the page knows its show; otherwise the
+  // player check a moment later records it with the full details.
+  function noteStarted(item) {
+    if (!item || !/^spotify:episode:/.test(item.uri || '')) return;
+    var h = histByUri()[item.uri], info = null;
+    if (h) info = { show: h.show, dur: h.duration_ms };
+    else {
+      var c = state.latest.cache;
+      var x = c && c.items ? c.items.filter(function (y) { return y.uri === item.uri; })[0] : null;
+      var s = epSeen[item.uri] && epSeen[item.uri].x;
+      if (x) info = { show: { id: x.showId || '', name: x.showName || '', images: x.img ? [{ url: x.img }] : [] }, dur: x.durMs };
+      else if (s && s.showName) info = { show: { id: '', name: s.showName, images: s.img ? [{ url: s.img }] : [] }, dur: s.durMs };
+    }
+    if (!info) return;
+    noteEpisode({ type: 'episode', uri: item.uri, id: item.id, name: item.name, duration_ms: info.dur || 0, show: info.show }, item.positionMs || 0, true);
+  }
+  // A new episode at the top (or one just finished) redraws the lists that show it, keeping the scroll position.
+  function epHistChanged() {
+    clearTimeout(epRenderTimer);
+    epRenderTimer = setTimeout(function () {
+      epRenderTimer = null;
+      if (!state.started || state.detail) return;
+      var f = state.filter;
+      if (f !== 'recent' && f !== 'home' && f !== 'podcasts') return;
+      var y = window.pageYOffset || document.documentElement.scrollTop || 0;
+      renderList();
+      window.scrollTo(0, y);
+    }, 0);
+  }
+  // A history entry as a row: "Episode · <show> · <time ago> · <X min left | Played>". A tap resumes it.
+  function histRow(h) {
+    var dur = h.duration_ms || 0, played = !!h.played, pos = played ? 0 : (h.positionMs || 0);
+    var showName = (h.show && h.show.name) || '';
+    return {
+      kind: 'episode', id: h.id, name: h.name || 'Untitled', uri: h.uri, url: 'https://open.spotify.com/episode/' + h.id,
+      img: img(h.show && h.show.images),
+      sub: ['Episode', showName, agoAt(h.at), epWhen(played, pos, dur)].filter(Boolean).join(' · '),
+      positionMs: pos, played: played, at: h.at, durMs: dur, showName: showName
+    };
+  }
+  // Jump back in: one card per show, its newest episode heard.
+  function jumpEpisodes() {
+    var seen = {}, out = [];
+    epHistory().forEach(function (h) {
+      var k = (h.show && (h.show.id || h.show.name)) || h.uri;
+      if (seen[k]) return;
+      seen[k] = true;
+      var r = histRow(h);
+      r.sub = r.showName || 'Podcast';
+      out.push(r);
+    });
+    return out;
+  }
+
+  // ---------- fresh resume points (v2.11) ----------
+  // The Latest cache is up to 30 minutes old, so when Home or Podcasts shows (or on Refresh) the page asks
+  // GET /episodes/{id} for up to 8 episodes (the newest heard, then Continue listening's), 4 at a time,
+  // at most once per 2 minutes, never while the page is hidden. resume_point needs user-read-playback-position.
+  var resumeRun = { running: false, at: 0, doneAt: 0, count: 0, failed: 0, maxInFlight: 0, ids: [] };
+  function onPodcastsView() { return state.started && !state.detail && state.filter === 'podcasts'; }
+  function liveUri() { var p = state.player; return (p && !state.playerIdle && p.is_playing && p.item && p.item.uri) || ''; }
+  function resumeCandidates() {
+    var out = [], seen = {}, cur = liveUri();
+    function add(x) {
+      if (!x || !x.id || !x.uri || seen[x.uri] || x.uri === cur || out.length >= RESUME_MAX) return;   // playing now: the player check is fresher
+      seen[x.uri] = true;
+      out.push(x.id);
+    }
+    var h = epHistory();
+    h.slice(0, 4).forEach(add);
+    continueItems().forEach(add);
+    h.forEach(add);
+    return out;
+  }
+  function maybeRefreshResume() {
+    var R = resumeRun;
+    if (!state.started || document.hidden || R.running) return;
+    if (!(onHome() || onPodcastsView())) return;
+    if (Date.now() - R.at < RESUME_MS && R.at <= Date.now()) return;
+    var ids = resumeCandidates();
+    if (!ids.length) return;
+    R.running = true; R.at = Date.now(); R.ids = ids; R.maxInFlight = 0;
+    var got = {}, failed = 0, next = 0, running = 0, stopped = false, signedOut = false, finished = false;
+    function finish() {
+      if (finished) return;
+      finished = true;
+      R.running = false; R.doneAt = Date.now(); R.count = next; R.failed = failed;
+      if (signedOut) { renderSignIn(); return; }
+      if (stopped) R.at = 0;   // left the page: try again on return
+      applyResume(got);
+    }
+    function launch() {
+      while (running < RESUME_PARALLEL && next < ids.length) {
+        if (document.hidden || !state.started || signedOut) { stopped = true; break; }   // nothing while hidden
+        one(ids[next++]);
+      }
+      if (running === 0) finish();
+    }
+    function one(id) {
+      running++;
+      if (running > R.maxInFlight) R.maxInFlight = running;
+      api('/episodes/' + encodeURIComponent(id)).then(function (r) {
+        if (!r.ok || !r.json) throw new Error(errMsg(r));
+        got[id] = r.json;
+      }).catch(function (e) {
+        if (e && e.message === 'signed-out') signedOut = true;
+        failed++;
+      }).then(function () { running--; launch(); });
+    }
+    launch();
+  }
+  // Spotify's resume points update the history, the Latest cache and episode lists seen this session,
+  // except for an episode the page heard in the last 2 minutes (its own position is newer).
+  function applyResume(got) {
+    var now = Date.now(), hm = histByUri(), cur = liveUri(), changed = false, histChanged = false, latestChanged = false;
+    var c = state.latest.cache;
+    Object.keys(got).forEach(function (id) {
+      var e = got[id];
+      if (!e || !e.uri || !e.resume_point) return;   // no resume point (permission missing): nothing to learn
+      var rp = e.resume_point, dur = e.duration_ms || 0;
+      var pos = rp.resume_position_ms > 0 ? rp.resume_position_ms : 0;
+      var played = !!rp.fully_played || epPlayed(pos, dur);
+      var h = hm[e.uri];
+      if (h) {
+        h.checkedAt = now; histChanged = true;
+        if (h.uri === cur || now - h.at < RESUME_LOCAL_MS) return;
+        if (h.positionMs !== pos || h.played !== played) { h.positionMs = pos; h.played = played; changed = true; }
+        if (dur && !h.duration_ms) h.duration_ms = dur;
+      }
+      if (c && c.items) c.items.forEach(function (x) {
+        if (x.uri !== e.uri) return;
+        var xp = played ? 0 : pos;
+        if (x.positionMs !== xp || x.played !== played) { x.positionMs = xp; x.played = played; latestChanged = true; changed = true; }
+      });
+      var s = epSeen[e.uri];
+      if (s) {
+        if (s.x.positionMs !== (played ? 0 : pos) || s.x.played !== played) changed = true;
+        s.x.positionMs = played ? 0 : pos; s.x.played = played; s.at = now;
+      }
+    });
+    if (histChanged) { epHistVer++; saveEpHistory(null); }
+    if (latestChanged) set(K.latest, c);
+    if (changed) epHistChanged();
+  }
+
   // ---------- Continue listening: episodes you've started but not finished ----------
-  // Built only from what the page already has (no extra requests): the Latest episodes cache, plus
-  // episodes seen in an episode list this session (Saved episodes, a podcast). Spotify gives no
-  // "last played" time for episodes, so the newest release comes first.
+  // Built from what the page already has: the Latest episodes cache, episodes seen in an episode list this
+  // session (Saved episodes, a podcast) and (v2.11) the page's own podcast history, with fresh resume points.
+  // The newest snapshot of each episode wins. Order: most recently heard first; episodes the page never
+  // heard go after, newest release first.
   var epSeen = {};   // uri -> {x: mapped episode, at: when it was loaded}; this session only
   function rememberEpisodes(items) {
     var now = Date.now();
     items.forEach(function (i) { if (i && i.kind === 'episode' && i.uri) epSeen[i.uri] = { x: i, at: now }; });
   }
   function continueItems() {
-    var byUri = {};
+    var byUri = {}, dates = {}, heard = {};
+    function put(at, i) {
+      if (i.date) dates[i.uri] = i.date;
+      if (!byUri[i.uri] || at > byUri[i.uri].at) byUri[i.uri] = { at: at, i: i };   // the newer snapshot wins
+    }
     var c = state.latest.cache;
     if (c && c.items) c.items.forEach(function (x) {
-      byUri[x.uri] = { at: c.at, i: { id: x.id, uri: x.uri, name: x.name, img: x.img, showName: x.showName, date: x.date, durMs: x.durMs, positionMs: x.positionMs, played: x.played } };
+      put(c.at, { id: x.id, uri: x.uri, name: x.name, img: x.img, showName: x.showName, date: x.date, durMs: x.durMs, positionMs: x.positionMs, played: x.played });
     });
-    Object.keys(epSeen).forEach(function (u) {
-      var s = epSeen[u];
-      if (!byUri[u] || s.at > byUri[u].at) byUri[u] = { at: s.at, i: s.x };   // the newer snapshot wins
+    Object.keys(epSeen).forEach(function (u) { put(epSeen[u].at, epSeen[u].x); });
+    epHistory().forEach(function (h) {
+      heard[h.uri] = h.at;
+      put(histSnap(h), { id: h.id, uri: h.uri, name: h.name, img: img(h.show && h.show.images), showName: (h.show && h.show.name) || '', date: '',
+        durMs: h.duration_ms || 0, positionMs: h.played ? 0 : (h.positionMs || 0), played: !!h.played });
     });
     var out = Object.keys(byUri).map(function (u) { return byUri[u].i; })
-      .filter(function (i) { return i.positionMs > 0 && !i.played; });
-    out.sort(function (a, b) { return cmpDesc(a.date, b.date); });
-    return out.slice(0, 10).map(function (i) {
+      .filter(function (i) { return i.positionMs > 0 && !i.played; })
+      .map(function (i, k) { return { i: i, k: k, h: heard[i.uri] || 0, d: i.date || dates[i.uri] || '' }; });
+    out.sort(function (a, b) {
+      if (a.h !== b.h) { if (!a.h) return 1; if (!b.h) return -1; return b.h - a.h; }
+      return cmpDesc(a.d, b.d) || a.k - b.k;
+    });
+    return out.slice(0, 10).map(function (w) {
+      var i = w.i;
       return {
         kind: 'episode', id: i.id, name: i.name, uri: i.uri, url: 'https://open.spotify.com/episode/' + i.id, img: i.img,
-        positionMs: i.positionMs, played: false, date: i.date,
+        positionMs: i.positionMs, played: false, date: w.d, heardAt: w.h,
         sub: epWhen(false, i.positionMs, i.durMs) || i.showName || ''
       };
     });
@@ -1740,6 +1992,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       toast((opts.shuffle ? 'Shuffling “' : 'Playing “') + item.name + '” on ' + d.name);
       // Shuffle on a device that wasn't active yet can fail; try again now that it plays.
       if (opts.shuffle && !shuffleOk) shuffle().catch(function () {});
+      noteStarted(item);   // v2.11: an episode goes into the podcast history right away
       schedulePoll(600);
     }
     return pre.then(function () { return send(body); }).then(function (r) {
@@ -1996,7 +2249,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.10 (2026-11-22)';
+  var VERSION = 'v2.11 (2026-11-22)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -2037,6 +2290,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     line('Appearance: ' + themeMode() + ' · Search shows first: ' + searchFirst());
     line('Pinned: ' + readPins().length + ' · Queued with ＋ (24 h): ' + readQueued().length + ' · Recent searches: ' + recentSearches().length);
     line('Latest episodes: ' + (lc ? lc.items.length + ' cached, updated ' + ago(new Date(lc.at).toISOString()) + (lc.failed ? ', ' + lc.failed + ' show(s) failed' : '') : 'not loaded'));
+    var eh = epHistory(), R = resumeRun;
+    line('Podcast history: ' + eh.length + (eh.length === 1 ? ' episode' : ' episodes') + (eh[0] ? ' (newest: ' + eh[0].name + ', ' + agoAt(eh[0].at) + ')' : ''));
+    line('Resume points: ' + (R.running ? 'refreshing now' : R.doneAt ? 'last refreshed ' + agoAt(R.doneAt) + ' (' + R.count + (R.count === 1 ? ' episode' : ' episodes') + (R.failed ? ', ' + R.failed + ' failed' : '') + ')' : 'not refreshed this visit'));
     line('');
     function probe(label, path, show) {
       return api(path).then(function (r) {
@@ -2232,9 +2488,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       state.playerIdle = false;
       state.playerAt = Date.now();   // progress_ms is as of this answer; the Now Playing screen counts on from here
       saveLastPlay(p, p.progress_ms || 0);
+      noteEpisode(p.item, p.progress_ms || 0, !!p.is_playing, p.timestamp);   // v2.11: podcast history (episodes only)
     } else {
       // Nothing from Spotify: freeze the live playback where it got to, then show the saved one as asleep.
       if (!state.playerIdle && state.player && state.player.item) {
+        noteEpisode(state.player.item, curPos(), false);
         setLastPos(curPos());
         // The device it played on has most likely dropped off too: the next tap checks the device list first.
         state.deviceAt = 0; state.devicesAt = 0;
@@ -3050,11 +3308,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!q) return items;
     return items.filter(function (i) { return (i.name + ' ' + i.sub).toLowerCase().indexOf(q) !== -1; });
   }
+  // Recently played songs (Spotify) and podcast episodes (the page's own history, v2.11), newest first.
   function renderRecent(main) {
     var r = state.recent;
     if (r.error) main.appendChild(el('p', { class: 'err', text: r.error }));
-    if (!r.items) { if (r.loading) main.appendChild(el('p', { class: 'empty', text: 'Loading recently played…' })); return; }
-    var items = matches(r.items);
+    if (!r.items && r.loading) { main.appendChild(el('p', { class: 'empty', text: 'Loading recently played…' })); return; }
+    var items = matches(byTime([r.items || [], epHistory().map(histRow)]));
     if (!items.length) { main.appendChild(el('p', { class: 'empty', text: state.query.trim() ? 'Nothing matches “' + state.query + '”.' : 'Nothing played recently.' })); return; }
     var ul = el('ul', { class: 'list' });
     items.forEach(function (i) { ul.appendChild(itemRow(i)); });
@@ -3072,6 +3331,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var f = state.filter;
     if (f === 'home') return renderHome(main, d);
     if (f === 'podcasts') {
+      setTimeout(maybeRefreshResume, 0);   // v2.11: fresh resume points, at most once per 2 minutes
       main.appendChild(podSeg());
       renderContinue(main);
       if (state.podTab === 'latest') return renderLatest(main);
@@ -3204,9 +3464,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var cl = matches(continueItems());
     renderContinue(main);
     shown += cl.length;
-    // Jump back in: your last few distinct albums from Recently played.
+    // Jump back in: your last few distinct albums from Recently played, and (v2.11) one card per podcast
+    // from the page's own history, newest first.
     setTimeout(maybeLoadHomeRecent, 0);   // after this render; at most once per 10 minutes
-    var jump = matches(state.recent.jump || []);
+    setTimeout(maybeRefreshResume, 0);    // v2.11: fresh resume points, at most once per 2 minutes
+    var jump = matches(byTime([state.recent.jump || [], jumpEpisodes()]));
     if (!q) jump = jump.slice(0, HOME_JUMP);
     cardStrip(main, 'hJump', 'Jump back in', jump, function () { setFilter('recent'); });
     shown += jump.length;
@@ -3571,7 +3833,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   document.querySelectorAll('.schip').forEach(function (c) {
     c.addEventListener('click', function () { if (c.dataset.stype !== state.stype) setSearchType(c.dataset.stype, false); });
   });
-  $('refreshBtn').addEventListener('click', function () { checkDevice(); refresh(); schedulePoll(0); toast('Refreshing…'); });
+  $('refreshBtn').addEventListener('click', function () { checkDevice(); refresh(); schedulePoll(0); maybeRefreshResume(); toast('Refreshing…'); });
   $('bannerBtn').addEventListener('click', login);
   $('devBtn').addEventListener('click', openSheet);
   $('sheetClose').addEventListener('click', closeSheet);
@@ -3695,11 +3957,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (state.wake.running) stopWake();   // pause the wake check; it starts fresh on return
       return;
     }
-    if (state.started && get(K.token)) { checkDevice(); schedulePoll(0); resumePending(false); if (onLatestView() || onHome()) maybeLoadLatest(); maybeLoadHomeRecent(); startNpTick(); }
+    if (state.started && get(K.token)) { checkDevice(); schedulePoll(0); resumePending(false); if (onLatestView() || onHome()) maybeLoadLatest(); maybeLoadHomeRecent(); maybeRefreshResume(); startNpTick(); }
   });
   // Coming back with the Back button can restore the page from memory without a visibility change.
   window.addEventListener('pageshow', function (e) {
-    if (e.persisted && state.started && get(K.token)) { checkDevice(); schedulePoll(0); resumePending(false); if (onLatestView()) maybeLoadLatest(); }
+    if (e.persisted && state.started && get(K.token)) { checkDevice(); schedulePoll(0); resumePending(false); if (onLatestView()) maybeLoadLatest(); maybeRefreshResume(); }
   });
   // Safari can report focus a moment before the visibility change; start looking for Spotify right away.
   window.addEventListener('focus', function () {

@@ -39,7 +39,7 @@ Optional: Share → **Add to Home Screen**. The page brings its own icon (`apple
 
 ## Features
 
-- **Filters:** **Home** (the first chip and the starting view; see **Home** below), Playlists (with Liked Songs), Albums, **Artists** (artists you follow; tap one to play it), **Podcasts** (see below), **Recent** (recently played songs, newest first, each song once; reloaded each time you pick it), All, and Search Spotify. The box above filters the current list by name. The page remembers the filter you picked last; if you never picked one, it opens on Home.
+- **Filters:** **Home** (the first chip and the starting view; see **Home** below), Playlists (with Liked Songs), Albums, **Artists** (artists you follow; tap one to play it), **Podcasts** (see below), **Recent** (recently played songs, each song once, mixed with podcast episodes from the page's own history (see **Podcast listening history**), newest first; songs reload each time you pick it), All, and Search Spotify. The box above filters the current list by name. The page remembers the filter you picked last; if you never picked one, it opens on Home.
 - **Buttons on each row** (the row itself still plays the item, or opens it in Spotify):
   - **Heart:** like a song, or save an album or someone else's playlist. A filled heart means it's in your library. Removing something shows **Undo** for a few seconds. Your own playlists, artists and Liked Songs have no heart.
   - **+:** add a song to the queue. Spotify must be open on a device.
@@ -73,12 +73,12 @@ Optional: Share → **Add to Home Screen**. The page brings its own icon (`apple
 
 ### Home
 
-Home is a shortcuts page made only from your own things the page already loads. Nothing on it is suggested by Spotify, and it adds no new kinds of requests. From the top:
+Home is a shortcuts page made only from your own things the page already loads. Nothing on it is suggested by Spotify. Besides recently played, its only extra requests are the episode progress checks described under **Podcasts → Fresh listening progress**. From the top:
 
 - **Liked Songs** as a large row: tap it to play, **›** to open the song list.
 - **Pinned:** everything you pinned (playlists, albums, artists, podcasts), as a row of covers you swipe sideways, in the order you pinned them. A tap does the same as in its own tab: playlists, albums and artists play; podcasts open their episode list.
 - **Continue listening:** the episodes you've started, the same row as on Podcasts.
-- **Jump back in:** your last 8 albums from Recently played (one cover per album, newest first). A tap plays that song inside the album, playlist or Liked Songs you played it from, so the next songs keep going. **See all** opens **Recent**. Home asks Spotify for recently played at most once every 10 minutes, and only while Home is on screen.
+- **Jump back in:** your last 8 albums from Recently played (one cover per album) and podcasts you listened to (one card per podcast, its newest episode you heard), newest first. A song card plays that song inside the album, playlist or Liked Songs you played it from, so the next songs keep going; a podcast card picks the episode up where you left off. **See all** opens **Recent**. Home asks Spotify for recently played at most once every 10 minutes, and only while Home is on screen; podcasts come from the page's own history (see **Podcast listening history**).
 - **Latest episodes:** the newest 5 from the Latest episodes list (Hide played applies). **See all** opens **Podcasts → Latest**.
 - **Your playlists:** the first 6 in the order picked on the Playlists tab, leaving out pinned ones (they're already above). **See all** opens **Playlists**.
 
@@ -114,16 +114,28 @@ A row of **Sort** chips sits above most lists. The first chip is the order the p
 
 ### Podcasts
 
-- **Continue listening:** at the top of Podcasts (both Latest and Shows), a short row of up to 10 episodes you've started but not finished, with the time left. Tap one to pick up where you left off. It uses what the page already has (the Latest episodes list, plus Saved episodes or a podcast's episode list once you've opened them this session), so it costs no extra requests. Spotify doesn't tell apps when you last played an episode, so the newest release comes first. The row is hidden when there's nothing to resume.
+- **Continue listening:** at the top of Podcasts (both Latest and Shows), a short row of up to 10 episodes you've started but not finished, with the time left. Tap one to pick up where you left off. It combines the page's podcast history, the Latest episodes list, and Saved episodes or a podcast's episode list once you've opened them this session; for each episode the most recent information wins. The episode you listened to most recently comes first; episodes the page never saw playing follow, newest release first. The row is hidden when there's nothing to resume.
+- **Fresh listening progress:** when Home or Podcasts comes on screen (and on **Refresh**), the page asks Spotify for the current resume point of up to 8 episodes (the ones you listened to most recently, then those in Continue listening), 4 at a time, at most once every 2 minutes and never while the page is in the background. That updates **Continue listening**, the Latest list, **Recent** and **Jump back in** without waiting for the 30-minute Latest reload, including progress you made in the Spotify app.
 - The **Podcasts** filter opens on a **Latest | Shows** switch. **Latest** (the default) is the newest episodes across all your saved podcasts; **Shows** is **Saved episodes** (the episodes you saved in Spotify) followed by the podcasts you follow, each with its episode count. **All** includes Saved episodes and your podcasts too.
 - **Latest episodes:** the 50 newest episodes across your saved podcasts (the newest 5 from each), newest first. Each row shows the podcast, when it came out (**Today**, **Yesterday**, or the date) and the length, time left, or **Played**. A green dot marks an episode from the last 7 days that you haven't started.
   - **Play newest** starts the newest episode you haven't finished.
   - **Hide played** hides episodes you've finished; the page remembers the setting.
-  - The list is saved on the phone and reloads from Spotify at most every 30 minutes, and only while the page is on screen. **Updated … ago** shows its age; **Refresh** next to it reloads now. Listening progress in this list updates on each reload. If some podcasts can't be loaded, the rest still show, with a note such as **Couldn't load 1 show**.
+  - The list is saved on the phone and reloads from Spotify at most every 30 minutes, and only while the page is on screen. **Updated … ago** shows its age; **Refresh** next to it reloads now. Listening progress in this list updates on each reload, and in between from what the page sees playing and from the 2-minute progress check (see **Fresh listening progress**). If some podcasts can't be loaded, the rest still show, with a note such as **Couldn't load 1 show**.
 - **Tapping a podcast opens its episode list** (newest first, 50 at a time, **Load more** for the rest). Spotify doesn't let apps play a whole podcast, so the **Play** button at the top starts the newest episode you haven't finished. The heart removes the podcast from your library, with **Undo**.
 - **Episode rows** show the podcast or release date and the length, or how much is left ("12 min left") or **Played**. Tapping an episode plays it and picks up where you left off. The heart saves it to Saved episodes; **+** adds it to the queue.
 - **Search Spotify** also finds podcasts and episodes, shown under **Podcasts** and **Episodes**.
 - If an episode won't play from the page, the message offers **Open in Spotify** for that episode.
+
+### Podcast listening history
+
+Spotify's recently played list for apps leaves out podcast episodes (its reference says it "doesn't support podcast episodes"), so **Recent** and **Jump back in** used to show songs only. The page now keeps its own list of the episodes you listen to:
+
+- Whenever the Now Playing check sees an episode (or you start one from the page), it's added to the top of the list with its podcast, length, where you are in it and when you last heard it. While it plays, the position updates with each check. One entry per episode, at most 60, and anything older than 60 days drops off. It's stored only on this phone (in this browser) and never sent to Spotify; signing out doesn't clear it.
+- An episode counts as **Played** once you're within its last minute (or Spotify says it's finished).
+- **Recent** lists these episodes among your songs by time: **Episode · podcast · 12 min ago · 34 min left** (or **Played**). Tap one to pick up where you left off.
+- **It only covers listening the page saw.** The page checks what's playing only while it's open on screen. An episode you play entirely in the Spotify app while the page is closed won't appear in the history until the page sees it playing. Its progress still reaches **Continue listening** and the Latest list through Spotify's resume points (the 2-minute check above, or the 30-minute Latest reload), as long as it's one of those episodes.
+
+**Diagnostics** shows **Podcast history** (how many episodes, the newest and when you heard it) and when **Resume points** were last refreshed.
 
 ### When Spotify goes to sleep
 
@@ -168,6 +180,7 @@ A tap is remembered for 3 minutes; after that the page forgets it. With the two 
 - **v2.8** adds the **Sort** chips (see **Sorting** above). No new permissions.
 - **v2.9** adds the Now Playing screen, **Up next**, **Continue listening**, pins, recent searches, Appearance, and sorting in Search Spotify. **Up next** needs one more permission (Spotify requires "currently playing" access to read the queue), so the **New features need one more sign-in** banner appears once more. Tap **Sign in again** and approve. Until then everything else works; if Spotify refuses the queue, **Up next** shows a **Sign in again** button instead.
 - **v2.10** adds **Home** and keeps the last song on screen when Spotify goes to sleep after a pause (see **When Spotify goes to sleep**). No new permissions.
+- **v2.11** adds the podcast listening history (podcasts in **Recent** and **Jump back in**), fresher **Continue listening** progress, and orders **Continue listening** by when you last listened (see **Podcast listening history**). No new permissions.
 - If Spotify doesn't let the page check which items are already saved, hearts start outlined and a tap saves the item.
 - **Refresh** reloads your library and checks for an open Spotify device. The page also checks each time you come back to it.
 - To update the page later, upload the new `index.html` to the same repo (it replaces the old one).
