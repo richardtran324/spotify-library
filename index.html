@@ -15,8 +15,9 @@
 try { var libTheme = JSON.parse(localStorage.getItem('lib-theme') || 'null'); if (libTheme === 'light' || libTheme === 'dark') document.documentElement.setAttribute('data-theme', libTheme); } catch (e) {}
 </script>
 <style>
-/* Layout: one column for a phone. Sticky top bar (status + search + filters), then a list of covers you tap to play.
-   Rows carry small icon buttons on the right (save, queue, open). A Now Playing bar sits at the bottom while something plays. */
+/* Layout: one column for a phone. Sticky top bar (status + search + filters), then a list of covers. A tap opens an album,
+   playlist, podcast or artist, and plays a song or episode (v2.12). Rows carry small icon buttons on the right (save, queue, pin).
+   A Now Playing bar sits at the bottom while something plays. */
 :root {
   --bg: #f4f5f2;
   --surface: #ffffff;
@@ -408,6 +409,17 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
 .shead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 18px 2px 2px; }
 .shead .sect { margin: 0; }
 .shead .linkbtn { font-size: 0.85rem; }
+/* v2.12: Jump back in album and podcast cards open on a tap; the round button on the cover plays */
+.cl li { position: relative; }
+.cardplay {
+  position: absolute; top: 68px; left: 68px; width: 40px; height: 40px; padding: 0; border: 0; border-radius: 50%;
+  display: grid; place-items: center; background: var(--accent); color: var(--accent-fg); cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+.cardplay svg { width: 20px; height: 20px; display: block; }
+.cardplay:active { opacity: 0.7; }
+.acover { flex: none; display: flex; }   /* artist view: holds the picture, which arrives a moment later */
+.cover.round.dcover { border-radius: 50%; }
 </style>
 </head>
 <body>
@@ -671,7 +683,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     search: { q: '' }, stype: 'all',   // results live in searchCache, per type and query
     recent: { items: null, jump: null, loading: false, error: '' }, recentSeq: 0, recentTriedAt: 0,
     saved: {}, busy: {}, containsOff: false, checking: {}, checkQueue: [], checkTimer: null,
-    detail: null, listScroll: 0, pushed: false,
+    // detail: the open song list or artist view; detailStack: the views under it (v2.12: an album opened from an artist).
+    // Each view keeps returnScroll (where the view under it was scrolled) and pushed (it has its own history entry).
+    detail: null, detailStack: [],
     started: false, scopeProblem: false,
     sheetLoading: false, sheetError: '', sheetReturn: null,
     wake: { running: false, timer: null, gen: 0 },
@@ -708,7 +722,6 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     heart: svg('<path fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="' + HEART_D + '"/>'),
     heartOn: svg('<path fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="' + HEART_D + '"/>'),
     plus: svg('<path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M12 5v14M5 12h14"/>'),
-    open: svg('<path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>'),
     back: svg('<path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M15 5l-7 7 7 7"/>'),
     prev: svg('<path fill="currentColor" d="M6 6h2v12H6zM9.5 12L18 18V6z"/>'),
     next: svg('<path fill="currentColor" d="M6 18l8.5-6L6 6zM16 6h2v12h-2z"/>'),
@@ -1175,6 +1188,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     return false;
   }
   function canOpen(item) { return item.kind === 'album' || item.kind === 'playlist' || item.kind === 'liked' || isPod(item); }
+  // v2.12: a tap opens albums, playlists, Liked Songs, podcasts, Saved episodes and artists; it plays songs and episodes.
+  function opensOnTap(item) { return !!item && (canOpen(item) || item.kind === 'artist'); }
   // A podcast or the Saved episodes collection: opens an episode list instead of playing.
   function isPod(item) { return item.kind === 'show' || item.kind === 'episodes'; }
   function requestSaved(uris) {
@@ -1421,8 +1436,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     lists.forEach(function (l) { (l || []).forEach(function (x) { all.push({ x: x, i: all.length }); }); });
     return all.sort(function (a, b) { return ((b.x.at || 0) - (a.x.at || 0)) || a.i - b.i; }).map(function (w) { return w.x; });
   }
-  // Home's "Jump back in" comes from the same answer: one card per album (newest play first). A card plays
-  // its song inside the album, playlist or Liked Songs it was played from, so the next songs keep going.
+  // Home's "Jump back in" comes from the same answer: one card per album (newest play first). A tap on the card
+  // opens the album (v2.12); its play button plays the song inside the album, playlist or Liked Songs it was
+  // played from, so the next songs keep going.
   function jumpCtx(c) {
     if (!c || !c.uri) return null;
     return (c.type === 'album' || c.type === 'playlist' || c.type === 'collection' || isLikedCtx(c)) ? c.uri : null;
@@ -1446,7 +1462,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         if (!seenAlbum[ak]) {
           seenAlbum[ak] = true;
           var j = mapTrack(t, { sub: names(t.artists), ctx: jumpCtx(it.context) });
-          if (j) { j.at = at; jump.push(j); }
+          if (j) { j.at = at; j.album = mapAlbum(t.album); jump.push(j); }   // v2.12: the card opens the album
         }
         if (seen[t.id]) return;
         seen[t.id] = true;
@@ -1679,6 +1695,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       seen[k] = true;
       var r = histRow(h);
       r.sub = r.showName || 'Podcast';
+      // v2.12: the card opens the podcast when the page knows its id; otherwise it stays an episode card that resumes.
+      if (h.show && h.show.id) r.show = mapShow({ id: h.show.id, name: h.show.name, images: h.show.images, uri: 'spotify:show:' + h.show.id });
       out.push(r);
     });
     return out;
@@ -2249,7 +2267,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.11 (2026-11-22)';
+  var VERSION = 'v2.12 (2026-11-22)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -3056,7 +3074,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function npOpenDetail(item) {
     closeNp(false);
-    openDetail(item);
+    // From a song list the new list replaces it; from an artist view it goes on top, so Back returns to the artist.
+    openDetail(item, { push: !!(state.detail && state.detail.kind === 'artist') });
     var back = document.querySelector('.dhead .back');
     if (back) back.focus({ preventScroll: true });
   }
@@ -3149,7 +3168,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (canSave(item)) out.push(heartBtn(item));
     if (item.kind === 'track' || item.kind === 'episode') out.push(iconBtn(ICON.plus, 'Add “' + item.name + '” to queue', function () { addToQueue(item); }));
     if (canPin(item)) out.push(pinBtn(item));
-    if (canOpen(item)) out.push(iconBtn(ICON.open, (isPod(item) ? 'Open episodes in “' : 'Open songs in “') + item.name + '”', function () { openDetail(item); }));
+    // v2.12: no › button; the row itself opens albums, playlists, podcasts and artists.
     return out;
   }
   function coverFor(item, extra) {
@@ -3170,6 +3189,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var tag = sub.querySelector('.nowtag');
     if (on && !tag) sub.insertBefore(el('span', { class: 'nowtag', text: 'Playing' }), sub.firstChild);
     else if (!on && tag) sub.removeChild(tag);
+    var a = li.querySelector('a.item');
+    if (a) paintRowLabel(a, on);
+  }
+  // v2.12: row links say what a tap does: "Open “name”" or "Play “name”", then the second line.
+  // The label replaces the link's text for screen readers, so it carries "playing now" and "new" itself.
+  function paintRowLabel(a, playing) {
+    var sub = a.getAttribute('data-sub') || '';
+    a.setAttribute('aria-label', a.getAttribute('data-verb') + (playing ? ', playing now' : '') + (a.hasAttribute('data-new') ? ', new' : '') + (sub ? ', ' + sub : ''));
   }
   function paintPlaying() {
     var cur = playingUri();
@@ -3177,7 +3204,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     for (var i = 0; i < rows.length; i++) markPlaying(rows[i], !!cur && rows[i].getAttribute('data-puri') === cur);
   }
   function itemRow(item) {
-    var a = el('a', { class: 'item', href: item.url }, [
+    var opens = opensOnTap(item);
+    var a = el('a', { class: 'item', href: item.url, 'data-verb': (opens ? 'Open “' : 'Play “') + item.name + '”', 'data-sub': item.sub || '', 'data-new': item.fresh ? '' : null }, [
       coverFor(item),
       el('div', { class: 'meta' }, [
         item.fresh
@@ -3186,9 +3214,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         el('div', { class: 'sub', text: item.sub })
       ])
     ]);
+    paintRowLabel(a, false);
     a.addEventListener('click', function (ev) {
-      // Spotify can't play a show as a whole, so podcast rows open their episode list.
-      if (isPod(item)) { ev.preventDefault(); openDetail(item); return; }
+      // v2.12: albums, playlists, Liked Songs, podcasts and artists open their list (Play is at the top there);
+      // songs and episodes play. A release tapped in an artist view opens on top of it, so Back returns to the artist.
+      if (opens) { ev.preventDefault(); openDetail(item, { push: !!state.detail }); return; }
       onItemClick(item, ev);
     });
     var li = el('li', { class: 'row' }, [a]);
@@ -3306,7 +3336,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function matches(items) {
     var q = state.query.trim().toLowerCase();
     if (!q) return items;
-    return items.filter(function (i) { return (i.name + ' ' + i.sub).toLowerCase().indexOf(q) !== -1; });
+    // Jump back in cards show their album or podcast name (v2.12), so those names match too.
+    return items.filter(function (i) { return (i.name + ' ' + i.sub + (i.album ? ' ' + i.album.name : '') + (i.show ? ' ' + i.show.name : '')).toLowerCase().indexOf(q) !== -1; });
   }
   // Recently played songs (Spotify) and podcast episodes (the page's own history, v2.11), newest first.
   function renderRecent(main) {
@@ -3420,24 +3451,35 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     return i.sub || '';
   }
   // A horizontal strip of cards (the same look as Continue listening). A tap does what a row in its own
-  // tab does: podcasts open their episode list, everything else plays.
+  // tab does (v2.12): playlists, albums, artists and podcasts open; songs and episodes play.
+  // Jump back in cards that carry an album or podcast (i.album / i.show) show that album or podcast and open it;
+  // the round play button on the cover plays the song in the context it was played from, or resumes the episode.
   function cardStrip(main, id, title, items, seeAll) {
     if (!items.length) return;
     main.appendChild(sectHead(id, title, seeAll));
     var ul = el('ul', { class: 'cl', 'aria-labelledby': id });
     var cur = playingUri();
     items.forEach(function (i) {
-      var sub = cardSub(i);
-      var a = el('a', { class: 'clcard', href: i.url, 'aria-label': (isPod(i) ? 'Open “' : 'Play “') + i.name + '”' + (sub ? ', ' + sub : '') }, [
-        coverFor(i),
-        el('span', { class: 'clname', text: i.name }),
+      var host = i.album || i.show || null;   // the album or podcast a Jump back in card stands for
+      var shown = host || i;
+      var sub = host ? (i.album ? (host.artist || 'Album') : i.name) : cardSub(i);
+      var opens = !!host || opensOnTap(i);
+      var a = el('a', { class: 'clcard', href: shown.url, 'aria-label': (opens ? 'Open “' : 'Play “') + shown.name + '”' + (sub ? ', ' + sub : '') }, [
+        coverFor(shown),
+        el('span', { class: 'clname', text: shown.name }),
         el('span', { class: 'sub', text: sub })
       ]);
       a.addEventListener('click', function (ev) {
-        if (isPod(i)) { ev.preventDefault(); openDetail(i); return; }
+        if (opens) { ev.preventDefault(); openDetail(shown); return; }
         onItemClick(i, ev);
       });
       var li = el('li', null, [a]);
+      if (host) {
+        var pb = el('button', { class: 'cardplay', type: 'button', 'aria-label': (i.kind === 'episode' ? 'Resume “' : 'Play “') + i.name + '”' });
+        pb.innerHTML = ICON.play;
+        pb.addEventListener('click', function (ev) { onItemClick(i, ev); });
+        li.appendChild(pb);
+      }
       if (i.kind === 'track' || i.kind === 'episode') {
         li.setAttribute('data-puri', i.uri);
         if (cur && cur === i.uri) li.className = 'playing';
@@ -3449,7 +3491,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function renderHome(main, d) {
     var q = state.query.trim();
     var shown = 0;
-    // Liked Songs: a big row at the top (tap plays, › opens the song list).
+    // Liked Songs: a big row at the top (a tap opens the song list; Play and Shuffle are at its top).
     if (d.likedTotal != null) {
       var liked = matches([likedItem(d)]);
       if (liked.length) { main.appendChild(el('ul', { class: 'list hero' }, [itemRow(liked[0])])); shown++; }
@@ -3545,43 +3587,72 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (m && parent.kind === 'liked' && state.saved[m.uri] === undefined) state.saved[m.uri] = true;
     return m;
   }
-  function openDetail(item) {
-    // Opening another song list from inside one (the Now playing sheet) replaces it, so Back
-    // still returns to the list you started from, at the same scroll position.
-    var replacing = !!state.detail;
-    if (!replacing) state.listScroll = window.pageYOffset || document.documentElement.scrollTop || 0;
-    state.detail = { item: item, items: [], next: null, loading: false, error: '', restricted: false, lastUrl: null };
-    if (!(replacing && state.pushed)) {
-      try { history.pushState({ detail: true }, '', '#detail'); state.pushed = true; } catch (e) { state.pushed = false; }
+  // opts.push (v2.12): open on top of the current view (a release from an artist view), so Back returns to it.
+  // Without it, opening a list from inside one (the Now playing screen) replaces it, so Back still returns
+  // to where you started, at the same scroll position. Each level has its own history entry ({detail, depth}).
+  function openDetail(item, opts) {
+    opts = opts || {};
+    var y = window.pageYOffset || document.documentElement.scrollTop || 0;
+    var old = state.detail;
+    var d = item.kind === 'artist'
+      ? { kind: 'artist', item: item, img: '', items: [], offset: 0, more: false, total: null, loading: false, error: '', lastGot: 0 }
+      : { item: item, items: [], next: null, loading: false, error: '', restricted: false, lastUrl: null };
+    if (old && opts.push) {
+      state.detailStack.push(old);
+      d.returnScroll = y; d.pushed = false;
+    } else if (old) {
+      d.returnScroll = old.returnScroll; d.pushed = old.pushed;   // takes over the replaced view's history entry
+    } else {
+      state.detailStack = [];
+      d.returnScroll = y; d.pushed = false;
+    }
+    state.detail = d;
+    if (!d.pushed) {
+      try { history.pushState({ detail: true, depth: state.detailStack.length + 1 }, '', '#detail'); d.pushed = true; } catch (e) { d.pushed = false; }
     }
     renderDetail();
     window.scrollTo(0, 0);
     if (canSave(item)) requestSaved([item.uri]);
-    loadDetail(detailUrl(item));
+    if (d.kind === 'artist') loadArtist(d);
+    else loadDetail(detailUrl(item));
   }
   function goBack() {
-    if (state.pushed && location.hash === '#detail') history.back();   // popstate closes the view
+    var d = state.detail;
+    if (d && d.pushed && location.hash === '#detail') history.back();   // popstate closes the view
     else closeDetail();
   }
+  // Closes the top view: back to the view under it (an artist), or to the list, at the scroll position it had.
   function closeDetail() {
-    if (!state.detail) return;
+    var d = state.detail;
+    if (!d) return;
+    if (state.detailStack.length) {
+      state.detail = state.detailStack.pop();
+      renderDetail();   // from what that view already loaded; nothing is asked again
+      window.scrollTo(0, d.returnScroll || 0);
+      return;
+    }
     state.detail = null;
-    state.pushed = false;
     $('top').classList.remove('detail');
     if (location.hash === '#detail') { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} }
     renderList();
-    window.scrollTo(0, state.listScroll);
+    window.scrollTo(0, d.returnScroll || 0);
+  }
+  function backButton() {
+    var below = state.detailStack[state.detailStack.length - 1];
+    var back = el('button', { class: 'iconbtn back', type: 'button', 'aria-label': below ? 'Back to “' + below.item.name + '”' : 'Back to list' });
+    back.innerHTML = ICON.back;
+    back.appendChild(el('span', { text: 'Back' }));
+    back.addEventListener('click', goBack);
+    return back;
   }
   function renderDetail() {
     var d = state.detail;
+    if (d.kind === 'artist') return renderArtist(d);
     var it = d.item;
     $('top').classList.add('detail');
     var main = $('main');
     main.textContent = '';
-    var back = el('button', { class: 'iconbtn back', type: 'button', 'aria-label': 'Back to list' });
-    back.innerHTML = ICON.back;
-    back.appendChild(el('span', { text: 'Back' }));
-    back.addEventListener('click', goBack);
+    var back = backButton();
     var playA = el('a', { class: 'btn', href: it.url, text: 'Play' });
     var btns = [playA];
     if (isPod(it)) {
@@ -3703,28 +3774,175 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!url) { d.restricted = true; paintDetailSort(); paintDetailFoot(); return; }
     d.loading = true; d.error = ''; d.lastUrl = url;
     paintDetailFoot();
+    // The answer is kept even if another view is on top by then (v2.12: Back can return to this one);
+    // it's drawn only while this view is the one on screen.
     api(url).then(function (r) {
-      if (state.detail !== d) return;
       d.loading = false;
-      if (r.status === 403 && d.item.kind === 'playlist') { d.restricted = true; paintDetailSort(); paintDetailFoot(); return; }
+      var cur = state.detail === d;
+      if (r.status === 403 && d.item.kind === 'playlist') { d.restricted = true; if (cur) { paintDetailSort(); paintDetailFoot(); } return; }
       if (!r.ok || !r.json) throw new Error(errMsg(r));
       var mapped = (r.json.items || []).map(function (it) { return mapDetail(d.item, it); }).filter(Boolean);
       d.items = d.items.concat(mapped);
       d.next = r.json.next || null;
       if (typeof r.json.total === 'number') d.total = r.json.total;
       if (isPod(d.item)) rememberEpisodes(mapped);   // for Continue listening
+      if (!cur) return;
       // In the default order new rows go at the end; a chosen sort re-sorts everything loaded so far.
       if (sortIsDefault(detailView(d.item))) appendDetailRows(mapped);
       else paintDetailList();
       paintDetailSort();
       paintDetailFoot();
     }).catch(function (e) {
-      if (state.detail !== d) return;
       d.loading = false;
-      if (e.message === 'signed-out') return renderSignIn();
-      d.error = 'Couldn’t load ' + (isPod(d.item) ? 'episodes' : 'songs') + ' (' + e.message + ').';
-      paintDetailFoot();
+      if (e && e.message === 'signed-out') { if (state.started) renderSignIn(); return; }
+      d.error = 'Couldn’t load ' + (isPod(d.item) ? 'episodes' : 'songs') + ' (' + (e && e.message ? e.message : 'unknown error') + ').';
+      if (state.detail === d) paintDetailFoot();
     });
+  }
+
+  // ---------- artist view (v2.12) ----------
+  // Header: the artist's picture (GET /artists/{id}), name and Play (the artist context, as a tap used to do).
+  // Then the releases from GET /artists/{id}/albums, 10 at a time (Spotify's maximum), grouped as Albums,
+  // Singles & EPs and Compilations, each newest first. Nothing suggested: no top tracks, no related artists.
+  // A release opens its song list on top of this view; Back returns here at the same scroll position.
+  var ARTIST_PAGE = 10;
+  var RELEASE_GROUPS = [['album', 'Albums'], ['single', 'Singles & EPs'], ['compilation', 'Compilations']];
+  function releaseGroup(a) {
+    var g = a.album_type || a.album_group || '';
+    g = String(g).toLowerCase();
+    return (g === 'single' || g === 'compilation') ? g : 'album';
+  }
+  function mapRelease(a) {
+    var m = mapAlbum(a);
+    if (!m) return null;
+    var n = a.total_tracks;
+    m.group = releaseGroup(a);
+    m.sub = [(a.release_date || '').slice(0, 4), n ? n + (n === 1 ? ' song' : ' songs') : ''].filter(Boolean).join(' · ') || 'Album';
+    return m;
+  }
+  function releaseUrl(d) {
+    return '/artists/' + encodeURIComponent(d.item.id) + '/albums?include_groups=album,single,compilation&limit=' + ARTIST_PAGE + '&offset=' + d.offset;
+  }
+  function loadArtist(d) {
+    if (!d || d.loading) return;
+    d.loading = true; d.error = '';
+    if (state.detail === d) paintArtistFoot(d);
+    if (!d.infoAsked) {
+      // The picture only; Spotify no longer gives Development Mode apps followers or popularity.
+      d.infoAsked = true;
+      api('/artists/' + encodeURIComponent(d.item.id)).then(function (r) {
+        if (!r.ok || !r.json) return;
+        var src = img(r.json.images);
+        if (src) d.img = src;
+        if (state.detail === d) paintArtistCover(d);
+      }).catch(function () {});
+    }
+    api(releaseUrl(d)).then(function (r) {
+      d.loading = false;
+      if (!r.ok || !r.json) throw new Error(errMsg(r));
+      var seen = {};
+      d.items.forEach(function (x) { seen[x.id] = true; });
+      var got = (r.json.items || []).map(mapRelease).filter(function (x) { if (!x || seen[x.id]) return false; seen[x.id] = true; return true; });
+      d.items = d.items.concat(got);
+      d.offset += ARTIST_PAGE;
+      if (typeof r.json.total === 'number') d.total = r.json.total;
+      d.more = !!r.json.next;
+      d.lastGot = got;
+      if (state.detail !== d) return;
+      var y = window.pageYOffset || document.documentElement.scrollTop || 0;
+      paintArtistList(d);
+      window.scrollTo(0, y);
+      paintArtistFoot(d);
+      requestSaved(savableUris(got));
+    }).catch(function (e) {
+      d.loading = false;
+      if (e && e.message === 'signed-out') { if (state.started) renderSignIn(); return; }
+      d.error = 'Couldn’t load releases (' + (e && e.message ? e.message : 'unknown error') + ').';
+      if (state.detail === d) paintArtistFoot(d);
+    });
+  }
+  function renderArtist(d) {
+    var it = d.item;
+    $('top').classList.add('detail');
+    var main = $('main');
+    main.textContent = '';
+    var playA = el('a', { class: 'btn', href: it.url, text: 'Play', 'aria-label': 'Play “' + it.name + '”' });
+    playA.addEventListener('click', function (ev) { onItemClick(it, ev); });
+    var btns = [playA];
+    if (canPin(it)) btns.push(pinBtn(it));
+    main.appendChild(el('section', { class: 'dhead' }, [
+      backButton(),
+      el('div', { class: 'drow' }, [
+        el('div', { id: 'acover', class: 'acover' }, [coverFor({ kind: 'artist', img: d.img || it.img }, 'dcover')]),
+        el('div', { class: 'meta' }, [el('h2', { class: 'dname', text: it.name }), el('div', { class: 'sub', text: 'Artist' }), el('div', { class: 'dsum', id: 'dsum' })])
+      ]),
+      el('div', { class: 'dbtns' }, btns)
+    ]));
+    main.appendChild(el('div', { id: 'alist' }));
+    main.appendChild(el('div', { class: 'dfoot', id: 'afoot' }));
+    paintArtistList(d);
+    paintArtistFoot(d);
+    requestSaved(savableUris(d.items));
+  }
+  function paintArtistCover(d) {
+    var box = $('acover');
+    if (!box) return;
+    box.textContent = '';
+    box.appendChild(coverFor({ kind: 'artist', img: d.img || d.item.img }, 'dcover'));
+  }
+  function paintArtistList(d) {
+    var box = $('alist');
+    if (!box) return;
+    box.textContent = '';
+    RELEASE_GROUPS.forEach(function (g) {
+      var rows = d.items.filter(function (x) { return x.group === g[0]; });
+      if (!rows.length) return;
+      rows = rows.map(function (x, i) { return { x: x, i: i }; })
+        .sort(function (a, b) { return cmpDesc(a.x.released, b.x.released) || a.i - b.i; })   // newest first
+        .map(function (w) { return w.x; });
+      box.appendChild(el('h2', { class: 'sect', text: g[1] }));
+      var ul = el('ul', { class: 'list' });
+      rows.forEach(function (x) { ul.appendChild(itemRow(x)); });
+      box.appendChild(ul);
+    });
+  }
+  function paintArtistFoot(d) {
+    var f = $('afoot');
+    if (!f) return;
+    var sum = $('dsum');
+    if (sum) {
+      var n = d.items.length;
+      var txt = d.more ? n + ' of ' + (d.total != null ? d.total : n) + ' releases loaded' : (n ? n + (n === 1 ? ' release' : ' releases') : '');
+      sum.textContent = txt;
+      sum.hidden = !txt;
+    }
+    var had = f.querySelector('button');
+    var hadFocus = had && document.activeElement === had;
+    f.textContent = '';
+    if (d.error) {
+      f.appendChild(el('p', { class: 'err', text: d.error }));
+      var retry = el('button', { class: 'btn secondary', type: 'button', text: 'Try again' });
+      retry.addEventListener('click', function () { loadArtist(d); });
+      f.appendChild(retry);
+      if (hadFocus) retry.focus();
+      return;
+    }
+    if (d.loading && !d.items.length) { f.appendChild(el('p', { class: 'empty', text: 'Loading releases…' })); return; }
+    if (d.more || d.loading) {
+      // The button stays in place while loading so it keeps focus.
+      var more = el('button', { class: 'btn secondary', type: 'button', text: d.loading ? 'Loading…' : 'Load more' });
+      if (d.loading) more.setAttribute('aria-disabled', 'true');
+      more.addEventListener('click', function () { if (!d.loading) loadArtist(d); });
+      f.appendChild(more);
+      if (hadFocus) more.focus({ preventScroll: true });
+      return;
+    }
+    if (!d.items.length) { f.appendChild(el('p', { class: 'empty', text: 'No releases here.' })); return; }
+    if (hadFocus && d.lastGot && d.lastGot.length) {
+      // No more: focus moves to the first release just added.
+      var t = document.querySelector('#alist a.item[href="' + d.lastGot[0].url.replace(/"/g, '') + '"]');
+      if (t) t.focus({ preventScroll: true });
+    }
   }
 
   // ---------- screens ----------
@@ -3735,7 +3953,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     state.player = null;
     state.playerIdle = false;
     clearLastPlay();   // signed out: the last playback belongs to that sign-in
-    state.detail = null; state.pushed = false;
+    state.detail = null; state.detailStack = [];
     $('top').classList.remove('detail');
     $('top').hidden = true;
     $('banner').hidden = true;
@@ -3943,12 +4161,22 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   $('npVolIcon').innerHTML = ICON.volume;
   $('npBack15').addEventListener('click', function () { seekBy(-15000); });
   $('npFwd30').addEventListener('click', function () { seekBy(30000); });
+  // Back (button or swipe) closes one view per history entry: an album opened from an artist, then the artist,
+  // then the list. Entries are {detail, depth}; older ones without depth count as 1.
   window.addEventListener('popstate', function () {
-    if (location.hash === '#detail') {
-      if (!state.detail) { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} }
+    var cur = state.detail ? state.detailStack.length + 1 : 0;
+    var want = location.hash === '#detail' ? Math.max(1, (history.state && history.state.depth) || 1) : 0;
+    if (want >= cur) {
+      // Forward into a view that's gone: put the address back in step with what's on screen.
+      if (want > cur) {
+        try {
+          if (cur) history.replaceState({ detail: true, depth: cur }, '', '#detail');
+          else history.replaceState(null, '', location.pathname + location.search);
+        } catch (e) {}
+      }
       return;
     }
-    closeDetail();
+    while (state.detail && state.detailStack.length + 1 > want) closeDetail();
   });
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) {
