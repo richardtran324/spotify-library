@@ -201,6 +201,8 @@ ul.list.compact .cover.num { width: 28px; }
 .dbtns { display: flex; gap: 10px; align-items: center; }
 .dbtns .btn { flex: 1; min-width: 0; }
 .dfoot { padding: 12px 0; display: flex; flex-direction: column; gap: 10px; }
+/* v2.16: Spotify's own player for playlists the page can't list (tall enough to scroll the songs at phone width) */
+.sembed { display: block; width: 100%; max-width: 100%; height: 480px; border: 0; border-radius: 12px; background: var(--chip); }
 /* Now Playing bar */
 .player {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 8;
@@ -2566,7 +2568,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.15 (2026-11-22)';
+  var VERSION = 'v2.16 (2026-11-25)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -2577,6 +2579,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var m = themeMode();
     if (m === 'auto') document.documentElement.removeAttribute('data-theme');
     else document.documentElement.setAttribute('data-theme', m);
+    syncEmbedTheme();   // v2.16
   }
   function paintSettings() {
     var t = themeMode();
@@ -4133,9 +4136,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!d || !f) return;
     paintDetailSum();
     paintDetailNote();
+    if (d.restricted && d.embed && f.querySelector('iframe.sembed')) return;   // v2.16: keep the open player (redrawing would reload it)
     f.textContent = '';
     if (d.restricted) {
       f.appendChild(el('p', { class: 'empty', text: 'Spotify only lets personal apps list songs in your own playlists. Tap Play to hear this one.' }));
+      if (d.item.kind === 'playlist' && d.item.id) f.appendChild(d.embed ? embedFrame(d.item) : showSongsButton(d));
       return;
     }
     if (d.error) {
@@ -4159,6 +4164,39 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       f.appendChild(el('p', { class: 'empty', text: d.src === 'search' ? 'Search didn’t find this album’s songs. Try again after Spotify’s pause.'
         : d.src === 'local' ? 'You haven’t saved or played an episode of this show on this phone yet.' : 'No ' + noun + ' here.' }));
     }
+  }
+  // v2.16: "Show songs" for playlists the page can't list. It loads Spotify's own embedded player (an iframe, so no
+  // Web API request and no new permission) only when tapped, never autoplays, and uses Spotify's dark style in dark
+  // mode (Spotify has no light style; otherwise it takes the cover's colour). Songs tapped inside it play there as
+  // previews unless Safari is signed in to Spotify; Play and Shuffle above still play on the phone.
+  function showSongsButton(d) {
+    var b = el('button', { class: 'btn secondary', type: 'button', text: 'Show songs' });
+    b.addEventListener('click', function () { d.embed = true; paintDetailFoot(); });
+    return b;
+  }
+  function pageIsDark() {
+    var t = document.documentElement.getAttribute('data-theme');
+    if (t === 'dark') return true;
+    if (t === 'light') return false;
+    return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  }
+  function embedSrc(id) {
+    return 'https://open.spotify.com/embed/playlist/' + encodeURIComponent(id) + '?utm_source=generator' + (pageIsDark() ? '&theme=0' : '');
+  }
+  function embedFrame(item) {
+    return el('iframe', { class: 'sembed', src: embedSrc(item.id), title: 'Songs in ' + (item.name || 'this playlist'),
+      allow: 'clipboard-write; encrypted-media; fullscreen; picture-in-picture', loading: 'lazy', 'data-pid': item.id });
+  }
+  function syncEmbedTheme() {
+    var f = document.querySelector('iframe.sembed');
+    if (!f) return;
+    var src = embedSrc(f.getAttribute('data-pid'));
+    if (f.getAttribute('src') !== src) f.setAttribute('src', src);
+  }
+  if (window.matchMedia) {
+    var darkMq = window.matchMedia('(prefers-color-scheme: dark)');
+    if (darkMq.addEventListener) darkMq.addEventListener('change', syncEmbedTheme);
+    else if (darkMq.addListener) darkMq.addListener(syncEmbedTheme);
   }
   // v2.15: album and podcast lists are kept as minimal Spotify objects (d.raw) and mapped with mapDetail;
   // a podcast's saved copy takes newer positions from the page's own history.
