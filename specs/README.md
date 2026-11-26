@@ -16,6 +16,28 @@ Ranked by value to Richard. "Requests" means new Web API calls and their cool-of
 | 8 | [E5. Remove an episode from Continue listening](E-mini-specs.md#e5-remove-an-episode-from-continue-listening) | Local hide with Undo. | Build if wanted. | S | None | No |
 | 9 | [E4. Add the playing song to my playlist](E-mini-specs.md#e4-add-the-playing-song-to-one-of-my-playlists) | Now Playing option, POST /playlists/{id}/items. | Only after a real test: Dev Mode support is unverified. | M | 1 POST per add (library) | Yes, playlist-modify-private (one re-sign-in) |
 
+## F. Feature gaps vs the Spotify app (added Nov 26)
+
+Three researchers compared the page with the Spotify iOS app: a broad survey ([F](F-feature-gaps.md)), podcasts ([F2](F2-podcast-gaps.md)) and playback ([F3](F3-playback-gaps.md)). Merged and de-duplicated here, ranked by value. Each doc has mini-specs, sources and the list of app features that can't be built or break the no-recommendations rule.
+
+| Rank | Feature | Effort | Requests | New scope |
+|---|---|---|---|---|
+| 1 | Episode notes, with "(12:34)" timestamps you can tap (chapters for shows that write them) | S to M | Usually none (descriptions already come in the Now Playing check and episode lists); 1 player call per timestamp tap | No |
+| 2 | Go to artist from Now Playing, album headers and song menus | S | Opening the artist page uses catalog (1 to 2 calls per new artist) | No |
+| 3 | Share or copy the link of what's playing | S | None | No |
+| 4 | Find in list: search inside Liked Songs and your own playlists | M | Loads remaining songs once per visit (library for Liked Songs, catalog capped at 4 calls for playlists) | No |
+| 5 | Mark played or unplayed, on this phone only (could replace E5) | S | None | No |
+| 6 | Hide played in a show's episode list and Saved episodes | S | None | No |
+| 7 | Queue a whole album or playlist (capped at 25 to 30 songs) | M | 1 player call per song | No |
+| 8 | Recents and Creator sorts, and a "Mine" chip for your own playlists | S | None | No |
+| 9 | Follow or unfollow an artist | S | 1 library call per tap | Yes, user-follow-modify (test that artist links work first) |
+| 10 | Sleep timer that works while the page is on screen | M | 1 player call at the end | No |
+| 11 | Playlist editing: add the playing song (E4), remove a song, create or rename | M | 1 call per change | Yes, playlist-modify-private; Development Mode support unverified |
+
+Two decisions are yours: episode notes often include sponsor reads written by the podcaster (not Spotify ads), and weekly listening stats would use a "top tracks" endpoint your rule names.
+
+Not possible through the Web API: lyrics, podcast playback speed, editing or clearing the queue, crossfade, downloads, real playlist folders, Hide song. A sleep timer with the screen locked can't work in a Safari tab, because iOS pauses the page's scripts.
+
 ## C research in brief
 
 Second pass (Nov 26) checked Shortcuts, widgets, Siri, system play buttons, links and Connect. No path a web page can start skips Spotify's screen. Control Center or lock-screen play does, and Siri likely does. Sources are in [the C spec](C-siri-no-home-flash.md#second-pass-wider-home-flash-research-nov-26) and `research/`.
