@@ -1468,19 +1468,21 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // podcaster's text and are shown as written. Links stay plain text, so nothing in notes opens on a stray tap.
   var NOTES_KEEP = 40, NOTES_CUT = 4000, NOTES_MEM_MAX = 20000;
   var epNotes = {};          // episode id -> plain text ('' = Spotify says it has no notes), this visit
+  var epNotesRaw = {};       // episode id -> {h, d}: Spotify's html_description and description, read only when needed
   var notesPlayerId = '';    // the playing episode whose notes were last picked up (once per episode, not every check)
   var NOTES_BLOCK = /^(P|DIV|UL|OL|H[1-6]|BLOCKQUOTE|TABLE|SECTION|ARTICLE|HEADER|FOOTER|PRE|HR|DL)$/;   // a blank line around
   var NOTES_LINE = /^(LI|TR|DT|DD)$/;   // a line of its own
   // html_description only gives the line breaks: it's read into an inert document (nothing in it runs or loads)
   // and only its text is kept. Spotify's own plain `description` is used when there's no HTML.
   function htmlText(html) {
+    if (!/<[a-z!\/]/i.test(html)) return html;   // no tags at all: already plain text, line breaks and all
     var doc;
     try { doc = new DOMParser().parseFromString(html, 'text/html'); } catch (e) { return null; }
     if (!doc || !doc.body) return null;
     var out = [];
-    (function walk(n) {
+    (function walk(n, pre) {
       for (var c = n.firstChild; c; c = c.nextSibling) {
-        if (c.nodeType === 3) { out.push(c.nodeValue.replace(/\s+/g, ' ')); continue; }
+        if (c.nodeType === 3) { out.push(pre ? c.nodeValue : c.nodeValue.replace(/\s+/g, ' ')); continue; }
         if (c.nodeType !== 1) continue;
         var tag = c.tagName.toUpperCase();
         if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'TEMPLATE' || tag === 'NOSCRIPT') continue;
@@ -1488,16 +1490,16 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         var block = NOTES_BLOCK.test(tag);
         if (block || NOTES_LINE.test(tag)) out.push('\n');
         if (tag === 'LI') out.push('• ');
-        walk(c);
+        walk(c, pre || tag === 'PRE');
         if (block) out.push('\n');
       }
-    })(doc.body);
+    })(doc.body, false);
     return out.join('');
   }
   function tidyNotes(t) {
     return String(t).replace(/\r\n?/g, '\n').split('\n')
       .map(function (l) { return l.replace(/[ \t ]+/g, ' ').trim(); })
-      .join('\n').replace(/\n{3,}/g, '\n\n').trim();
+      .join('\n').replace(/^•\n+/gm, '• ').replace(/\n{3,}/g, '\n\n').trim();   // "<li><p>…" keeps its bullet on the line
   }
   // Plain text of an episode's notes, '' when it has none, null when this answer doesn't say.
   function notesText(e) {
@@ -1509,10 +1511,21 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function keepNotes(e, persist) {
     if (!e || !e.id || (e.type && e.type !== 'episode')) return;
-    var t = notesText(e);
-    if (t == null) return;
-    epNotes[e.id] = t.length > NOTES_MEM_MAX ? t.slice(0, NOTES_MEM_MAX) : t;
-    if (persist) saveNotes(e.id, epNotes[e.id]);
+    if (typeof e.html_description !== 'string' && typeof e.description !== 'string') return;
+    epNotesRaw[e.id] = { h: e.html_description, d: e.description };   // parsed only when the sheet asks (keeps lists fast)
+    delete epNotes[e.id];
+    if (persist) { var t = memNotes(e.id); if (t != null) saveNotes(e.id, t); }
+  }
+  // This visit's notes for an episode as plain text, or null.
+  function memNotes(id) {
+    if (Object.prototype.hasOwnProperty.call(epNotes, id)) return epNotes[id];
+    var r = epNotesRaw[id];
+    if (!r) return null;
+    var t = notesText({ html_description: r.h, description: r.d });
+    if (t == null) return null;
+    epNotes[id] = t.length > NOTES_MEM_MAX ? t.slice(0, NOTES_MEM_MAX) : t;
+    delete epNotesRaw[id];
+    return epNotes[id];
   }
   function readNotes() { var a = get(K.epNotes); return Array.isArray(a) ? a : []; }
   function saveNotes(id, t) {
@@ -1526,7 +1539,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // {t, cut} for an episode, or null when the page has no notes for it (then Load notes asks Spotify once).
   function notesFor(id) {
     if (!id) return null;
-    if (Object.prototype.hasOwnProperty.call(epNotes, id)) return { t: epNotes[id], cut: false };
+    var m = memNotes(id);
+    if (m != null) return { t: m, cut: false };
     var a = readNotes();
     for (var i = 0; i < a.length; i++) {
       if (a[i] && a[i].id === id && typeof a[i].t === 'string') return { t: a[i].t, cut: !!a[i].cut };
@@ -1535,8 +1549,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   // Timestamps the podcaster wrote: "(12:34)", "[1:02:03]", "12:34 Title" at the start of a line, and "12:34" or
   // "1:02:03" inside a line. Spotify's chapters for creators are lines like "(00:00) Intro". A one-digit "3:16"
-  // inside a line counts only after punctuation ("0:00 Intro, 5:30 News") or in brackets, so "John 3:16" stays
-  // text; "10:30 am" is a clock time; a time past the episode's end is left as text.
+  // right after a word stays text ("John 3:16"); after punctuation, an emoji or in brackets it counts
+  // ("0:00 Intro, 5:30 News"). "10:30 am" and "19:30 CET" are clock times; a time past the episode's end is text.
   var STAMP_RE = /(\d{1,2}):(\d{2})(?::(\d{2}))?/g;
   function findStamps(line, durMs) {
     var out = [], m;
@@ -1544,14 +1558,15 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     while ((m = STAMP_RE.exec(line))) {
       var s = m.index, e = s + m[0].length;
       var before = s ? line.charAt(s - 1) : '', after = line.charAt(e);
-      if (/[\d:.]/.test(before) || /[\d:]/.test(after) || (after === '.' && /\d/.test(line.charAt(e + 1)))) continue;
+      if (/[\d:.]/.test(before) || /\d/.test(after) || ((after === ':' || after === '.') && /\d/.test(line.charAt(e + 1)))) continue;
       var hasH = m[3] != null;
       var h = hasH ? +m[1] : 0, mi = hasH ? +m[2] : +m[1], se = hasH ? +m[3] : +m[2];
       if (se > 59 || (hasH && mi > 59)) continue;
       if (/^\s?[ap]\.?m\b/i.test(line.slice(e))) continue;
+      if (/^\s?(UTC|GMT|BST|IST|CES?T|EES?T|AES?T|AEDT|[ECMP][SD]?T)\b/.test(line.slice(e))) continue;   // "19:30 CET" is a clock time
       if (!hasH && m[1].length < 2 && before !== '(' && before !== '[') {
         var lead = line.slice(0, s).replace(/\s+$/, '').slice(-1);
-        if (lead && !/[(\[,;|•*·\-–—:>#]/.test(lead)) continue;
+        if (lead && /[A-Za-z0-9\u00c0-\u024f]/.test(lead)) continue;   // after a word ("John 3:16"): text
       }
       var ms = ((h * 60 + mi) * 60 + se) * 1000;
       if (durMs && ms > durMs) continue;
@@ -1576,7 +1591,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     notesReturn = (from && from.nodeType === 1) ? from : document.activeElement;
     notesView = { ep: ep, loading: false, error: '' };
     notesSeq++;
-    if (Object.prototype.hasOwnProperty.call(epNotes, ep.id)) saveNotes(ep.id, epNotes[ep.id]);   // opened: kept on the phone for next time
+    var mem = memNotes(ep.id);
+    if (mem != null) saveNotes(ep.id, mem);   // opened: kept on the phone for next time
     $('notes').hidden = false;
     renderNotes();
     $('notesBody').scrollTop = 0;
@@ -1595,6 +1611,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function loadNotes() {
     var v = notesView;
     if (!v || v.loading) return;
+    var have = notesFor(v.ep.id);
+    if (have && !have.cut) { renderNotes(); return; }   // the Now Playing check brought them meanwhile
     var url = '/episodes/' + encodeURIComponent(v.ep.id);
     if (!catMemo[url] && coolLeft('catalog')) { v.error = coolText('catalog'); renderNotes(); coolToast('catalog'); return; }
     var seq = notesSeq;
@@ -1604,6 +1622,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (!r.ok || !r.json) throw httpError(r);
       var t = notesText(r.json);
       epNotes[v.ep.id] = t == null ? '' : (t.length > NOTES_MEM_MAX ? t.slice(0, NOTES_MEM_MAX) : t);
+      delete epNotesRaw[v.ep.id];
       saveNotes(v.ep.id, epNotes[v.ep.id]);
       if (!v.ep.durMs && r.json.duration_ms) v.ep.durMs = r.json.duration_ms;
     }).catch(function (e) {
@@ -1672,6 +1691,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       toast('Jumped to ' + fmtTime(ms));
       return;
     }
+    // Without a device known to be open, Spotify may have to wake first: the sheet closes so its instructions show.
+    if (!deviceFresh()) closeNotes(false);
     onItemClick({ kind: 'episode', id: ep.id, name: ep.name, uri: ep.uri, url: ep.url, positionMs: ms, exactPos: true }, ev);
   }
   function loadData() {
@@ -2630,7 +2651,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function savePending(item, opts, mode) {
     var p = {
-      item: { kind: item.kind, id: item.id, name: item.name, uri: item.uri, url: item.url, ctx: item.ctx, positionMs: item.positionMs },
+      item: { kind: item.kind, id: item.id, name: item.name, uri: item.uri, url: item.url, ctx: item.ctx, positionMs: item.positionMs, exactPos: !!item.exactPos },   // v2.18: exactPos keeps a "0:00" timestamp at 0
       opts: { shuffle: !!(opts && opts.shuffle) },
       at: Date.now(),
       mode: mode || 'link'
@@ -2864,7 +2885,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     line('Podcast history: ' + eh.length + (eh.length === 1 ? ' episode' : ' episodes') + (eh[0] ? ' (newest: ' + eh[0].name + ', ' + agoAt(eh[0].at) + ')' : ''));
     line('Resume points: from this page’s own podcast history (no automatic Spotify checks)');
     var npi = pl && pl.item;   // v2.18: does Spotify's Now Playing answer carry the episode's notes?
-    line('Episode notes: ' + readNotes().length + ' on this phone, ' + Object.keys(epNotes).length + ' this visit' +
+    line('Episode notes: ' + readNotes().length + ' on this phone, ' + (Object.keys(epNotes).length + Object.keys(epNotesRaw).length) + ' this visit' +
       (npi && npi.type === 'episode' ? ' · Now playing: ' + (typeof npi.description === 'string' ? npi.description.length + ' characters' : 'no description in the answer') +
         (typeof npi.html_description === 'string' ? ' (HTML ' + npi.html_description.length + ')' : '') : ''));
     // v2.13 request meter (counted before this report's own checks below)
@@ -4998,6 +5019,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // ---------- screens ----------
   function stopApp() {
     state.started = false;
+    closeNotes(false);   // v2.18
     clearTimeout(state.pollTimer); state.pollTimer = null;
     stopWake();
     state.player = null;
