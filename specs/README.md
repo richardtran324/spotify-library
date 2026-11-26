@@ -12,13 +12,13 @@ Ranked by value to Richard. "Requests" means new Web API calls and their cool-of
 | 4 | [E3. Playlists and Liked Songs in Jump back in](E-mini-specs.md#e3-playlists-and-liked-songs-in-jump-back-in) | Reuses the Recently played answer and the library cache. | Build. | S | None | No |
 | 5 | [E2. Continue where I left off](E-mini-specs.md#e2-continue-where-i-left-off-in-an-album-or-playlist) | A "Continue · Song" button in an album or playlist header. | Build. | S | None to show, 1 player call per tap | No |
 | 6 | [A. Other people's playlists](A-other-peoples-playlists.md) | Option #2: a "Make a copy" helper with steps and a local link between original and copy. Option #3 (queue view): don't build. | Build #2 (M), or only the steps (S). App steps are unverified until checked on the iPhone. | M (S cut) | None new; opening the copy uses the existing items call on tap (catalog) | No |
-| 7 | [C. Start Spotify through Siri](C-siri-no-home-flash.md) | No source shows Siri or Shortcuts starting Spotify without its UI, and a web page can't call Siri. | Keep "Wait for me to press play". One text fix now; add a Siri hint only if iPhone check C1 passes. | S (text) | None | No |
+| 7 | [C. Start Spotify without the Home flash](C-siri-no-home-flash.md) | Two research passes (5 researchers): only Control Center or lock-screen play, and likely Siri, start Spotify without its screen, and the page can trigger neither. | Keep "Wait for me to press play". Text fixes now; try iPhone checks C1 (Siri), C6 (a shortcut that plays) and C7 (Show songs previews vs Control Center). | S (text) | None | No |
 | 8 | [E5. Remove an episode from Continue listening](E-mini-specs.md#e5-remove-an-episode-from-continue-listening) | Local hide with Undo. | Build if wanted. | S | None | No |
 | 9 | [E4. Add the playing song to my playlist](E-mini-specs.md#e4-add-the-playing-song-to-one-of-my-playlists) | Now Playing option, POST /playlists/{id}/items. | Only after a real test: Dev Mode support is unverified. | M | 1 POST per add (library) | Yes, playlist-modify-private (one re-sign-in) |
 
-## C research in one line
+## C research in brief
 
-Apple's docs say an audio app answering a Siri play request can start in the background with no UI, but nothing from Spotify or users confirms Spotify does this today. Sources are listed in [the C spec](C-siri-no-home-flash.md#research-findings).
+Second pass (Nov 26) checked Shortcuts, widgets, Siri, system play buttons, links and Connect. No path a web page can start skips Spotify's screen. Control Center or lock-screen play does, and Siri likely does. Sources are in [the C spec](C-siri-no-home-flash.md#second-pass-wider-home-flash-research-nov-26) and `research/`.
 
 ## How these were written
 

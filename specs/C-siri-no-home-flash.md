@@ -178,3 +178,54 @@ Richard does these. Write down the iOS version and Spotify version for each.
 - **iOS 27 App Selection** (US, iPhone 15 Pro or later, English) may make "resume" pick Spotify without naming it, but behavior differs by phone and region. Naming Spotify in the phrase avoids that.
 - **Shortcuts always shows its own screen** when run from Safari (2018 sources; not rechecked for iOS 26/27). A Spotify play action inside "Wake Spotify" can at best remove Spotify's Home flash, not the Shortcuts screen.
 - **Open question:** does Spotify's donated "Play Spotify Music" action still exist in iOS 26/27 Shortcuts? Only C4 can tell.
+
+## Second pass: wider Home flash research (Nov 26)
+
+Four more researchers looked beyond Siri: Shortcuts and widgets, Siri and system play buttons, links and Spotify Connect, and one broad sweep. Full write-ups with dated sources are in `specs/research/` (home-flash-*.md). The recommendation does not change: keep "Wait for me to press play" as the default. Three small additions follow.
+
+| Path | Verdict | Skips Home? | Page can start it? |
+|---|---|---|---|
+| Control Center or Lock Screen play | Likely (Apple engineer says Now Playing apps relaunch in the background; Richard's own wait mode works) | Yes | No, he presses it |
+| Siri "play X on Spotify" | Likely in background (Apple design, Apple engineer, a Spotify Community thread on iOS 26.6 where "continue in Spotify" was treated as a bug and fixed); no source says outright | Likely | No |
+| Type to Siri (iOS 18.1+ with Apple Intelligence) | Unverified with Spotify | Unknown | No |
+| Spotify Shortcuts or App Intents play actions | Do not exist (Community idea still open, posts through Sept 2025) | n/a | n/a |
+| Siri-suggested "Play Spotify Music" Shortcut action | Unverified (one 2019 post says it ran without opening Spotify) | Maybe | Only via Shortcuts, which shows its own screen |
+| Shortcuts "Play/Pause" set to Play | Unverified with a cold Spotify | Maybe | Only via Shortcuts |
+| Spotify widgets (Home, Lock Screen) | Open the app; no play control | No | No |
+| `open.spotify.com` link or `spotify:` URI | Brings Spotify to the front (Spotify docs); `spotify:` adds an iOS prompt; only single tracks autoplay | No | Yes (today's link mode) |
+| Web API transfer or play to an unlisted iPhone | Doesn't work (404 or 500; a closed app isn't in Connect) | n/a | n/a |
+| AirPlay to the iPhone | Doesn't apply (iPhone is a sender only) | n/a | n/a |
+| Web Playback SDK (the page becomes the player) | Supported on iOS Safari per Spotify, but needs a tap to start, the `streaming` scope (new sign-in) and Premium; background and lock-screen playback unverified | Skips the Spotify app entirely | Yes |
+
+### Addition 1: iPhone check C6, a shortcut that plays instead of opening
+
+In a copy of "Wake Spotify", replace "Open App" with the Shortcuts "Play/Pause" action set to Play (or a Siri-suggested Spotify play action with "Show When Run" off). Run it from the page. Pass: Spotify starts playing and its screen never appears (the Shortcuts screen still shows briefly). Also run it once from a Home Screen icon, which per iDownloadBlog (updated 2024-11-19) runs without opening Shortcuts, to see whether Spotify can start with no screen at all.
+
+If C6 passes, change the shortcut mode note to: "A tap runs your “Wake Spotify” shortcut. The Shortcuts screen shows briefly, then the page plays what you tapped." This replaces Step 1's "starts Spotify" wording.
+
+### Addition 2: honest note for the open-app mode (optional)
+
+Change the link mode note to: "Opens Spotify. If it wasn't running, its Home screen shows for a moment." Today's link is already a plain `https://open.spotify.com/<kind>/<id>` link, which avoids the iOS prompt a `spotify:` URI shows. No autoplay suffix is worth adding: the ones in forum posts conflict, and Spotify still comes to the front.
+
+### Addition 3: a risk to keep the wait mode working (inferred, needs a check)
+
+Control Center's play button belongs to whichever app played audio last. Safari can become that app through the Media Session API (dbushell.com, 2023). The page itself plays no audio today (no `mediaSession` or `<audio>` in index.html). But a song tapped inside the v2.16 Show songs embed plays a preview in Safari. That may make Safari the Now Playing app, so the next Control Center play would wake Safari instead of Spotify. This link is my inference, not a tested fact. Check C7: tap a preview in Show songs, let Spotify fall asleep, then press play in Control Center. If it plays the preview instead of waking Spotify, add a line under the Show songs button: "Previews play in Safari. To wake Spotify afterwards, open it once."
+
+### Not recommended now: Web Playback SDK
+
+It is the only design that avoids the Spotify app entirely, but it moves playback into Safari, needs a new scope and Premium, and may stop when Safari is in the background. Worth its own spec only if C6 and Siri both fail and the Home flash still bothers Richard.
+
+### Key sources for the second pass (all read 2026-11-26)
+
+- https://developer.apple.com/forums/thread/765674 (Apple DTS: Now Playing apps relaunch in the background from Control Center or headphones; undated)
+- https://community.spotify.com/t5/iOS-iPhone-iPad/Please-continue-on-Spotify-error-message/td-p/7538168 (iOS 26.6, Siri "continue in Spotify" treated as a bug and fixed)
+- https://community.spotify.com/t5/Live-Ideas/iOS-Siri-Shortcuts-Support/idi-p/4569462/page/17 (Shortcuts support still missing; posts through 2025-09-25)
+- https://developer.spotify.com/documentation/ios/tutorials/content-linking (links bring Spotify to the foreground)
+- https://community.spotify.com/t5/iOS-iPhone-iPad/Spotify-Links-don-t-automatically-start-playing-the-song/m-p/5395149 (staff: only tracks autoplay from a link)
+- https://community.spotify.com/t5/iOS-iPhone-iPad/Spotify-Connect-only-sees-devices-that-have-the-app-open/td-p/5360650 (moderator, 2022-04-01: closed app not in Connect)
+- https://community.spotify.com/t5/Spotify-for-Developers/Endpoint-quot-Transfer-Playback-quot-returns-500-error-when-all/td-p/6594944 (2024-12-19)
+- https://developer.apple.com/forums/thread/732934 (2023: a shortcuts:// link opens the Shortcuts app, also on iOS 17)
+- https://www.idownloadblog.com/2022/02/03/how-to-run-a-shortcut-quickly-iphone-ipad-mac/ (updated 2024-11-19: Home Screen icon runs a shortcut without opening Shortcuts)
+- https://support.spotify.com/article/spotify-iphone-widget/ (Lock Screen widget opens the app)
+- https://dbushell.com/2023/03/20/ios-pwa-media-session-api/ (Safari Media Session and Lock Screen controls)
+- https://developer.spotify.com/documentation/web-playback-sdk (Web Playback SDK, iOS Safari support and limits)
