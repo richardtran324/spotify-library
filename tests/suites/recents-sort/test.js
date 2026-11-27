@@ -374,7 +374,38 @@ tests.push(function () {
     var css = Array.prototype.map.call(d(tab).querySelectorAll('style'), function (s) { return s.textContent; }).join('\n');
     check('11 44 px touch area on sort chips (34 px + 5 px above and below)', /\.sortbar \.chip::after \{[^}]*top: -5px; bottom: -5px;/.test(css) && /\.sortbar \.chip \{[^}]*min-height: 34px/.test(css));
     check('11 separator uses the line token (both themes)', /\.sortsep \{[^}]*background: var\(--line\)/.test(css));
+    check('11 wrapped rows 10 px apart, so touch areas (5 px each way) don’t overlap', /\.sortbar \{[^}]*gap: 10px 6px/.test(css), css.match(/\.sortbar \{[^}]*\}/));
+    var grp = q(tab, '.sortbar[data-view="playlists"] .owngrp');
+    check('11 separator and By you wrap together', !!grp && grp.children.length === 2 && grp.children[0].className === 'sortsep' && grp.children[1] === byYou(tab) && /\.owngrp \{[^}]*display: inline-flex/.test(css));
     finish(tab);
+  });
+});
+
+// 12. Shows on Recents don't reorder under the finger when the podcast history changes (player check); next navigation does.
+tests.push(function () {
+  var now = Date.now();
+  var hist = [histEntry('e9', 'S3', now - 20 * MIN), histEntry('e5', 'S2', now - HOUR)];
+  var store = seed({ 'lib-ep-history': hist, 'lib-sort-shows': 'recents' }, 'podcasts');
+  return setup(store, { podShows: true }).then(function (tab) {
+    var t = tab.t();
+    var before = mainNames(tab);
+    check('12 Recents order to start', eq(before, ['Saved episodes', 'History Hour', 'Tech Talk', 'Money Show']), before);
+    var calls0 = tab.calls.length;
+    // The player check hears an episode of Money Show: the history changes and Podcasts redraws.
+    t.noteEpisode({ type: 'episode', uri: 'spotify:episode:m1', id: 'm1', name: 'Money now', duration_ms: 1800000, show: { id: 'S1', name: 'Money Show', images: [] } }, 120000, true);
+    return H.wait(30).then(function () {
+      check('12 history has the new episode first', t.epHistory()[0].uri === 'spotify:episode:m1', t.epHistory()[0]);
+      check('12 the redraw keeps the row order', eq(mainNames(tab), before), mainNames(tab));
+      t.epHistChanged();
+      return H.wait(30);
+    }).then(function () {
+      check('12 a second redraw still keeps it', eq(mainNames(tab), before), mainNames(tab));
+      check('12 other draws are not held after the redraw', eq(t.recentTimes('shows')['show:S1'] > 0, true));
+      t.setFilter('podcasts');
+      check('12 next navigation: the show just heard moves to the top', eq(mainNames(tab), ['Saved episodes', 'Money Show', 'History Hour', 'Tech Talk']), mainNames(tab));
+      check('12 zero requests to library or catalog', tab.calls.slice(calls0).filter(function (c) { return !/^\/me\/player/.test(c.path); }).length === 0, tab.calls);
+      finish(tab);
+    });
   });
 });
 

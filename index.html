@@ -399,12 +399,13 @@ header.top.detail .schips { display: none; }
 .schip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .seeall { display: block; margin: 0; padding: 10px 2px; }
 /* Sort chips: one row per view, wraps on a phone. A little smaller than the main filter chips. */
-.sortbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+.sortbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 6px; margin-top: 10px; }   /* v2.50: 10 px between wrapped rows, so the 44 px touch areas don't overlap */
 .sortlbl { font-size: 0.8rem; font-weight: 600; color: var(--muted); margin-right: 2px; }
 .sortbar .chip { font-size: 0.85rem; padding: 5px 11px; min-height: 34px; }
 /* v2.50: a 44 px tall touch area for the sort chips (the look stays 34 px), and the line before By you */
 .sortbar .chip { position: relative; }
 .sortbar .chip::after { content: ''; position: absolute; left: 0; right: 0; top: -5px; bottom: -5px; }
+.owngrp { display: inline-flex; align-items: center; gap: 6px; align-self: stretch; }
 .sortsep { width: 1px; align-self: stretch; margin: 4px 2px; background: var(--line); }
 .snote { font-size: 0.8rem; color: var(--muted); margin: 6px 2px 0; }
 .sortdir { margin-left: 4px; }   /* v2.34: ↑ or ↓ on a chosen sort that turns around */
@@ -1915,8 +1916,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }
     return out;
   }
+  // v2.50: a redraw from the podcast history (an episode heard during the player check) keeps the times of the
+  // last draw, so rows don't jump under your finger; the new order shows on the next tab switch or reload.
+  var recentsKeep = false, recentsLast = {};
   function byRecents(view, list) {
-    var times = recentTimes(view);
+    var times = (recentsKeep && recentsLast[view]) || recentTimes(view);
+    recentsLast[view] = times;
     var rest = view === 'shows' ? showsByNewest(list) : list.slice();   // the default order of each view
     return rest.map(function (x, i) { return { x: x, i: i, at: times[recentKey(view, x)] || 0 }; })
       .sort(function (a, b) { return (b.at - a.at) || a.i - b.i; })
@@ -1961,7 +1966,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       g.appendChild(b);
     });
     if (view === 'playlists' && byYouKnown()) {   // v2.50: a filter, after the sorts
-      g.appendChild(el('span', { class: 'sortsep', 'aria-hidden': 'true' }));
+      var grp = el('span', { class: 'owngrp' }, [el('span', { class: 'sortsep', 'aria-hidden': 'true' })]);   // wraps as one, so the line never ends a row
       var own = el('button', { class: 'chip ownchip', type: 'button', 'data-own': '1', 'aria-pressed': String(byYouOn()), 'aria-label': 'By you: only playlists you own', text: 'By you' });
       own.addEventListener('click', function () {
         setByYou(!byYouOn());
@@ -1969,7 +1974,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         var nb = document.querySelector('.sortbar[data-view="playlists"] [data-own]');
         if (nb) nb.focus();
       });
-      g.appendChild(own);
+      grp.appendChild(own);
+      g.appendChild(grp);
     }
     return g;
   }
@@ -3738,7 +3744,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       var f = state.filter;
       if (f !== 'recent' && f !== 'home' && f !== 'podcasts') return;
       var y = window.pageYOffset || document.documentElement.scrollTop || 0;
-      renderList();
+      recentsKeep = true;   // v2.50: Recents keeps its order on this redraw
+      try { renderList(); } finally { recentsKeep = false; }
       window.scrollTo(0, y);
     }, 0);
   }
