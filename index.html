@@ -5522,7 +5522,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (state.device) { playNow(item); return; }
       var box = document.querySelector('.sembed-box');
       if (box) { dropEmbed(d); box.parentNode.removeChild(box); paintDetailFoot(); }
-      if (state.deviceError) { toast('Couldn’t check your devices (' + state.deviceError + ').', { href: item.url, text: 'Open in Spotify' }); return; }
+      if (state.deviceError) { failToast('Couldn’t check your devices', state.deviceErrObj || { message: state.deviceError }, null, { href: item.url, text: 'Open in Spotify' }); return; }   // v2.41: plain words
       var mode = wakeMode() === 'shortcut' ? 'shortcut' : 'link';
       toast('Spotify isn’t open on any device.', null, {
         text: mode === 'shortcut' ? 'Wake Spotify' : 'Open Spotify',
