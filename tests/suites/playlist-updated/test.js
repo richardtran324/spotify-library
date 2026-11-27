@@ -486,6 +486,85 @@ tests.push(function () {
   });
 });
 
+// 15. Review fix: this page's own change, then an open before the next library load, never shows Updated.
+tests.push(function () {
+  var s = store0();
+  return setup(s, { filter: 'playlists' }).then(function (tab) {
+    var t = tab.t();
+    // A: Add to playlist (Now Playing), then open the playlist, then a library load.
+    t.afterAdd(lib(t, 'p1'), track('s20'), 'a5');
+    tab.env.pls.p1.snap = 'a5'; tab.env.pls.p1.items.push({ id: 's20', at: new Date().toISOString(), by: 'me1' });
+    check('15A library copy takes the new snapshot', lib(t, 'p1').snap === 'a5', lib(t, 'p1').snap);
+    check('15A saved library takes it too', JSON.parse(s.getItem('lib-cache')).playlists.filter(function (p) { return p.id === 'p1'; })[0].snap === 'a5');
+    check('15A no Updated before opening', !t.plUpdated(lib(t, 'p1')));
+    t.openDetail(lib(t, 'p1'));
+    return H.wait(200).then(function () {
+      check('15A open stores the edited snapshot', seen(s).p1.s === 'a5', seen(s).p1);
+      t.closeDetail();
+      return reload(tab);
+    }).then(function () {
+      check('15A next load: no Updated', !rowUpd(tab, 'Road trip'), rowSub(tab, 'Road trip'));
+      // B: open, edit (remove), Back, reopen, library load.
+      t.openDetail(lib(t, 'p2'));
+      return H.wait(200);
+    }).then(function () {
+      t.applyRemove(t.state.detail, 'spotify:track:s4', 'b6');
+      tab.env.pls.p2.snap = 'b6'; tab.env.pls.p2.items = tab.env.pls.p2.items.filter(function (x) { return x.id !== 's4'; });
+      check('15B no Updated while open after the edit', !t.plUpdated(lib(t, 'p2')));
+      t.closeDetail();
+      return H.wait(50);
+    }).then(function () {
+      check('15B back in the list: no Updated', !rowUpd(tab, 'Band jams'));
+      t.openDetail(lib(t, 'p2'));
+      return H.wait(200);
+    }).then(function () {
+      check('15B reopened: edited snapshot stored', seen(s).p2.s === 'b6', seen(s).p2);
+      t.closeDetail();
+      return reload(tab);
+    }).then(function () {
+      check('15B next load: no Updated', !rowUpd(tab, 'Band jams'), rowSub(tab, 'Band jams'));
+      // A new tab starting from the saved library shows no Updated either.
+      return setup(s, { filter: 'playlists', startWait: 50, pls: tab.env.pls });
+    }).then(function (tab2) {
+      check('15 a later visit from the saved library: no Updated', !rowUpd(tab2, 'Road trip') && !rowUpd(tab2, 'Band jams'), [rowSub(tab2, 'Road trip'), rowSub(tab2, 'Band jams'), tab2.env.pls.p1.snap, seen(s).p1]);
+      tab2.t().stopApp();
+    });
+  });
+});
+
+// 16. Review fix: Play records an open only after the player cool-off check, and only once your account is known.
+tests.push(function () {
+  var s = store0({ 'lib-pins': [{ kind: 'playlist', id: 'p3', name: 'Friend mix', uri: 'spotify:playlist:p3', url: '', img: '', sub: 'Playlist', ownerId: 'friend2', collaborative: false }] });
+  return setup(s, { filter: 'home' }).then(function (tab) {
+    var t = tab.t(), now = Date.now();
+    tab.env.pls.p3.snap = 'c2';
+    return reload(tab).then(function () {
+      s.setItem('lib-cooloff', JSON.stringify({ player: { until: now + 600000, reason: 'rate', strikes: 0, quotaAt: 0, retryAfter: null, last429: { at: now, reason: 'rate', retryAfter: null, what: 'PUT /me/player/play' } } }));
+      tab.calls.length = 0;
+      click(tab, card(tab, 'hPinned', 'Friend mix').parentNode.querySelector('.cardplay'));
+      return H.wait(200);
+    }).then(function () {
+      check('16 player paused: Play sends nothing', tab.calls.filter(function (c) { return c.path === '/me/player/play'; }).length === 0, byPath(tab));
+      check('16 player paused: open not recorded', seen(s).p3.s === 'c1' && seen(s).p3.o === 0, seen(s).p3);
+      check('16 player paused: label stays', cardUpd(tab, 'hPinned', 'Friend mix'));
+      s.removeItem('lib-cooloff');
+      var me = t.state.data.me;
+      t.state.data.me = null;
+      click(tab, card(tab, 'hPinned', 'Friend mix').parentNode.querySelector('.cardplay'));
+      return H.wait(300).then(function () {
+        check('16 account not known: open not recorded', seen(s).p3.s === 'c1' && seen(s).p3.o === 0, seen(s).p3);
+        t.state.data.me = me;
+      });
+    }).then(function () {
+      tab.calls.length = 0;
+      click(tab, card(tab, 'hPinned', 'Friend mix').parentNode.querySelector('.cardplay'));
+      return H.wait(300);
+    }).then(function () {
+      check('16 account known, not paused: recorded', seen(s).p3.s === 'c2' && seen(s).p3.o > 0, seen(s).p3);
+    });
+  });
+});
+
 var chain = Promise.resolve();
 tests.forEach(function (f, i) { chain = chain.then(f).catch(function (e) { check('test ' + (i + 1) + ' crashed', false, String(e && e.stack || e)); }); });
 chain.then(function () {

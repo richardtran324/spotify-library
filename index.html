@@ -4215,8 +4215,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     // In 'wait' mode nothing opens at all: the page waits for you to press play in Control Center.
     ev.preventDefault();
     item = introStart(item);   // v2.33: Skip intro (a start from 0:00 begins at the show's setting instead)
-    if (item && item.kind === 'playlist' && !knownListable(item)) markPlOpened(item);   // v2.46: Play counts as opened for someone else's playlist
     if (coolBlocked('player')) return;   // v2.13: nothing is sent while playback is paused by Spotify
+    if (item && item.kind === 'playlist' && state.data && state.data.me && state.data.me.id && !knownListable(item)) markPlOpened(item);   // v2.46: Play counts as opened for someone else's playlist
     item = stampHeard(item);   // v2.44: when it was last heard, as of this tap (not a Skip intro start: exactPos)
     var mine = ++tapSeq;
     if (deviceFresh()) { playNow(item, opts); return; }
@@ -6165,14 +6165,23 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!snap || p.ownerId === 'spotify' || (lp && lp.ownerId === 'spotify')) return;
     var now = Date.now(), v = readPlSeen()[p.id];
     plNewSince[p.id] = { from: v ? (v.o || v.f) : 0, to: now };
-    changePlSeen(function (m) { m[p.id] = { s: snap, o: now, f: (m[p.id] && m[p.id].f) || now }; });
+    changePlSeen(function (m) {
+      var old = m[p.id], e = old && old.e && snap === old.s ? old.e : undefined;   // a library copy from before this page's own change
+      m[p.id] = { s: snap, o: now, f: (old && old.f) || now };
+      if (e) m[p.id].e = e;
+    });
     clearUpdTags(p.id);
   }
   // A change this page made (add, move, remove): its new snapshot doesn't count as Updated, unless the playlist was
   // already Updated (someone else's change is still unseen).
+  // The library's copy (and the saved library) takes the new snapshot, so an open before the next load stores it.
   function plEdited(id, snap) {
-    var lp = libraryPlaylist(id), v = readPlSeen()[id];
-    if (!snap || !v || !lp || !lp.snap || (lp.snap !== v.s && lp.snap !== v.e)) return;
+    if (!snap) return;
+    var lp = libraryPlaylist(id), v = readPlSeen()[id], was = lp && lp.snap, dt = state.detail;
+    if (lp) lp.snap = snap;
+    if (isEditDetail(dt, id) && dt.item !== lp && dt.item.snap) dt.item.snap = snap;
+    if (lp && state.data && (state.data.playlists || []).indexOf(lp) !== -1) set(K.cache, state.data);
+    if (!v || !was || (was !== v.s && was !== v.e)) return;   // unknown, or already Updated by someone else's change
     changePlSeen(function (m) { if (m[id]) m[id].e = snap; });
   }
   function plRowExtras(parent, it, m) {
