@@ -291,6 +291,8 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   border: 1px solid currentColor; border-radius: 8px; padding: 6px 12px; min-height: 40px; cursor: pointer; flex: none;
 }
 .toast .toastbtn:focus-visible { outline-color: var(--bg); }
+/* audit: on screen for VoiceOver only (#announce, the live region that speaks toasts, cool-off and wake lines) */
+.vh { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .err { color: var(--warn); font-size: 0.9rem; }
 /* Podcasts */
 .cover.eps {
@@ -489,7 +491,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       </span>
     </div>
     <div class="status" id="status"><span class="dot" id="dot"></span><span class="stext"><span id="statusText">Checking for Spotify on your devices…</span> <button class="linkbtn" id="devBtn" type="button" hidden></button></span></div>
-    <div class="wake" id="wake" role="status" hidden><span class="dot pulse" id="wakeDot"></span><span class="stext" id="wakeText"></span><span class="wakebtns"><button class="linkbtn" id="wakeRetry" type="button" hidden>Try again</button><button class="linkbtn" id="wakeOpen" type="button" hidden>Open Spotify instead</button><button class="linkbtn" id="wakeCancel" type="button">Cancel</button></span></div>
+    <div class="wake" id="wake" hidden><span class="dot pulse" id="wakeDot"></span><span class="stext" id="wakeText"></span><span class="wakebtns"><button class="linkbtn" id="wakeRetry" type="button" hidden>Try again</button><button class="linkbtn" id="wakeOpen" type="button" hidden>Open Spotify instead</button><button class="linkbtn" id="wakeCancel" type="button">Cancel</button></span></div>
     <input class="search" id="search" type="search" placeholder="Filter by name" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Filter by name">
     <div class="filters" role="group" aria-label="Show">
       <button class="chip" type="button" data-filter="home" aria-pressed="true">Home</button>
@@ -510,7 +512,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       <button class="schip" type="button" data-stype="show" aria-pressed="false">Podcasts</button>
       <button class="schip" type="button" data-stype="episode" aria-pressed="false">Episodes</button>
     </div>
-    <div class="coolbar" id="cool" hidden><span id="coolText" role="status"></span><span class="cleft" id="coolLeft" aria-hidden="true"></span></div>
+    <div class="coolbar" id="cool" hidden><span id="coolText"></span><span class="cleft" id="coolLeft" aria-hidden="true"></span></div>
   </header>
   <div class="banner" id="banner" role="status" hidden>
     <span>New features need one more sign-in</span>
@@ -676,7 +678,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   </div>
 </div>
 
-<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<div class="toast" id="toast" hidden></div>
+<div class="vh" id="announce" role="status" aria-live="polite"></div>
 
 <script>
 (function () {
@@ -882,20 +885,59 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     volume: svg('<path fill="currentColor" d="M4 9h4l5-4v14l-5-4H4z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12"/>')
   };
 
-  var toastTimer = null;
+  // audit: #announce is always rendered, so VoiceOver speaks what lands in it; a status region that is
+  // display:none until its text arrives (the toast, the cool-off line, the wake line) may never be spoken.
+  // The text goes in a moment after the region is emptied, so the same message twice is spoken twice.
+  var announceTimer = null, announceText = '';
+  function announce(msg) {
+    if (!msg) return;
+    var a = $('announce');
+    if (!(announceTimer && announceText)) announceText = msg;
+    else if (announceText.indexOf(msg) === -1) announceText += ' ' + msg;   // two at once (a pause line and its toast): both
+    a.textContent = '';
+    clearTimeout(announceTimer);
+    announceTimer = setTimeout(function () { announceTimer = null; a.textContent = announceText; }, 100);
+  }
+  // audit: the toast waits while focus is in it (Undo, a link, Close) and closes toastMs after focus leaves;
+  // when it closes with focus inside, focus goes back to the control you were on (never to body).
+  var toastTimer = null, toastMs = 3000, toastReturn = null;
+  function toastFocused() {
+    var a = document.activeElement;
+    return !!(a && a !== document.body && $('toast').contains(a));
+  }
+  function toastGiveBack(a) {
+    var r = toastReturn;
+    toastReturn = null;
+    if (r && r !== document.body && document.body.contains(r) && !$('toast').contains(r)) r.focus();
+    else if (a && a.blur) a.blur();
+  }
+  function hideToast() {
+    var t = $('toast'), a = toastFocused() ? document.activeElement : null;
+    clearTimeout(toastTimer); toastTimer = null;
+    t.hidden = true;
+    if (a) toastGiveBack(a);
+  }
+  function toastTimeout() {
+    clearTimeout(toastTimer); toastTimer = null;
+    if (!toastFocused()) toastTimer = setTimeout(hideToast, toastMs);
+  }
   function toast(msg, link, action) {
-    var t = $('toast');
+    var t = $('toast'), inside = toastFocused();
+    if (!inside) toastReturn = document.activeElement;
     t.textContent = '';
     t.appendChild(el('span', { text: msg }));
     if (link) t.appendChild(el('a', { href: link.href, text: link.text }));
     if (action) {
       var b = el('button', { class: 'toastbtn', type: 'button', text: action.text });
-      b.addEventListener('click', function () { t.hidden = true; clearTimeout(toastTimer); action.fn(); });
+      b.addEventListener('click', function () { hideToast(); action.fn(); });
       t.appendChild(b);
     }
     t.hidden = false;
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { t.hidden = true; }, (link || action) ? 8000 : 3000);
+    // A new toast over one you were on: stay in it (its link or button), else back to where you were.
+    if (inside && !toastFocused()) { var nb = t.querySelector('a, button'); if (nb) nb.focus(); else toastGiveBack(null); }
+    toastMs = (link || action) ? 8000 : 3000;
+    toastTimeout();
+    announce(msg + (link ? ' ' + link.text : '') + (action ? ' ' + action.text : ''));   // as the old region read it
   }
   function errMsg(r) {
     var e = r && r.json && r.json.error;
@@ -1191,6 +1233,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     paused.forEach(function (g) { left = Math.max(left, coolLeft(g)); });
     if (paused.length) {
       var t = pausedText(paused);
+      if ($('coolText').textContent !== t || $('cool').hidden) announce(t);   // audit: the line's own region was hidden
       if ($('coolText').textContent !== t) $('coolText').textContent = t;
       $('coolLeft').textContent = fmtLeft(left);
       $('cool').hidden = false;
@@ -3147,6 +3190,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // text: the status line, or null to hide it. o: {pulse, retry, open} picks the dot and buttons.
   function showWake(text, o) {
     o = o || {};
+    if (text && (text !== $('wakeText').textContent || $('wake').hidden)) announce(text);   // audit: #wake starts hidden
     $('wake').hidden = !text;
     $('wakeText').textContent = text || '';
     $('wakeDot').className = 'dot' + (o.pulse ? ' pulse' : ' off');
@@ -3995,8 +4039,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       toast('Copy this link:', null, { text: 'Close', fn: function () {} });
       var t = $('toast');
       t.insertBefore(el('span', { class: 'tsel', text: url }), t.querySelector('.toastbtn'));
-      clearTimeout(toastTimer);
-      toastTimer = setTimeout(function () { t.hidden = true; }, 15000);
+      toastMs = 15000;   // audit: and not while focus is in it
+      toastTimeout();
     }
     var c = navigator.clipboard;
     if (!c || !c.writeText) return byHand();
@@ -7057,6 +7101,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   $('sheetClose').addEventListener('click', closeSheet);
   $('sheetBack').addEventListener('click', closeSheet);
   $('sheetRefresh').addEventListener('click', loadSheetDevices);
+  // audit: the toast's timer stops while focus is in it and starts again when focus leaves.
+  $('toast').addEventListener('focusin', function () { clearTimeout(toastTimer); toastTimer = null; });
+  $('toast').addEventListener('focusout', function (e) {
+    if ($('toast').hidden || (e.relatedTarget && $('toast').contains(e.relatedTarget))) return;
+    clearTimeout(toastTimer); toastTimer = setTimeout(hideToast, toastMs);
+  });
   // Escape closes the topmost layer only: a sheet first, then the Now Playing screen.
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
