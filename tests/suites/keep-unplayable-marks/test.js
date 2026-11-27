@@ -1,5 +1,5 @@
 'use strict';
-// Keep Spotify's "not playable" marks (v2.49): Recent's listening log and Liked songs by an artist, plus a check
+// Keep Spotify's "not playable" marks (v2.59): Recent's listening log and Liked songs by an artist, plus a check
 // that saved playlists (v2.37, plPack / plUnpack) still keep them.
 // jsdom, mocked fetch, shared localStorage. Run: node test.js [path to index.html]
 if (process.argv[2]) process.env.SRC = process.argv[2];
