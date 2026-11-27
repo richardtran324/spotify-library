@@ -832,6 +832,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     lastActiveAt: 0,   // last time something was seen playing (or a control was used): the player check slows after 10 min
     lastPollAt: 0,     // last /me/player request from this copy
     pollForce: false,  // the next check follows your own command, so it runs even if another copy is the poller
+    pollExpect: null,  // audit: {test, left} what that check should show once Spotify has carried the command out (see expectAfter)
     bgHoldUntil: 0     // background extras (recently played, resume points, Latest) wait until then, so they don't burst
   };
   var searchTimer = null;
@@ -3052,28 +3053,40 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     function send(b) { return api('/me/player/play' + q, { method: 'PUT', body: b }); }
     function shuffle() { return api('/me/player/shuffle?state=true&device_id=' + encodeURIComponent(d.id), { method: 'PUT' }); }
     var shuffleOk = true;
+    state.pollSeq++;   // audit: ignore any check that started before this play (it would repaint the old song and cancel the check below)
+    state.pollExpect = null;
+    // audit: the check after the play waits for this to show: the song, or the album or playlist (or something new) playing.
+    var uriBefore = state.player && state.player.item && state.player.item.uri;
+    function started(b) {
+      return function (x) {
+        if (!x.is_playing) return false;
+        if (b.uris || b.offset) return x.item.uri === item.uri || !!(x.item.linked_from && x.item.linked_from.uri === item.uri);
+        return !!(x.context && x.context.uri === b.context_uri) || x.item.uri !== uriBefore;
+      };
+    }
     var pre = opts.shuffle ? shuffle().then(function (r) { shuffleOk = r.ok; }, function () { shuffleOk = false; }) : Promise.resolve();
-    function done() {
+    function done(sent) {
       toast((opts.shuffle ? 'Shuffling “' : 'Playing “') + item.name + '” on ' + d.name);
       // Shuffle on a device that wasn't active yet can fail; try again now that it plays.
       if (opts.shuffle && !shuffleOk) shuffle().catch(function () {});
       noteStarted(item);   // v2.11: an episode goes into the podcast history right away
       state.lastActiveAt = Date.now();
+      expectAfter(started(sent));
       schedulePoll(600, true);   // v2.13: this copy checks once even if another copy is the poller
     }
     return pre.then(function () { return send(body); }).then(function (r) {
-      if (r.ok) return done();
+      if (r.ok) return done(body);
       // Context play (e.g. Liked Songs collection) can be refused; retry once with just the song.
       if (body.offset && [401, 404, 429].indexOf(r.status) === -1) {
         var solo = { uris: [item.uri] };
         if (body.position_ms != null) solo.position_ms = body.position_ms;
         return send(solo).then(function (r2) {
-          if (r2.ok) return done();
+          if (r2.ok) return done(solo);
           throw httpError(r2);
         });
       }
       throw httpError(r);
-    });
+    }).catch(function (e) { schedulePoll(pollEvery()); throw e; });   // audit: a failed play still leaves the regular check running
   }
   function httpError(r) { var e = new Error(errMsg(r)); e.status = r.status; return e; }
   function deviceFresh() { return state.device && (Date.now() - state.deviceAt < FRESH_MS); }
@@ -3503,6 +3516,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // ---------- Now Playing bar ----------
   // force: the check follows your own command (play, a control, a device switch), so it runs once even if
   // another copy of the page is the poller.
+  // audit: Spotify can take a moment to show a command it has accepted. If the check after the command doesn't show
+  // it yet (test(answer) is false), pollPlayer keeps what's on screen and asks again at about +1.5 s and +3 s:
+  // 2 extra checks at most, and a newer command replaces the chain. A 204 or an answer with no item counts as shown.
+  // An expectation older than 8 s (the page was hidden meanwhile, say) no longer applies.
+  function expectAfter(test) { state.pollExpect = test ? { test: test, left: 2, at: Date.now() } : null; }
   function schedulePoll(ms, force) {
     clearTimeout(state.pollTimer);
     state.pollTimer = null;
@@ -3555,6 +3573,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!state.started || document.hidden) return;
     var force = state.pollForce;
     state.pollForce = false;
+    var exp = force && state.pollExpect && Date.now() - state.pollExpect.at < 8000 ? state.pollExpect : null;   // audit
+    if (force) state.pollExpect = null;
     var next = pollEvery();
     if (coolLeft('player')) return;   // nothing is sent; afterCool() starts the checks again
     if (!force && state.wake.running) { holdPoller(next); schedulePoll(next); return; }   // the wake check asks Spotify itself meanwhile (the lock stays renewed)
@@ -3566,6 +3586,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var seq = ++state.pollSeq;
     fetchPlayer().then(function (res) {
       if (seq !== state.pollSeq) return 'stale';
+      if (exp && exp.left > 0 && res.p && res.p.item && !exp.test(res.p)) {   // audit: not shown yet; ask again shortly
+        exp.left--;
+        state.pollExpect = exp;
+        state.pollFailed = false;
+        schedulePoll(exp.left ? 1000 : 1500, true);
+        return 'retry';
+      }
       setPlayer(res.p);
       state.pollFailed = false;
     }).catch(function (e) {
@@ -3575,7 +3602,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       state.pollFailed = true;
     }).then(function (how) {
       // A command made this answer stale and scheduled its own check; don't override it.
-      if (how !== 'stale' && how !== 'stop') schedulePoll(pollEvery());
+      if (how !== 'stale' && how !== 'stop' && how !== 'retry') schedulePoll(pollEvery());
     });
   }
   // ---------- Spotify asleep: keep the last playback on screen, paused (v2.10) ----------
@@ -3774,6 +3801,15 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     document.body.classList.add('has-player');
     paintNp();
   }
+  // audit: what the check after Next, Previous or Play should show once Spotify has done it. Other controls
+  // (seek, volume, repeat, shuffle) return null and keep the single check.
+  function cmdExpect(path, p) {
+    var uri = p && p.item && p.item.uri, pos = curPos();
+    if (path === '/me/player/next') return function (x) { return x.item.uri !== uri; };
+    if (path === '/me/player/previous') return function (x) { return x.item.uri !== uri || (x.progress_ms || 0) < pos; };   // Previous may restart the same song
+    if (path === '/me/player/play') return function (x) { return !!x.is_playing; };
+    return null;
+  }
   function command(method, path, optimistic) {
     // Asleep: Spotify has no device to send this to (it would answer 404), so nothing is sent.
     if (state.playerIdle) { toast(WAKE_FIRST); return Promise.resolve(); }
@@ -3782,10 +3818,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var p = state.player;
     var dev = p && p.device && p.device.id;
     var url = path + (dev ? (path.indexOf('?') === -1 ? '?' : '&') + 'device_id=' + encodeURIComponent(dev) : '');
+    var exp = cmdExpect(path, p);   // audit: read before the optimistic paint
     if (optimistic && p) { optimistic(p); paintPlayer(); showStatus(); }
     state.pollSeq++;   // ignore any check that started before this command
+    state.pollExpect = null;
     return api(url, { method: method }).then(function (r) {
-      if (r.ok) return;
+      if (r.ok) { expectAfter(exp); return; }
       if (r.status === 404) {
         // The device went to sleep: show the last playback as asleep. Play goes straight on to wake it.
         goIdle();
@@ -3814,7 +3852,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var pos = curPos();
     if (p) { p.progress_ms = pos; state.playerAt = Date.now(); p.is_playing = false; paintPlayer(); showStatus(); }
     state.pollSeq++;   // ignore any check that started before this command
+    state.pollExpect = null;
     var nextIn = 500, force = true;
+    function accepted() { expectAfter(function (x) { return !x.is_playing; }); }   // audit
     function asleep() {
       goIdle(pos);
       playerSeenAt = Date.now();
@@ -3822,11 +3862,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       nextIn = pollEvery(); force = false;
     }
     return api('/me/player/pause' + (dev ? '?device_id=' + encodeURIComponent(dev) : ''), { method: 'PUT' }).then(function (r) {
-      if (r.ok || pausedAlready(r)) return;
+      if (r.ok || pausedAlready(r)) return accepted();
       if (r.status !== 404) throw new Error(errMsg(r));
       if (!dev) return asleep();
       return api('/me/player/pause', { method: 'PUT' }).then(function (r2) {
-        if (r2.ok || pausedAlready(r2)) return;   // it was playing under another id: the check below finds it
+        if (r2.ok || pausedAlready(r2)) return accepted();   // it was playing under another id: the check below finds it
         if (r2.status === 404) return asleep();
         throw new Error(errMsg(r2));
       });
