@@ -202,7 +202,8 @@ ul.list.compact .cover.num { width: 28px; }
 .dbtns .btn { flex: 1; min-width: 0; }
 .dfoot { padding: 12px 0; display: flex; flex-direction: column; gap: 10px; }
 /* v2.16: Spotify's own player for playlists the page can't list (tall enough to scroll the songs at phone width) */
-.sembed { display: block; width: 100%; max-width: 100%; height: 480px; border: 0; border-radius: 12px; background: var(--chip); }
+.sembed, .sembed-box iframe { display: block; width: 100%; max-width: 100%; height: 480px; border: 0; border-radius: 12px; background: var(--chip); }
+.sembed-hold { height: 480px; border-radius: 12px; background: var(--chip); display: flex; align-items: center; justify-content: center; }
 /* Now Playing bar */
 .player {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 8;
@@ -720,6 +721,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   var SEARCH_GROUP_ROWS = 5;      // rows per group in the All view
   var POLL_MS = 20000;            // v2.13: was 10 s
   var FRESH_MS = 90 * 1000;
+  var EMBED_API_URL = 'https://open.spotify.com/embed/iframe-api/v1';   // v2.19: Spotify's iFrame API (lets the page see what the embed starts)
+  var EMBED_API_MS = 8000;        // no answer from it in this long: the plain embed, with the preview note
   var NO_DEVICE_MS = 2 * 60 * 1000;   // how long an empty device list counts as "known: nothing open"
   var WAKE_MAX_MS = 3 * 60 * 1000;    // a pending tap older than this is dropped
   var WAKE_POLL_MS = 1500;        // 'link'/'shortcut' wake: check this often… (v2.13: was 0.4 s, then 1 s)
@@ -2836,7 +2839,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.18 (2026-11-26)';
+  var VERSION = 'v2.19 (2026-11-27)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -4280,7 +4283,15 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- song list (detail) view ----------
-  function canList(p) { return isOwn(p) || p.collaborative; }
+  // v2.19: until your account (or the playlist's owner) is known, ask anyway; a 403 still shows the Show songs view.
+  // Before, a playlist opened while /me hadn't loaded (or had failed) counted as someone else's and only got previews.
+  var noList = {};   // playlist id -> true: Spotify refused its list (403) this visit, so it isn't asked again
+  function canList(p) {
+    if (noList[p.id]) return false;
+    var me = state.data && state.data.me;
+    return !me || !me.id || !p.ownerId || isOwn(p) || p.collaborative;
+  }
+  function knownListable(p) { return isOwn(p) || p.collaborative; }
   function detailUrl(item) {
     if (item.kind === 'album') return albumPage(item.id, 0);
     if (item.kind === 'liked') return '/me/tracks?limit=50&offset=0';
@@ -4314,6 +4325,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     opts = opts || {};
     var y = window.pageYOffset || document.documentElement.scrollTop || 0;
     var old = state.detail;
+    dropEmbed(old);   // v2.19
     var d = item.kind === 'artist'
       ? { kind: 'artist', item: item, img: '', items: [], offset: 0, more: false, total: null, loading: false, error: '', lastGot: 0 }
       : { item: item, items: [], next: null, loading: false, error: '', restricted: false, lastUrl: null,
@@ -4346,6 +4358,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function closeDetail() {
     var d = state.detail;
     if (!d) return;
+    dropEmbed(d);   // v2.19
     if (state.detailStack.length) {
       state.detail = state.detailStack.pop();
       renderDetail();   // from what that view already loaded; nothing is asked again
@@ -4470,11 +4483,15 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!d || !f) return;
     paintDetailSum();
     paintDetailNote();
-    if (d.restricted && d.embed && f.querySelector('iframe.sembed')) return;   // v2.16: keep the open player (redrawing would reload it)
+    if (d.restricted && d.embed && f.querySelector('.sembed-box')) return;   // v2.16: keep the open player (redrawing would reload it)
+    dropEmbed(d);
     f.textContent = '';
     if (d.restricted) {
       f.appendChild(el('p', { class: 'empty', text: 'Spotify only lets personal apps list songs in your own playlists. Tap Play to hear this one.' }));
-      if (d.item.kind === 'playlist' && d.item.id) f.appendChild(d.embed ? embedFrame(d.item) : showSongsButton(d));
+      if (d.item.kind === 'playlist' && d.item.id) {
+        if (!d.embed) f.appendChild(showSongsButton(d));
+        else { var box = el('div', { class: 'sembed-box' }); f.appendChild(box); mountEmbed(d, box); }
+      }
       return;
     }
     if (d.error) {
@@ -4521,11 +4538,124 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     return el('iframe', { class: 'sembed', src: embedSrc(item.id), title: 'Songs in ' + (item.name || 'this playlist'),
       allow: 'clipboard-write; encrypted-media; fullscreen; picture-in-picture', loading: 'lazy', 'data-pid': item.id });
   }
+  // Light or dark changed: draw the player again in the new style (Spotify only takes the style when it loads).
   function syncEmbedTheme() {
-    var f = document.querySelector('iframe.sembed');
-    if (!f) return;
-    var src = embedSrc(f.getAttribute('data-pid'));
-    if (f.getAttribute('src') !== src) f.setAttribute('src', src);
+    var box = document.querySelector('.sembed-box');
+    var d = state.detail;
+    if (!box || !d || box.getAttribute('data-dark') === String(pageIsDark())) return;
+    box.parentNode.removeChild(box);
+    paintDetailFoot();
+  }
+
+  // ---------- v2.19: full songs from the Show songs list ----------
+  // Spotify's embedded player can't see your Spotify login on iPhone: Safari blocks its cookies inside another site's
+  // page, and the home-screen app keeps its own storage apart from Safari. So anything played inside it is a 30-second
+  // preview. With Spotify's iFrame API the page hears which song the player started, stops the preview, and plays that
+  // song in full on your Spotify app with the same request as tapping one of your own playlist's songs (the playlist
+  // plus that song, so the rest of the playlist follows). The API script loads only when Show songs is tapped, and
+  // makes no Web API request. If it can't load, the plain player stays, with a note that it only plays previews.
+  var embedApi = { state: 'idle', api: null, waiters: [] };   // idle | loading | ready | failed
+  function loadEmbedApi(cb) {
+    if (embedApi.state === 'ready' || embedApi.state === 'failed') { cb(embedApi.api); return; }
+    embedApi.waiters.push(cb);
+    if (embedApi.state === 'loading') return;
+    embedApi.state = 'loading';
+    var timer = setTimeout(function () { finish(null); }, EMBED_API_MS);
+    function finish(api) {
+      if (embedApi.state !== 'loading') return;
+      clearTimeout(timer);
+      embedApi.api = api && typeof api.createController === 'function' ? api : null;
+      embedApi.state = embedApi.api ? 'ready' : 'failed';
+      var w = embedApi.waiters; embedApi.waiters = [];
+      w.forEach(function (f) { try { f(embedApi.api); } catch (e) { logError('Embed', 'error', e.message); } });
+    }
+    window.onSpotifyIframeApiReady = function (api) { finish(api); };
+    var sc = document.createElement('script');
+    sc.src = EMBED_API_URL; sc.async = true;
+    sc.onerror = function () { finish(null); };
+    document.head.appendChild(sc);
+  }
+  function embedNote(box, full) {
+    var n = box.querySelector('.snote') || box.appendChild(el('p', { class: 'snote' }));
+    n.textContent = full
+      ? 'Songs you start in this list play in full on your Spotify app. Spotify’s player here can only play 30-second previews on iPhone, so the page stops it and plays the song on your phone instead.'
+      : 'Songs started in this list play only as 30-second previews: Spotify’s embedded player can’t use your Spotify login on iPhone. Tap Play or Shuffle above for full songs on your phone.';
+  }
+  function dropEmbed(d) {
+    if (d && d.embedCtl) { try { d.embedCtl.destroy(); } catch (e) {} d.embedCtl = null; }
+    if (d) d.embedLast = null;   // a new player starts fresh
+  }
+  function onPage(n) { return n.isConnected !== undefined ? n.isConnected : document.documentElement.contains(n); }
+  function mountEmbed(d, box) {
+    var item = d.item;
+    box.setAttribute('data-dark', String(pageIsDark()));
+    var hold = el('div', { class: 'sembed-hold' }, [el('p', { class: 'empty', text: 'Loading songs…' })]);
+    box.appendChild(hold);
+    function plain() { if (hold.parentNode) hold.parentNode.replaceChild(embedFrame(item), hold); embedNote(box, false); }
+    loadEmbedApi(function (api) {
+      if (state.detail !== d || !onPage(box) || !hold.parentNode) return;   // left the playlist, or it was redrawn
+      if (!api) { plain(); return; }
+      try {
+        api.createController(hold, { url: 'https://open.spotify.com/playlist/' + encodeURIComponent(item.id) + (pageIsDark() ? '?theme=0' : ''), width: '100%', height: '480' }, function (ctl) {
+          if (state.detail !== d || !onPage(box)) { try { ctl.destroy(); } catch (e) {} return; }
+          d.embedCtl = ctl;
+          embedNote(box, true);
+          ctl.addListener('playback_started', function (e) { embedStarted(d, ctl, e && e.data && e.data.playingURI); });
+          ctl.addListener('playback_update', function (e) {
+            var x = e && e.data;
+            if (x && x.isPaused === true) embedPaused(d, x.playingURI);
+            else if (x && x.isPaused === false && !x.isBuffering) embedStarted(d, ctl, x.playingURI);
+          });
+        });
+      } catch (e) { logError('Embed', 'error', e.message); plain(); }
+    });
+  }
+  // The player started something: stop the preview, then play it in full on the phone. Spotify sends a start and then
+  // progress updates for the same song, so one song counts once until the player reports it paused or another song
+  // starts (a pause that didn't take never restarts the song on the phone).
+  function embedStarted(d, ctl, uri) {
+    if (state.detail !== d) return;
+    var key = uri || '';
+    var again = d.embedLast && d.embedLast.uri === key && !d.embedLast.paused;
+    if (coolLeft('player')) {   // Spotify paused playback requests: leave the preview playing and say why, once
+      if (!again) { d.embedLast = { uri: key, paused: false }; coolToast('player'); }
+      return;
+    }
+    try { ctl.pause(); } catch (e) {}
+    if (again) return;
+    d.embedLast = { uri: key, paused: false };
+    embedPlay(d, embedItem(d.item, uri));
+  }
+  function embedPaused(d, uri) {
+    if (d.embedLast && d.embedLast.uri === (uri || '')) d.embedLast.paused = true;
+  }
+  // Like a tap on a song row, but this runs after Spotify's player answered, not inside your tap: iPhone may not open
+  // an app from here, and Control Center would now resume the preview in Safari. So when no device is open, the
+  // player is reloaded (Safari lets go of the preview) and a button gives a fresh tap to open Spotify.
+  function embedPlay(d, item) {
+    if (deviceFresh()) { playNow(item); return; }
+    checkDevice().then(function () {
+      if (!state.started || state.detail !== d) return;
+      if (coolLeft('player')) { coolToast('player'); return; }
+      if (state.device) { playNow(item); return; }
+      var box = document.querySelector('.sembed-box');
+      if (box) { dropEmbed(d); box.parentNode.removeChild(box); paintDetailFoot(); }
+      if (state.deviceError) { toast('Couldn’t check your devices (' + state.deviceError + ').', { href: item.url, text: 'Open in Spotify' }); return; }
+      var mode = wakeMode() === 'shortcut' ? 'shortcut' : 'link';
+      toast('Spotify isn’t open on any device.', null, {
+        text: mode === 'shortcut' ? 'Wake Spotify' : 'Open Spotify',
+        fn: function () { wakeSpotify(item, {}, mode); }
+      });
+    });
+  }
+  // A song or episode from the list plays inside the playlist; the player's own Play (or an address the page
+  // doesn't know) plays the whole playlist, like Play above.
+  function embedItem(pl, uri) {
+    var m = /^spotify:(track|episode):([A-Za-z0-9]+)$/.exec(uri || '');
+    if (!m) return pl;
+    var h = m[1] === 'episode' ? (histByUri()[uri] || (epSeen[uri] && epSeen[uri].x)) : null;
+    return { kind: m[1], id: m[2], uri: uri, ctx: pl.uri, url: 'https://open.spotify.com/' + m[1] + '/' + m[2],
+      name: m[1] === 'episode' ? ((h && h.name) || 'this episode') : 'a song from ' + pl.name };
   }
   if (window.matchMedia) {
     var darkMq = window.matchMedia('(prefers-color-scheme: dark)');
@@ -4553,6 +4683,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     d.lastUrl = url;
     var g = coolGroup(url);
     if (!catMemo[url] && coolLeft(g)) {
+      // v2.19: a playlist that may be someone else's (owner or account not confirmed) shows Show songs, as before.
+      if (d.item.kind === 'playlist' && !knownListable(d.item)) { d.restricted = true; paintDetailSort(); paintDetailFoot(); return; }
       if (detailFallback(d)) return;   // v2.15: search (albums) or your saved and played episodes (podcasts)
       if (d.src === 'cache' && d.items.length) { coolToast(g); paintDetailFoot(); return; }   // the saved list stays
       d.error = coolText(g); paintDetailFoot(); coolToast(g); return;   // v2.13: Try again works after it
@@ -4565,7 +4697,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     apiCached(url).then(function (r) {
       d.loading = false;
       var cur = state.detail === d;
-      if (r.status === 403 && d.item.kind === 'playlist') { d.restricted = true; if (cur) { paintDetailSort(); paintDetailFoot(); } return; }
+      if (r.status === 403 && d.item.kind === 'playlist') { noList[d.item.id] = true; d.restricted = true; if (cur) { paintDetailSort(); paintDetailFoot(); } return; }
       if (!r.ok || !r.json) throw new Error(errMsg(r));
       d.next = r.json.next || null;
       if (typeof r.json.total === 'number') d.total = r.json.total;
