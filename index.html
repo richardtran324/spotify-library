@@ -7244,7 +7244,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var p = !hide && d.next ? findPlan(d) : null;
     var off = !p || p.disabled || d.loading || !!d.findRun;   // Older can't start now
     var note = p && p.why === 'paused' && !d.findRun ? coolText(p.group) : '';
-    // v2.48 fix: rebuilt only when the years, Older or the note change, so a tap during a load lands on the same chip.
+    // v2.56 fix: rebuilt only when the years, Older or the note change, so a tap during a load lands on the same chip.
     var sig = hide ? '' : ys.join(',') + '|' + !!d.next + '|' + note;
     if (!hide && box.getAttribute('data-sig') === sig && !box.hidden) {
       var keep = box.querySelector('[data-year="older"]');
@@ -7280,7 +7280,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function lyJumpDone(d) {
     if (d.lyJump && !d.loading && !d.findRun) { var j = d.lyJump; d.lyJump = null; afterOlder(d, j); }
   }
-  // v2.48 fix: Now Playing or a sheet (Up next, devices, Add to playlist…) is open: a jump would pull focus out of it.
+  // v2.56 fix: Now Playing or a sheet (Up next, devices, Add to playlist…) is open: a jump would pull focus out of it.
   function lyOverlay() {
     return document.body.classList.contains('npopen') || !!document.querySelector('.sheet:not([hidden]), [aria-modal="true"]:not([hidden])');
   }
@@ -7598,7 +7598,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       findBusy.waiters.push(function () {
         d.loading = false; d.findRun = null;
         if (!wait.stop && findAlive(d)) searchAll(d);
-        // v2.48 fix: nothing started (the last load ended in a pause, or Stop): the footer and Older come back.
+        // v2.56 fix: nothing started (the last load ended in a pause, or Stop): the footer and Older come back.
         if (!d.findRun) { if (state.detail === d) paintDetailFoot(); else d.lyJump = null; }
       });
       if (state.detail === d) paintDetailFoot();
