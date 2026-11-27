@@ -1,0 +1,5 @@
+// Harness for the helpers suite: the page's small pure helpers and link builders, exposed from index.html for testing.
+'use strict';
+module.exports = require('../../lib/harness')({
+  "expose": "state: state, K: K, fmtDur: fmtDur, fmtTime: fmtTime, fmtLeft: fmtLeft, clockSec: clockSec, npDuration: npDuration, fmtDate: fmtDate, relDate: relDate, ageText: ageText, agoAt: agoAt, daysAgo: daysAgo, isoDay: isoDay, shortDay: shortDay, epWhen: epWhen, fmtCount: fmtCount, andList: andList, htmlText: htmlText, cmpText: cmpText, cmpAsc: cmpAsc, cmpDesc: cmpDesc, sortList: sortList, sortMode: sortMode, sortText: sortText, sortIsDefault: sortIsDefault, byName: byName, byTime: byTime, spotifyUrl: spotifyUrl, releaseUrl: releaseUrl, detailUrl: detailUrl, embedSrc: embedSrc, mapTrack: mapTrack, mapPlaylist: mapPlaylist, mapShow: mapShow, mapArtist: mapArtist, mapRaw: mapRaw, mapDetail: mapDetail, slTrack: slTrack, slEpisode: slEpisode, smallImages: smallImages, coverFor: coverFor, el: el, svg: svg, iconBtn: iconBtn, itemRow: itemRow"
+});
