@@ -17,7 +17,8 @@ try { var libTheme = JSON.parse(localStorage.getItem('lib-theme') || 'null'); if
    system body size; this scales it by 16/17 (iOS's default body size is about 17px, not yet measured on the iPhone) so the
    default Text Size looks as before, caps it at 28px so the bar and rows stay usable at the largest accessibility sizes, and
    marks big sizes (html.bigtype) so song names wrap to two lines. Re-checked when the page comes back (not on resize, which
-   Safari fires while scrolling). Desktop: nothing. */
+   Safari fires while scrolling) and when (hover: none) changes. Desktop: nothing. The 28px cap is a deliberate limit: above it
+   the Now Playing bar's five controls no longer fit at 375px. */
 var LIB_TS_BASE = 17, LIB_TS_MAX = 28, LIB_TS_BIG = 17.5;   // v2.47
 function libTextSize() {   // v2.47: returns the root size in px it set, or 0 (not an iPhone-style browser)
   var r = document.documentElement, sys = 0, px = 0;
@@ -36,9 +37,14 @@ function libTextSize() {   // v2.47: returns the root size in px it set, or 0 (n
   libTextSize.sys = sys; libTextSize.px = px;
   return px;
 }
-libTextSize();
+// v2.47: the first check runs in the small script right after the stylesheet (the -apple-system-body rule must be parsed first).
 document.addEventListener('visibilitychange', function () { if (!document.hidden) libTextSize(); });   // v2.47
 window.addEventListener('pageshow', function () { libTextSize(); });
+try {   // v2.47: an iPad that gains or loses a trackpad flips (hover: none); re-check so the inline size goes with the CSS guard
+  var libHoverMq = window.matchMedia && window.matchMedia('(hover: none)');
+  if (libHoverMq && libHoverMq.addEventListener) libHoverMq.addEventListener('change', function () { libTextSize(); });
+  else if (libHoverMq && libHoverMq.addListener) libHoverMq.addListener(function () { libTextSize(); });
+} catch (e) {}
 </script>
 <style>
 /* Layout: one column for a phone. Sticky top bar (status + search + filters), then a list of covers. A tap opens an album,
@@ -568,6 +574,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     body.has-player { padding-bottom: calc(8.25rem + env(safe-area-inset-bottom, 0px)); }
     body.has-player .toast { bottom: calc(8rem + env(safe-area-inset-bottom, 0px)); }
     .search, .field { font-size: max(16px, 1rem); }
+    /* Top row (Library + Diagnostics + Refresh) wraps instead of scrolling sideways at big sizes; buttons stay on the right. */
+    .toprow { flex-wrap: wrap; row-gap: 6px; }
+    .topbtns { margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
+    /* Play / Shuffle in a list header: cut off with … rather than spilling into the heart and share buttons. */
+    .dbtns .btn { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     /* Row buttons: at least 44px, growing a little (to 48px) so three of them still leave room for the name at 375px. */
     .act { width: clamp(44px, 2.5rem, 48px); height: clamp(44px, 2.5rem, 48px); }
     .act svg { width: clamp(22px, 1.375rem, 26px); height: clamp(22px, 1.375rem, 26px); }
@@ -589,6 +600,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 }
 </style>
+<script>libTextSize();   /* v2.47: first Text Size check, now that the -apple-system-body rule above is parsed */</script>
 </head>
 <body>
 <div class="wrap">

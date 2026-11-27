@@ -16,24 +16,37 @@ var CSS_TEXT = (HTML.match(/<style>([\s\S]*?)<\/style>/) || [])[1] || '';
 
 // iphone: { touch: bool, supports: bool, sys: px, throws: bool }; null = a plain desktop browser (the harness default).
 function setup(iphone, store, routes) {
-  var sim = iphone ? { touch: iphone.touch !== false, supports: iphone.supports !== false, sys: iphone.sys || 17, throws: !!iphone.throws, reads: 0 } : null;
+  var sim = iphone ? { touch: iphone.touch !== false, supports: iphone.supports !== false, sys: iphone.sys || 17, throws: !!iphone.throws, reads: 0,
+    early: 0, mqListeners: [], atReady: null } : null;
   var tabOpts = {};
   if (sim) {
     tabOpts.matchMedia = function (qs) {
       var m = /hover:\s*none/.test(qs) ? sim.touch : /hover:\s*hover/.test(qs) ? !sim.touch : false;
-      return { matches: m, media: qs, addEventListener: function () {}, removeEventListener: function () {}, addListener: function () {}, removeListener: function () {} };
+      var mq = { matches: m, media: qs, removeEventListener: function () {}, removeListener: function () {} };
+      mq.addEventListener = function (type, fn) { if (type === 'change' && /hover:\s*none/.test(qs)) sim.mqListeners.push(fn); };
+      mq.addListener = function (fn) { if (/hover:\s*none/.test(qs)) sim.mqListeners.push(fn); };
+      return mq;
     };
     tabOpts.beforeParse = function (w) {
       w.CSS = { supports: function (p, v) { return sim.supports && p === 'font' && v === '-apple-system-body'; }, escape: function (s) { return s; } };
       var orig = w.getComputedStyle.bind(w);
+      // Like WebKit: <html> has the system size only once the <style> holding `html { font: -apple-system-body }` is in the document.
+      function ruled() { return [].some.call(w.document.querySelectorAll('style'), function (st) { return /font: -apple-system-body/.test(st.textContent); }); }
       w.getComputedStyle = function (el, pseudo) {
         if (el === w.document.documentElement) {
           sim.reads++;
           if (sim.throws) throw new Error('no style');
-          return { fontSize: el.style.fontSize || (sim.sys + 'px'), getPropertyValue: function (n) { return n === 'font-size' ? (el.style.fontSize || sim.sys + 'px') : ''; } };
+          var r = ruled();
+          if (!r) sim.early++;
+          var fs = el.style.fontSize || (r ? sim.sys + 'px' : '16px');
+          return { fontSize: fs, getPropertyValue: function (n) { return n === 'font-size' ? fs : ''; } };
         }
         return orig(el, pseudo);
       };
+      w.document.addEventListener('DOMContentLoaded', function () {
+        var de = w.document.documentElement;
+        sim.atReady = { size: de.style.fontSize, big: de.classList.contains('bigtype') };
+      });
     };
   }
   var tab = H.makeTab(store || H.seedStore(), routes || function (method, p) {
@@ -184,8 +197,10 @@ tests.push(function () {
   check('9 desktop body stays 16px', /body \{[^}]*font-size: 16px;/.test(before));
   check('9 desktop search stays 16px, .act 40px, cover 56px', /\.search \{[^}]*font-size: 16px;/.test(before) && /\.act \{\s*width: 40px; height: 40px;/.test(before) && /\.cover \{\s*width: 56px; height: 56px;/.test(before));
   check('9 nothing outside the guard uses -apple-system-body', before.replace(/\/\*[\s\S]*?\*\//g, '').indexOf('-apple-system-body') < 0);
-  check('9 five bar controls keep the 20px gap (fit at 375px: 5 x 48 + 4 x 20 = 320)', !/\.pctl \{/.test(block) && /\.pctl \{[^}]*gap: 20px;/.test(before));
+  check('9 five bar controls keep the 20px gap (fit at 375px: 4 x 48 + 52 + 4 x 20 = 324 <= 343)', 4 * 48 + 52 + 4 * 20 <= 375 - 32 && !/\.pctl \{/.test(block) && /\.pctl \{[^}]*gap: 20px;/.test(before));
   check('9 row button growth capped at 48px (name keeps room at 375px)', /\.act \{ width: clamp\(44px, 2\.5rem, 48px\)/.test(block));
+  check('9 top row wraps inside the guard, buttons stay right', /\.toprow \{ flex-wrap: wrap;[^}]*\}/.test(block) && /\.topbtns \{ margin-left: auto;[^}]*flex-wrap: wrap;/.test(block));
+  check('9 Play / Shuffle end in an ellipsis', /\.dbtns \.btn \{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; \}/.test(block));
   check('9 no new animation (reduced motion unaffected)', !/animation|transition/.test(block));
   // jsdom's CSSOM still parses the sheet and the rest of the page's rules
   var tabCheck = setup(null).then(function (tab) {
@@ -229,6 +244,54 @@ tests.push(function () {
     check('11 wrap note at one step up', /19px → page 17\.88px \(song names wrap\)/.test(txt), textLine(tab));
     done(tab);
   });
+});
+
+// 12. First reading: the page has the right size by DOMContentLoaded (no 15.06px start, no jump at pageshow).
+tests.push(function () {
+  return setup({ sys: 23 }).then(function (tab) {
+    check('12 no Text Size read before the -apple-system-body rule is parsed', tab.sim.early === 0, tab.sim.early);
+    check('12 size right at DOMContentLoaded', tab.sim.atReady && tab.sim.atReady.size === '21.65px' && tab.sim.atReady.big, tab.sim.atReady);
+    fire(tab, 'pageshow');
+    check('12 pageshow changes nothing (no jump)', inline(tab) === '21.65px', inline(tab));
+    var html = tab.w.document.documentElement.outerHTML;
+    var iStyle = html.indexOf('</style>'), iCall = html.indexOf('<script>libTextSize();');
+    check('12 first check is the script right after </style>', iStyle > 0 && iCall > iStyle && /^<\/style>\s*<script>libTextSize\(\);/.test(html.slice(iStyle)), html.slice(iStyle, iStyle + 60));
+    done(tab);
+    return setup({ sys: 17 });
+  }).then(function (tab) {
+    check('12 default size right at DOMContentLoaded', tab.sim.atReady && tab.sim.atReady.size === '16px' && !tab.sim.atReady.big, tab.sim.atReady);
+    done(tab);
+  });
+});
+
+// 13. iPad gains a trackpad (hover: none stops matching): the inline size and bigtype go; losing it brings them back.
+tests.push(function () {
+  return setup({ sys: 23 }).then(function (tab) {
+    check('13 listens for (hover: none) changes', tab.sim.mqListeners.length === 1, tab.sim.mqListeners.length);
+    tab.sim.touch = false;
+    tab.sim.mqListeners.forEach(function (fn) { fn({ matches: false }); });
+    check('13 trackpad attached: inline size cleared, no bigtype', inline(tab) === '' && !big(tab) && lts(tab).px === 0, inline(tab));
+    tab.sim.touch = true;
+    tab.sim.mqListeners.forEach(function (fn) { fn({ matches: true }); });
+    check('13 trackpad removed: size back', inline(tab) === '21.65px' && big(tab), inline(tab));
+    done(tab);
+  });
+});
+
+// 14. Width budget at 375px (343px inside the 16px gutters), estimated at 0.6em per bold character, like WebKit's SF Pro roughly.
+tests.push(function () {
+  var W = 375 - 32;
+  function txt(chars, rem, root) { return chars * 0.6 * rem * root; }
+  function toprow(root) {   // h1 "Library" 1.5rem; two .iconbtn 0.85rem with 10px side padding and 1px borders; gaps 12 and 8
+    var h1 = txt(7, 1.5, root), b1 = txt(11, 0.85, root) + 22, b2 = txt(7, 0.85, root) + 22;
+    return { one: h1 + 12 + b1 + 8 + b2, h1: h1, btns: b1 + 8 + b2 };
+  }
+  var d = toprow(16), c = toprow(28);
+  check('14 top row fits on one line at the default size (looks as before)', d.one <= W, Math.round(d.one));
+  check('14 top row would overflow on one line at the 28px cap (wrap needed)', c.one > W, Math.round(c.one));
+  check('14 wrapped top row: each line fits at the cap', c.h1 <= W && c.btns <= W, { h1: Math.round(c.h1), btns: Math.round(c.btns) });
+  check('14 bar controls fit at every size (row buttons cap 48, play 52)', 4 * 48 + 52 + 4 * 20 <= W);
+  check('14 list row keeps >= 80px for the name at the cap (cover 72, 3 buttons 48, gaps)', W - 4 - 72 - 12 - (3 * 48 + 2 * 2) - 4 >= 80, W - 4 - 72 - 12 - 148 - 4);
 });
 
 var chain = Promise.resolve();
