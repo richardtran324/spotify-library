@@ -1253,8 +1253,17 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       kind: 'album', id: a.id, name: a.name, uri: a.uri, url: 'https://open.spotify.com/album/' + a.id, img: img(a.images), sub: 'Album · ' + names(a.artists),
       artist: names(a.artists), released: a.release_date || '',   // for sorting
       // v2.15: for the search fallback while album details are paused (first artist, song count when known)
-      artist1: (a.artists && a.artists[0] && a.artists[0].name) || '', tracks: a.total_tracks || null
+      artist1: (a.artists && a.artists[0] && a.artists[0].name) || '', tracks: a.total_tracks || null,
+      byArtists: artistRefs(a.artists)   // v2.19: for the tappable artist names in the album's header
     };
+  }
+  // v2.19: up to 3 artists as {id, name}, for Go to artist (kept small: library albums are cached on the phone).
+  function artistRefs(list) {
+    var out = [], seen = {};
+    (list || []).forEach(function (x) {
+      if (out.length < 3 && x && x.id && x.name && !seen[x.id]) { seen[x.id] = true; out.push({ id: String(x.id), name: String(x.name) }); }
+    });
+    return out;
   }
   function mapPlaylist(p) {
     if (!p || !p.id) return null;
@@ -2836,7 +2845,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.18 (2026-11-26)';
+  var VERSION = 'v2.19 (2026-11-27)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -3395,6 +3404,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       var a = mapAlbum(it.album);
       if (a) out.push({ label: 'Open album · ' + (a.name || 'Untitled'), item: a });
     }
+    if (!ep) artistRefs(it.artists).forEach(function (r) { out.push({ label: 'Open artist · ' + r.name, artist: r }); });   // v2.19
     if (c && c.type === 'playlist') {
       var pid = ctxPlaylistId(c);
       if (pid) {
@@ -3795,6 +3805,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function npChoose(o, b) {
     if (o.notes) { var p = state.player; if (p && p.item) openNotes(notesEp(p.item), b); return; }   // v2.18
+    if (o.artist) {   // v2.19: already on this artist's page, so just show it
+      var cur = state.detail;
+      if (cur && cur.kind === 'artist' && cur.item.id === o.artist.id) { closeNp(false); return; }
+      npOpenDetail(artistItem(o.artist));
+      return;
+    }
     if (o.item) { npOpenDetail(o.item); return; }
     if (b.getAttribute('aria-busy') === 'true') return;
     var known = libraryPlaylist(o.playlistId);
@@ -3824,6 +3840,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function pinRecord(item) {
     var p = { kind: item.kind, id: item.id, name: item.name || '', uri: item.uri, url: item.url || '', img: item.img || '', sub: item.sub || '' };
     if (item.kind === 'playlist') { p.ownerId = item.ownerId || ''; p.collaborative = !!item.collaborative; }   // for the heart and the song list
+    if (item.kind === 'album' && item.byArtists && item.byArtists.length) p.byArtists = artistRefs(item.byArtists);   // v2.19
     return p;
   }
   function paintPin(b) {
@@ -4394,7 +4411,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       back,
       el('div', { class: 'drow' }, [
         coverFor(it, 'dcover'),
-        el('div', { class: 'meta' }, [el('h2', { class: 'dname', text: it.name }), el('div', { class: 'sub', text: it.sub }), el('div', { class: 'dsum', id: 'dsum' })])
+        el('div', { class: 'meta' }, [el('h2', { class: 'dname', text: it.name }), detailSub(it), el('div', { class: 'dsum', id: 'dsum' })])
       ]),
       el('div', { class: 'dbtns' }, btns)
     ]));
@@ -4405,6 +4422,22 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     paintDetailSort();
     paintDetailList();
     paintDetailFoot();
+  }
+  // v2.19: an album's "Album · Artist, Artist" line, with each artist's name a button to the artist page.
+  // Back from the artist returns to this album. Albums opened from an artist page show the year instead.
+  function detailSub(it) {
+    var refs = it.kind === 'album' && it.byArtists;
+    if (!refs || !refs.length || String(it.sub || '').indexOf('Album · ') !== 0) return el('div', { class: 'sub', text: it.sub });
+    var box = el('div', { class: 'sub' }, [document.createTextNode('Album · ')]);
+    refs.forEach(function (r, i) {
+      if (i) box.appendChild(document.createTextNode(', '));
+      var b = el('button', { class: 'linkbtn', type: 'button', text: r.name, 'aria-label': 'Open artist · ' + r.name });
+      b.addEventListener('click', function () { openArtistPage(r); });
+      box.appendChild(b);
+    });
+    var shown = refs.map(function (r) { return r.name; }).join(', ');
+    if (it.artist && it.artist.length > shown.length && it.artist.indexOf(shown + ', ') === 0) box.appendChild(document.createTextNode(it.artist.slice(shown.length)));   // a 4th artist and on stay text
+    return box;
   }
   function detailView(item) {
     var v = 'd-' + item.kind;
@@ -4943,6 +4976,22 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     m.sub = [(a.release_date || '').slice(0, 4), n ? n + (n === 1 ? ' song' : ' songs') : ''].filter(Boolean).join(' · ') || 'Album';
     return m;
   }
+  // v2.19: Go to artist. A followed artist reuses the item from your library, whose picture is already known,
+  // so the page skips GET /artists/{id} and costs 1 catalog request (the releases). Anyone else costs 2.
+  // Both answers are kept for the visit (apiCached), so opening the same artist again sends nothing.
+  function artistItem(r) {
+    var fol = (state.data && state.data.artists) || [];
+    for (var i = 0; i < fol.length; i++) { if (fol[i] && fol[i].id === r.id && fol[i].kind === 'artist') return fol[i]; }
+    return { kind: 'artist', id: r.id, name: r.name || 'Artist', uri: 'spotify:artist:' + r.id, url: 'https://open.spotify.com/artist/' + r.id, img: '', sub: 'Artist' };
+  }
+  // From a song list: on top of it, so Back returns there. If that list was opened from this artist, just go back.
+  function openArtistPage(r) {
+    var below = state.detailStack[state.detailStack.length - 1];
+    if (state.detail && below && below.kind === 'artist' && below.item.id === r.id) { goBack(); return; }
+    openDetail(artistItem(r), { push: !!state.detail });
+    var back = document.querySelector('.dhead .back');
+    if (back) back.focus({ preventScroll: true });
+  }
   function releaseUrl(d) {
     return '/artists/' + encodeURIComponent(d.item.id) + '/albums?include_groups=album,single,compilation&limit=' + ARTIST_PAGE + '&offset=' + d.offset;
   }
@@ -4951,8 +5000,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!catMemo[releaseUrl(d)] && coolLeft('catalog')) { d.error = coolText('catalog'); if (state.detail === d) paintArtistFoot(d); coolToast('catalog'); return; }   // v2.13
     d.loading = true; d.error = '';
     if (state.detail === d) paintArtistFoot(d);
-    if (!d.infoAsked) {
+    if (!d.infoAsked && !d.item.img) {
       // The picture only; Spotify no longer gives Development Mode apps followers or popularity.
+      // v2.19: not asked when the item already has one (a followed, pinned or searched artist).
       d.infoAsked = true;
       apiCached('/artists/' + encodeURIComponent(d.item.id)).then(function (r) {
         if (!r.ok || !r.json) return;
