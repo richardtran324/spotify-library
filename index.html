@@ -2193,7 +2193,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     set(K.searchType, t);
     paintSearchChips();
     clearTimeout(searchTimer);
-    if (linkOf($('search').value)) { renderList(); return; }   // v2.33: a link in the box: nothing is searched
+    if (linkOf($('search').value)) { renderList(); return; }   // v2.34: a link in the box: nothing is searched
     var q = $('search').value.trim();
     var e = q.length >= 2 ? cacheGet(t, q) : null;
     if (q.length >= 2 && (!e || e.error)) runSearch(q);
@@ -2605,7 +2605,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // A tap on this page started an episode: record it now if the page knows its show; otherwise the
   // player check a moment later records it with the full details.
   function noteStarted(item) {
-    if (!item || item.linkStub || !/^spotify:episode:/.test(item.uri || '')) return;   // v2.33: no placeholder names in the history
+    if (!item || item.linkStub || !/^spotify:episode:/.test(item.uri || '')) return;   // v2.34: no placeholder names in the history
     if (markOf(item.uri)) { writeMark(item.uri, null); marksChanged(); }   // v2.21: played again from this page
     var h = histByUri()[item.uri], info = null;
     if (h) info = { show: h.show, dur: h.duration_ms };
@@ -3171,7 +3171,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.33 (2026-11-27)';
+  var VERSION = 'v2.34 (2026-11-27)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -4258,7 +4258,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
 
   // ---------- pinned favorites (stored on this phone only, never sent to Spotify) ----------
   var PIN_KINDS = { playlist: 'playlists', album: 'albums', artist: 'artists', show: 'podcasts' };
-  function canPin(item) { return !!(item && item.uri && item.id && PIN_KINDS[item.kind] && !item.linkStub); }   // v2.33: not under a placeholder name
+  function canPin(item) { return !!(item && item.uri && item.id && PIN_KINDS[item.kind] && !item.linkStub); }   // v2.34: not under a placeholder name
   function readPins() {
     var a = get(K.pins);
     if (!Array.isArray(a)) return [];
@@ -4524,7 +4524,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (state.detail) return;   // the song list view owns the page
     var main = $('main');
     main.textContent = '';
-    var plk = linkOf($('search').value);   // v2.33: a pasted Spotify link replaces the list
+    var plk = linkOf($('search').value);   // v2.34: a pasted Spotify link replaces the list
     if (plk) return renderLink(main, plk);
     if (state.filter === 'search') return renderSearch(main);
     if (state.filter === 'recent') return renderRecent(main);
@@ -4722,13 +4722,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var box = $('search');
     $('schips').hidden = f !== 'search';
     if (f === 'search') {
-      box.placeholder = 'Search Spotify or paste a link';   // v2.33
+      box.placeholder = 'Search Spotify or paste a link';   // v2.34
       box.setAttribute('aria-label', 'Search all of Spotify or paste a Spotify link');
       box.setAttribute('enterkeyhint', 'search');
       if (!wasSearch) { box.value = state.search.q; }
       if (focus) box.focus();
     } else {
-      box.placeholder = 'Filter by name or paste a link';   // v2.33
+      box.placeholder = 'Filter by name or paste a link';   // v2.34
       box.setAttribute('aria-label', 'Filter by name or paste a Spotify link');
       box.setAttribute('enterkeyhint', 'done');
       if (wasSearch) { box.value = state.query; }
@@ -6073,7 +6073,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // An album or podcast with nothing on screen while catalog is paused (or its request just hit a 429).
   function detailFallback(d) {
     if (d.items.length || d.src === 'search' || d.src === 'local') return false;
-    if (d.item.kind === 'album' && d.item.id && d.item.name && !d.item.linkStub) { startAlbumSearch(d); return true; }   // v2.33: no name to search for
+    if (d.item.kind === 'album' && d.item.id && d.item.name && !d.item.linkStub) { startAlbumSearch(d); return true; }   // v2.34: no name to search for
     if (d.item.kind === 'show' && d.item.id) { startShowLocal(d); return true; }
     return false;
   }
@@ -6515,7 +6515,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         if (!r.ok || !r.json) return;
         var src = img(r.json.images);
         if (src) d.img = src;
-        if (d.item.linkStub && r.json.name) linkArtistNamed(d, String(r.json.name));   // v2.33: opened from a link
+        if (d.item.linkStub && r.json.name) linkArtistNamed(d, String(r.json.name));   // v2.34: opened from a link
         if (state.detail === d) paintArtistCover(d);
       }).catch(function () {});
     }
@@ -6821,7 +6821,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     resumePending(false);
   }
 
-  // ---------- pasted Spotify links (v2.33) ----------
+  // ---------- pasted Spotify links (v2.34) ----------
   // A song, episode, album, playlist, artist or podcast link (open.spotify.com, with or without /intl-xx/, ?si= or
   // /embed/, or a spotify: URI) pasted or typed into the name box is shown instead of a name filter or search.
   // Songs and episodes get one row: a tap plays it through the usual play path (one player call). Their name
@@ -7024,14 +7024,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
 
   // ---------- wiring ----------
   $('search').addEventListener('input', function (e) {
-    if (linkInput(e.target.value)) return;   // v2.33: a pasted Spotify link
+    if (linkInput(e.target.value)) return;   // v2.34: a pasted Spotify link
     if (state.filter === 'search') scheduleSearch(e.target.value, false);
     else { state.query = e.target.value; renderList(); }
   });
   $('search').addEventListener('keydown', function (e) {
     if (e.key !== 'Enter') return;
     e.preventDefault();
-    var lk = linkOf(e.target.value);   // v2.33: Done or Search opens an album, artist, podcast or playlist link again
+    var lk = linkOf(e.target.value);   // v2.34: Done or Search opens an album, artist, podcast or playlist link again
     if (lk) { e.target.blur(); if (lk.kind && !isSongLink(lk)) openLink(lk, document.querySelector('#linkList a.item')); return; }
     if (state.filter === 'search') scheduleSearch(e.target.value, true);
     e.target.blur(); // hides the iPhone keyboard so results are visible
