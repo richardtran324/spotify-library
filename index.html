@@ -122,6 +122,12 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
   color: var(--muted); border-radius: 8px; padding: 6px 10px; cursor: pointer;
 }
 .permlist { margin: 6px 0 10px; padding-left: 20px; font-weight: 600; }
+/* v2.26: editing your playlists */
+.editbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.editrow .item { display: flex; align-items: center; gap: 12px; flex: 1; padding: 10px 2px; min-width: 0; }
+.act.rm { color: var(--warn); }
+#dedit:not(:empty) { margin-top: 10px; }
+#plsheet .devlist { margin-bottom: 6px; }
 .banner {
   display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
   margin-top: 10px; padding: 10px 12px; border-radius: 10px;
@@ -598,6 +604,15 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       <button class="btn secondary" id="notesMark" type="button">Mark as played</button>
       <button class="btn secondary" id="notesClose" type="button">Close</button>
     </div>
+  </div>
+</div>
+
+<div class="sheet" id="plsheet" role="dialog" aria-modal="true" aria-labelledby="plTitle" hidden>
+  <div class="sheet-back" id="plBack"></div>
+  <div class="sheet-panel">
+    <h2 id="plTitle">Add to playlist</h2>
+    <div id="plBody"></div>
+    <div class="sheet-btns" id="plBtns"></div>
   </div>
 </div>
 
@@ -3152,7 +3167,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.25 (2026-11-27)';
+  var VERSION = 'v2.26 (2026-11-27)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -3772,6 +3787,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }
     if (isLikedCtx(c)) out.push({ label: 'Open Liked Songs', item: likedDetailItem() });
     if (ep && it.id) out.push({ label: 'Episode notes', notes: true });   // v2.18
+    if (canAddItem(it)) out.push({ label: 'Add to playlist', addTo: true });   // v2.26
     if (ep && it.show && it.show.id) {
       var s = mapShow(it.show);
       if (s) out.push({ label: 'Open show · ' + s.name, item: s });
@@ -4210,6 +4226,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function npChoose(o, b) {
     if (o.notes) { var p = state.player; if (p && p.item) openNotes(notesEp(p.item), b); return; }   // v2.18
+    if (o.addTo) { openAddPl(b); return; }   // v2.26
     if (o.artist) {   // v2.19: already on this artist's page, so just show it
       var cur = state.detail;
       if (cur && cur.kind === 'artist' && cur.item.id === o.artist.id) { closeNp(false); return; }
@@ -4847,6 +4864,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       el('div', { class: 'dbtns', id: 'dcont', hidden: true })   // v2.23: Continue · <song>
     ]));
     main.appendChild(el('p', { class: 'lnote', id: 'dnote', hidden: true }));   // v2.15: saved list / fallback note
+    main.appendChild(el('div', { id: 'dedit' }));   // v2.26: Edit (your own and collaborative playlists)
     var fbox = findBox(d);   // v2.22: Find in list
     main.appendChild(fbox);
     if (fsel && !fbox.hidden) { try { $('dfind').focus({ preventScroll: true }); $('dfind').setSelectionRange(fsel[0], fsel[1]); } catch (e) {} }
@@ -4889,7 +4907,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var a = document.activeElement;
     var had = a && box.contains(a) ? a.getAttribute('data-sort') : null;
     box.textContent = '';
-    if (!view || d.restricted || d.items.length < 2) return;
+    if (!view || d.restricted || d.items.length < 2 || d.editing) return;   // v2.26: Edit shows playlist order
     box.appendChild(sortBar(view, function () { paintDetailSort(); paintDetailList(); }));
     if (!sortIsDefault(view) && d.next) {
       box.appendChild(el('p', { class: 'snote', text: 'Sorted within the ' + (isPod(d.item) ? 'episodes' : 'songs') + ' loaded so far' }));
@@ -4901,6 +4919,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var ul = $('dlist');
     if (!d || !ul) return;
     ul.textContent = '';
+    if (d.editing) return paintEditRows(d);   // v2.26
     var view = detailView(d.item);
     var tok = findTokens(d), list = d.items;
     if (tok) {   // v2.22: filter first (cheap), then sort only the matches; at most FIND_SHOW rows are drawn
@@ -4984,6 +5003,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!d || !f) return;
     paintDetailSum();
     paintDetailNote();
+    paintEditBar();   // v2.26
     paintDetailCopy();   // v2.24: its own box, so the steps never redraw #dfoot or reload an open player
     paintFindBox(d);   // v2.22
     if (d.restricted && d.embed && f.querySelector('iframe.sembed')) return;   // v2.16: keep the open player (redrawing would reload it)
@@ -5046,7 +5066,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     return s.replace(/[\u0300-\u036f]/g, '').replace(/[\u2018\u2019]/g, '\'').toLowerCase();
   }
   function findTokens(d) {
-    var q = d && findable(d) ? foldText(d.find || '').trim() : '';
+    var q = d && !d.editing && findable(d) ? foldText(d.find || '').trim() : '';   // v2.26: Edit shows every loaded song
     return q ? q.split(/\s+/) : null;
   }
   // Every word must appear in the title, artist, album or (episodes) show; the folded text is kept on the row's item.
@@ -5085,7 +5105,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function paintFindBox(d, box) {
     box = box || $('dfindBox');
     if (!box || findBoxFor !== d) return;
-    box.hidden = !(findable(d) && (d.items.length >= 2 || d.next || d.find));
+    box.hidden = !(findable(d) && !d.editing && (d.items.length >= 2 || d.next || d.find));   // v2.26: hidden while editing
   }
   function applyFind(d) {
     if (state.detail !== d) return;
@@ -5171,7 +5191,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       d.raw = d.raw.concat((j.items || []).filter(function (x) { return x && x.id && x.uri && !have[x.id]; }).map(slTrack));
       return [];
     }
-    var mapped = (j.items || []).map(function (it) { return mapDetail(d.item, it); }).filter(Boolean);
+    var off = typeof j.offset === 'number' ? j.offset : null;   // v2.26: real playlist positions, for Edit
+    var mapped = (j.items || []).map(function (it, k) { var m = mapDetail(d.item, it); if (m && d.item.kind === 'playlist' && off !== null) m.pos = off + k; return m; }).filter(Boolean);
     d.items = d.items.concat(mapped);
     if (isPod(d.item)) rememberEpisodes(mapped);
     return mapped;
@@ -5348,13 +5369,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         remapDetail(d);
         return;
       }
-      var mapped = (r.json.items || []).map(function (it) { return mapDetail(d.item, it); }).filter(Boolean);
+      var off = pageOffset(url, r.json);   // v2.26: each song's place in the playlist, for Edit
+      var mapped = (r.json.items || []).map(function (it, j) { var m = mapDetail(d.item, it); if (m && kind === 'playlist') m.pos = off + j; return m; }).filter(Boolean);
       d.items = d.items.concat(mapped);
       if (isPod(d.item)) rememberEpisodes(mapped);   // for Continue listening
       if (!cur) return;
       // In the default order new rows go at the end; a chosen sort re-sorts everything loaded so far.
-      if (sortIsDefault(detailView(d.item)) && !findTokens(d)) appendDetailRows(mapped);
-      else paintDetailList();   // v2.22: and while Find in list has text
+      if (sortIsDefault(detailView(d.item)) && !d.editing && !findTokens(d)) appendDetailRows(mapped);   // v2.26 Edit / v2.22 Find redraw the list
+      else paintDetailList();
       paintDetailSort();
       paintDetailFoot();
     }).catch(function (e) {
@@ -5374,6 +5396,409 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (state.detail === d) paintDetailFoot();
     }).then(function () { d.autoCheck = false; });
   }
+
+  // ---------- editing your playlists (v2.26) ----------
+  // Now Playing → Add to playlist puts the playing song (or episode) at the end of a playlist you own or collaborate
+  // on; Edit above such a playlist's song list removes songs and moves them up or down. Every change is one request
+  // (library group, never the catalog quota), needs the 'edit' permission (needFeature), and goes one at a time.
+  // The list on screen, the pages kept for this visit (catMemo) and the playlist's song count change only after
+  // Spotify says yes, so nothing is asked again. Positions are the songs' real places in the playlist (item.pos,
+  // set when a page loads), so Edit always shows playlist order and moves only within the songs loaded so far.
+  var plEdit = { busy: false, view: null, ret: null };
+  var EDIT_ICON = {
+    up: svg('<path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M5 15l7-7 7 7"/>'),
+    down: svg('<path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M5 9l7 7 7-7"/>'),
+    minus: svg('<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M8 12h8"/>')
+  };
+  function canEdit(p) { return !!(p && p.kind === 'playlist' && p.id && canList(p)); }
+  function plItemsPath(id) { return '/playlists/' + encodeURIComponent(id) + '/items'; }
+  function pageOffset(url, json) {
+    if (json && typeof json.offset === 'number') return json.offset;
+    var m = /[?&]offset=(\d+)/.exec(url || '');
+    return m ? +m[1] : 0;
+  }
+  function rawUri(x) { var t = x && (x.item || x.track); return (t && t.uri) || ''; }
+  function isEditDetail(d, id) { return !!(d && d.kind !== 'artist' && d.item && d.item.kind === 'playlist' && (!id || d.item.id === id)); }
+  // A playlist's pages kept for this visit, in order from the first and without gaps: [{key, off, r}].
+  // A page after a gap (or a second copy of one) is dropped, so it is simply asked again if needed.
+  function memoPages(id) {
+    var path = plItemsPath(id), all = [], good = [], at = 0;
+    Object.keys(catMemo).forEach(function (k) {
+      var r = catMemo[k];
+      if (k.replace(API, '').split('?')[0] !== path || !r || !r.json || !Array.isArray(r.json.items)) return;
+      all.push({ key: k, off: pageOffset(k, r.json), r: r });
+    });
+    all.sort(function (a, b) { return a.off - b.off; });
+    all.forEach(function (p) {
+      if (p.off === at) { good.push(p); at = p.off + p.r.json.items.length; }
+      else delete catMemo[p.key];
+    });
+    return good;
+  }
+  // Applies one change to the kept pages: fn(raw) returns the new list of Spotify items; extra adds to the total
+  // (a song added after pages that aren't kept). Page offsets stay; only the last kept page grows or shrinks, and
+  // its `next` points at the first song not kept. Returns {total} or null when nothing is kept.
+  function rewriteMemo(id, fn, extra, snap) {
+    var pages = memoPages(id);
+    if (!pages.length) return null;
+    var raw = [];
+    pages.forEach(function (p) { raw = raw.concat(p.r.json.items); });
+    var before = raw.length;
+    var oldTotal = typeof pages[0].r.json.total === 'number' ? pages[0].r.json.total : before;
+    raw = fn(raw);
+    var total = Math.max(raw.length, oldTotal + (raw.length - before) + (extra || 0));
+    var keep = pages.filter(function (p, k) { return k === 0 || p.off < raw.length; });
+    pages.forEach(function (p) { if (keep.indexOf(p) === -1) delete catMemo[p.key]; });
+    keep.forEach(function (p, k) {
+      var last = k === keep.length - 1, lim = p.r.json.limit || 50;
+      var items = raw.slice(p.off, last ? p.off + lim : keep[k + 1].off);
+      var next = !last ? p.r.json.next
+        : p.off + items.length < total ? API + plItemsPath(id) + '?offset=' + (p.off + items.length) + '&limit=' + lim : null;
+      catMemo[p.key] = { ok: true, status: p.r.status || 200, json: Object.assign({}, p.r.json, { items: items, total: total, offset: p.off, next: next }), snap: snap || null };
+    });
+    return { total: total };
+  }
+  // The snapshot the loaded positions belong to: the last change's answer, or none (Spotify then uses the
+  // playlist as it is now, which is what the page loaded).
+  function editSnap(d) {
+    if (d.snap !== undefined) return d.snap;
+    var pages = memoPages(d.item.id);
+    return pages.length ? pages[0].r.snap || null : null;
+  }
+  // The playlist's song count in the library (saved on the phone) and on the open list.
+  function setPlCount(id, n) {
+    if (typeof n !== 'number' || n < 0) return;
+    var d = state.detail, seen = [];
+    [libraryPlaylist(id), isEditDetail(d, id) ? d.item : null].forEach(function (p) {
+      if (!p || seen.indexOf(p) !== -1) return;
+      seen.push(p);
+      p.count = n;
+      if (typeof p.sub === 'string') p.sub = p.sub.replace(/ · \d+ songs$/, '') + (n ? ' · ' + n + ' songs' : '');
+    });
+    if (state.data && (state.data.playlists || []).some(function (p) { return p.id === id; })) set(K.cache, state.data);
+  }
+  function editRefused(r, prefix, btn) {
+    if (featureDenied('edit', r)) { openPerm('edit', btn); return; }   // the permission is missing or was taken back
+    if (r.status === 403) { toast('Spotify didn’t allow this change from this page (' + errMsg(r) + ').'); return; }
+    toast(prefix + ' (' + errMsg(r) + ').');
+  }
+  // True when a change can be sent now (otherwise the reason is already on screen).
+  function editReady(btn) {
+    if (plEdit.busy) return false;
+    if (!needFeature('edit', btn)) return false;
+    return !coolBlocked('library');
+  }
+
+  // Add to playlist: the sheet lists the playlists from the library already loaded (no request), pinned first.
+  function editablePlaylists() {
+    var mine = ((state.data && state.data.playlists) || []).filter(canEdit), byUri = {};
+    mine.forEach(function (p) { byUri[p.uri] = p; });
+    var pinned = readPins().filter(function (p) { return p.kind === 'playlist'; })
+      .map(function (p) { return byUri[p.uri] || (canEdit(p) ? p : null); }).filter(Boolean);
+    return { pinned: pinned, rest: mine.filter(function (p) { return pinned.indexOf(p) === -1; }) };
+  }
+  function canAddItem(it) { return !!(it && it.uri && it.id && !it.is_local && /^spotify:(track|episode):/.test(it.uri)); }
+  function openAddPl(from) {
+    var p = state.player, it = p && p.item;
+    if (!canAddItem(it)) { toast('Only Spotify songs and episodes can be added to a playlist.'); return; }
+    openPl({ mode: 'add', item: it, q: '' }, from);
+  }
+  function openPl(view, from) {
+    plEdit.view = view;
+    plEdit.ret = (from && from.nodeType === 1) ? from : document.activeElement;
+    $('plsheet').hidden = false;
+    renderPl();
+  }
+  function closePl() {
+    if ($('plsheet').hidden) return;
+    $('plsheet').hidden = true;
+    plEdit.view = null;
+    var r = plEdit.ret;
+    plEdit.ret = null;
+    if (r && r.focus && document.body.contains(r)) r.focus();
+  }
+  // Already in this playlist: only when its songs were loaded this visit (checking otherwise would cost requests).
+  function plHas(id, uri) {
+    var found = memoPages(id).some(function (p) { return p.r.json.items.some(function (x) { return rawUri(x) === uri; }); });
+    var d = state.detail;
+    return found || (isEditDetail(d, id) && d.items.some(function (x) { return x.uri === uri; }));
+  }
+  function plBtn(text, primary, fn, id) {
+    var b = el('button', { class: 'btn' + (primary ? '' : ' secondary'), type: 'button', text: text, id: id || null });
+    b.addEventListener('click', fn);
+    return b;
+  }
+  function renderPl() {
+    var v = plEdit.view;
+    if (!v) return;
+    var body = $('plBody'), btns = $('plBtns');
+    body.textContent = ''; btns.textContent = '';
+    var it = v.item, what = it ? '“' + (it.name || 'Untitled') + '”' : '';
+    if (v.mode === 'add') {
+      $('plTitle').textContent = 'Add to playlist';
+      var by = it.type === 'episode' ? ((it.show && it.show.name) || '') : names(it.artists);
+      body.appendChild(el('p', { class: 'sethint', text: what + (by ? ' · ' + by : '') }));
+      var lists = editablePlaylists();
+      if (!lists.pinned.length && !lists.rest.length) {
+        body.appendChild(el('p', { class: 'empty', text: state.data ? 'No playlists you own or collaborate on in your library.' : 'Your library hasn’t loaded yet.' }));
+      } else {
+        var box = el('input', { class: 'search', type: 'search', id: 'plFilter', placeholder: 'Filter by name', 'aria-label': 'Filter playlists by name', autocomplete: 'off', enterkeyhint: 'done' });
+        box.value = v.q || '';
+        box.addEventListener('input', function () { v.q = box.value; paintPlList(); });
+        body.appendChild(box);
+        body.appendChild(el('div', { id: 'plList' }));
+        paintPlList();
+      }
+      btns.appendChild(plBtn('Close', false, closePl, 'plClose'));
+    } else if (v.mode === 'dup') {
+      $('plTitle').textContent = 'Add to playlist';
+      body.appendChild(el('p', { text: 'Already in this playlist. Add again?' }));
+      body.appendChild(el('p', { class: 'sethint', text: what + ' is already in “' + v.pl.name + '”.' }));
+      btns.appendChild(plBtn('Add again', true, function (ev) { sendAdd(v.pl, it, ev.currentTarget); }, 'plGo'));
+      btns.appendChild(plBtn('Cancel', false, function () { v.mode = 'add'; renderPl(); }, 'plClose'));
+    } else if (v.mode === 'remove') {
+      $('plTitle').textContent = 'Remove song';
+      body.appendChild(el('p', { text: 'Remove “' + v.x.name + '” from “' + v.d.item.name + '”? If the song is in the playlist more than once, Spotify removes every copy.' }));
+      btns.appendChild(plBtn('Remove', true, function (ev) { sendRemove(v, ev.currentTarget); }, 'plGo'));
+      btns.appendChild(plBtn('Cancel', false, closePl, 'plClose'));
+    }
+    paintPlBusy();
+    var f = $(v.mode === 'dup' ? 'plGo' : 'plClose');   // not the filter (the iPhone keyboard would cover the list), not Remove
+    if (f) f.focus();
+  }
+  function paintPlList() {
+    var v = plEdit.view, box = $('plList');
+    if (!v || !box) return;
+    box.textContent = '';
+    var q = (v.q || '').trim().toLowerCase(), lists = editablePlaylists(), any = false;
+    function match(p) { return !q || String(p.name || '').toLowerCase().indexOf(q) !== -1; }
+    [['Pinned', lists.pinned], ['Your playlists', lists.rest]].forEach(function (g) {
+      var rows = g[1].filter(match);
+      if (!rows.length) return;
+      any = true;
+      if (lists.pinned.length) box.appendChild(el('h3', { class: 'sheet-sub', text: g[0] }));
+      var ul = el('ul', { class: 'devlist' });
+      rows.forEach(function (p) {
+        var b = el('button', { class: 'devrow', type: 'button', 'data-pl': p.id }, [
+          el('span', {}, [el('span', { class: 'devname', text: p.name || 'Untitled' }), el('span', { class: 'sub', text: p.collaborative && !isOwn(p) ? 'Collaborative' : (p.count ? p.count + ' songs' : '') })])
+        ]);
+        b.addEventListener('click', function () { pickPl(p, b); });
+        ul.appendChild(el('li', {}, [b]));
+      });
+      box.appendChild(ul);
+    });
+    if (!any) box.appendChild(el('p', { class: 'empty', text: 'No playlist matches “' + v.q.trim() + '”.' }));
+    paintPlBusy();
+  }
+  function paintPlBusy() {
+    var bs = document.querySelectorAll('#plsheet .devrow, #plGo');
+    for (var i = 0; i < bs.length; i++) bs[i].disabled = plEdit.busy;
+  }
+  function pickPl(pl, btn) {
+    var v = plEdit.view;
+    if (!v || plEdit.busy) return;
+    if (!needFeature('edit', btn)) return;   // nothing is sent; the permission sheet explains
+    if (plHas(pl.id, v.item.uri)) { v.mode = 'dup'; v.pl = pl; renderPl(); return; }
+    sendAdd(pl, v.item, btn);
+  }
+  function sendAdd(pl, it, btn) {
+    if (!editReady(btn)) return;
+    var prefix = 'Couldn’t add to “' + pl.name + '”';
+    plEdit.busy = true; paintPlBusy();
+    api(plItemsPath(pl.id), { method: 'POST', body: { uris: [it.uri] }, feature: 'edit' }).then(function (r) {
+      if (!r.ok) { editRefused(r, prefix, btn); return; }
+      afterAdd(pl, it, (r.json && r.json.snapshot_id) || null);
+      closePl();
+      toast('Added to “' + pl.name + '”');
+    }).catch(onFail(prefix)).then(function () { plEdit.busy = false; paintPlBusy(); });
+  }
+  // Spotify adds at the end. A list loaded to its end (on screen or kept) gets the song there; otherwise only
+  // the count changes, and Load more brings it in.
+  function afterAdd(pl, it, snap) {
+    var id = pl.id, pages = memoPages(id);
+    var full = pages.length && !pages[pages.length - 1].r.json.next;
+    var rawItem = { added_at: new Date().toISOString(), is_local: false, item: it };
+    var res = rewriteMemo(id, function (raw) { if (full) raw.push(rawItem); return raw; }, full ? 0 : 1, snap);
+    var d = state.detail, total = res ? res.total : null;
+    if (isEditDetail(d, id)) {
+      if (typeof d.total === 'number') {
+        if (!d.next && !d.loading) {
+          var m = mapDetail(d.item, rawItem);
+          if (m) { m.pos = d.total; d.items.push(m); }
+        }
+        d.total += 1;
+        if (total == null) total = d.total;
+      }
+      d.snap = snap;
+      if (state.detail === d && $('dlist')) { paintDetailList(); paintDetailSort(); paintDetailFoot(); }
+    }
+    if (total == null) { var lp = libraryPlaylist(id); if (lp && typeof lp.count === 'number') total = lp.count + 1; }
+    setPlCount(id, total);
+  }
+
+  // Edit mode on a song list: − removes (after a confirm), the arrows move a song one place.
+  function paintEditBar() {
+    var d = state.detail, box = $('dedit');
+    if (!box || !d) return;
+    box.textContent = '';
+    if (!canEdit(d.item) || d.restricted || d.src !== 'api') { d.editing = false; return; }
+    if (!d.editing) {
+      if (!d.items.length) return;
+      var b = el('button', { class: 'iconbtn', type: 'button', id: 'deditBtn', text: 'Edit', 'aria-label': 'Edit songs in “' + d.item.name + '”' });
+      b.addEventListener('click', function () { setEditing(d, true); });
+      box.appendChild(b);
+      return;
+    }
+    var done = el('button', { class: 'btn small', type: 'button', id: 'deditDone', text: 'Done' });
+    done.addEventListener('click', function () { setEditing(d, false); });
+    box.appendChild(el('div', { class: 'editbar' }, [
+      el('p', { class: 'sethint', text: 'Shown in playlist order. Tap − to remove a song, or the arrows to move it.' +
+        (d.next ? ' Songs move only among the ' + d.items.length + ' loaded so far; Load more for the rest.' : '') }),
+      done
+    ]));
+    setEditLock(plEdit.busy || d.loading);
+  }
+  function setEditing(d, on) {
+    if (state.detail !== d) return;
+    if (on) stopFind(d);   // v2.26: a running Search all stops; what it loaded stays
+    d.editing = on;
+    paintDetailSort(); paintDetailList(); paintDetailFoot();
+    var f = $(on ? 'deditDone' : 'deditBtn');
+    if (f) f.focus({ preventScroll: true });
+  }
+  function paintEditRows(d) {
+    var ul = $('dlist'), lock = plEdit.busy || d.loading;
+    d.items.forEach(function (x, k) { ul.appendChild(editRow(d, x, k, lock)); });
+  }
+  function editRow(d, x, k, lock) {
+    var prev = d.items[k - 1], next = d.items[k + 1], ok = typeof x.pos === 'number';
+    function btn(icon, which, label, off, fn) {
+      var b = el('button', { class: 'act' + (which === 'rm' ? ' rm' : ''), type: 'button', 'aria-label': label, 'data-edit': which, 'data-off': off ? '' : null });
+      b.innerHTML = icon;
+      b.disabled = lock || off;
+      b.addEventListener('click', fn);
+      return b;
+    }
+    var li = el('li', { class: 'row editrow', 'data-puri': x.uri }, [
+      el('div', { class: 'item' }, [coverFor(x), el('div', { class: 'meta' }, [el('div', { class: 'name', text: x.name }), el('div', { class: 'sub', text: x.sub })])]),
+      el('div', { class: 'acts' }, [
+        btn(EDIT_ICON.up, 'up', 'Move “' + x.name + '” up', !ok || !prev || typeof prev.pos !== 'number', function (ev) { moveSong(d, k, -1, ev.currentTarget); }),
+        btn(EDIT_ICON.down, 'down', 'Move “' + x.name + '” down', !ok || !next || typeof next.pos !== 'number', function (ev) { moveSong(d, k, 1, ev.currentTarget); }),
+        btn(EDIT_ICON.minus, 'rm', 'Remove “' + x.name + '” from this playlist', !ok, function (ev) { askRemove(d, k, ev.currentTarget); })
+      ])
+    ]);
+    var cur = playingUri();
+    if (cur && cur === x.uri) markPlaying(li, true);
+    return li;
+  }
+  function setEditLock(on) {
+    var bs = document.querySelectorAll('#dlist [data-edit]');
+    for (var i = 0; i < bs.length; i++) bs[i].disabled = on || bs[i].hasAttribute('data-off');
+  }
+  function askRemove(d, k, btn) {
+    var x = d.items[k];
+    if (!x || plEdit.busy || d.loading || state.detail !== d) return;
+    if (!needFeature('edit', btn)) return;
+    openPl({ mode: 'remove', d: d, x: x }, btn);
+  }
+  function sendRemove(v, btn) {
+    var d = v.d, x = v.x;
+    if (!editReady(btn)) return;
+    var ret = plEdit.ret;
+    closePl();
+    var body = { items: [{ uri: x.uri }] }, snap = editSnap(d);
+    if (snap) body.snapshot_id = snap;
+    sendEdit(d, 'DELETE', body, 'Couldn’t remove “' + x.name + '”', ret, function (newSnap) {
+      var k = d.items.indexOf(x);
+      applyRemove(d, x.uri, newSnap);
+      toast('Removed “' + x.name + '” from “' + d.item.name + '”');
+      return { at: Math.max(0, Math.min(k, d.items.length - 1)), which: 'rm' };
+    });
+  }
+  function moveSong(d, k, dir, btn) {
+    var x = d.items[k], y = d.items[k + dir];
+    if (!x || !y || typeof x.pos !== 'number' || typeof y.pos !== 'number' || d.loading || state.detail !== d) return;
+    if (!editReady(btn)) return;
+    // One place up or down, past any rows the list doesn't show (local files): before the song above it,
+    // or after the song below it.
+    var i = x.pos, b = dir < 0 ? y.pos : y.pos + 1;
+    var body = { range_start: i, insert_before: b, range_length: 1 }, snap = editSnap(d);
+    if (snap) body.snapshot_id = snap;
+    sendEdit(d, 'PUT', body, 'Couldn’t move “' + x.name + '”', btn, function (newSnap) {
+      applyMove(d, i, b, newSnap);
+      return { at: d.items.indexOf(x), which: dir < 0 ? 'up' : 'down' };
+    });
+  }
+  // One change request; onOk(snapshot) updates the list and says where focus goes. A refusal changes nothing.
+  function sendEdit(d, method, body, prefix, btn, onOk) {
+    plEdit.busy = true;
+    setEditLock(true);
+    var more = document.querySelector('#dfoot .btn');
+    if (more) more.disabled = true;
+    var after = null;
+    api(plItemsPath(d.item.id), { method: method, body: body, feature: 'edit' }).then(function (r) {
+      if (!r.ok) { editRefused(r, prefix, btn); return; }
+      after = onOk((r.json && r.json.snapshot_id) || null);
+    }).catch(onFail(prefix)).then(function () {
+      plEdit.busy = false;
+      if (state.detail !== d || !$('dlist')) return;
+      if (!after) {
+        setEditLock(d.loading);
+        if (more) more.disabled = false;
+        if (btn && document.body.contains(btn) && $('perm').hidden && $('plsheet').hidden) btn.focus({ preventScroll: true });
+        return;
+      }
+      paintDetailList(); paintDetailSort(); paintDetailFoot();
+      focusEditRow(after.at, after.which);
+    });
+  }
+  function focusEditRow(at, which) {
+    if (!$('perm').hidden || !$('plsheet').hidden) return;
+    var li = $('dlist') && $('dlist').children[at];
+    var order = which === 'up' ? ['up', 'down', 'rm'] : which === 'down' ? ['down', 'up', 'rm'] : ['rm', 'up', 'down'];
+    for (var i = 0; li && i < order.length; i++) {
+      var b = li.querySelector('[data-edit="' + order[i] + '"]');
+      if (b && !b.disabled) { b.focus(); return; }
+    }
+    var done = $('deditDone');
+    if (done) done.focus();
+  }
+  function shiftOffset(url, by) {
+    return String(url).replace(/([?&]offset=)(\d+)/, function (m, a, n) { return a + Math.max(0, +n + by); });
+  }
+  function applyMove(d, i, b, snap) {
+    var to = b > i ? b - 1 : b;
+    function np(p) {
+      if (p === i) return to;
+      if (i < p && p <= to) return p - 1;
+      if (to <= p && p < i) return p + 1;
+      return p;
+    }
+    d.items.forEach(function (x) { if (typeof x.pos === 'number') x.pos = np(x.pos); });
+    d.items.sort(function (a, c) { return a.pos - c.pos; });
+    rewriteMemo(d.item.id, function (raw) {
+      if (i >= raw.length || to >= raw.length) return raw;
+      var m = raw.splice(i, 1)[0];
+      raw.splice(to, 0, m);
+      return raw;
+    }, 0, snap);
+    d.snap = snap;
+  }
+  // Spotify removes every copy. Copies in pages not loaded yet come after the loaded ones, so the next page's
+  // offset moves back by the loaded copies only.
+  function applyRemove(d, uri, snap) {
+    var gone = d.items.filter(function (x) { return x.uri === uri && typeof x.pos === 'number'; }).map(function (x) { return x.pos; });
+    d.items = d.items.filter(function (x) { return x.uri !== uri; });
+    d.items.forEach(function (x) {
+      if (typeof x.pos === 'number') x.pos -= gone.filter(function (g) { return g < x.pos; }).length;
+    });
+    if (d.next) d.next = shiftOffset(d.next, -gone.length);
+    if (typeof d.total === 'number') d.total = Math.max(d.items.length, d.total - gone.length);
+    var res = rewriteMemo(d.item.id, function (raw) { return raw.filter(function (x) { return rawUri(x) !== uri; }); }, 0, snap);
+    d.snap = snap;
+    setPlCount(d.item.id, typeof d.total === 'number' ? d.total : res ? res.total : null);
+  }
+  $('plBack').addEventListener('click', function () { closePl(); });
 
   // ---------- saved lists (v2.15) ----------
   // Spotify's Development Mode quota for catalog calls (albums, shows) runs out quickly, so album song lists
@@ -6293,6 +6718,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (e.key !== 'Escape') return;
     if (!$('sheet').hidden) closeSheet();
     else if (!$('perm').hidden) closePerm();   // v2.25
+    else if (!$('plsheet').hidden) closePl();   // v2.26
     else if (!$('notes').hidden) closeNotes();   // v2.18
     else if (!$('queue').hidden) closeQueue();
     else if (!$('diag').hidden) closeDiag();
