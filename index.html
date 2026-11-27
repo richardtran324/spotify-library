@@ -1022,12 +1022,25 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (t.access && Date.now() < t.expires) return Promise.resolve(t.access);
     if (!t.refresh) return Promise.reject(new Error('signed-out'));
     if (refreshing) return refreshing;   // several calls at once share one refresh
-    refreshing = tokenRequest({ grant_type: 'refresh_token', refresh_token: t.refresh, client_id: get(K.client) })
-      .then(function (j) { refreshing = null; saveToken(j, false); return j.access_token; }, function (e) {
-        refreshing = null;
-        if (e.code === 'invalid_grant') { del(K.token); throw new Error('signed-out'); }
-        throw e;
-      });
+    var sent = t.refresh;
+    // audit: another copy (tab or window) may renew with the same refresh token at the same time. Spotify can
+    // take a refresh token only once, so the loser gets invalid_grant. Before signing out, check whether
+    // storage now holds a newer refresh token (now, or after 2 s if the winner hasn't saved yet) and use it.
+    // refreshing stays set until this settles, so other calls in this copy don't send the old token again.
+    refreshing = tokenRequest({ grant_type: 'refresh_token', refresh_token: sent, client_id: get(K.client) })
+      .then(function (j) { saveToken(j, false); return { access: j.access_token }; }, function (e) {
+        if (e.code !== 'invalid_grant') throw e;
+        var renewed = function () { var n = get(K.token); return !!(n && n.refresh && n.refresh !== sent); };
+        if (renewed()) return { retry: true };
+        return new Promise(function (res) { setTimeout(res, 2000); }).then(function () {
+          if (renewed()) return { retry: true };
+          var n = get(K.token);
+          if (n && n.refresh === sent) del(K.token);
+          throw new Error('signed-out');
+        });
+      })
+      .then(function (r) { refreshing = null; return r.retry ? accessToken() : r.access; },
+        function (e) { refreshing = null; throw e; });
     return refreshing;
   }
   // ---------- rate limits (v2.13; per group since v2.14) ----------
