@@ -989,6 +989,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var code = params.get('code');
     var err = params.get('error');
     history.replaceState(null, '', REDIRECT);
+    if (!err && (!params.get('state') || !get(K.state))) {
+      // No sign-in from this page is in progress, or the answer has no check value, so it isn't ours
+      // (before, a missing value matched a missing saved one).
+      if (get(K.token)) { toast('Sign-in check failed. You’re still signed in.'); return Promise.resolve(true); }
+      renderSignIn('Sign-in check failed. Please try again.'); return Promise.resolve(false);
+    }
     var ask = get(PERM_ASK);
     del(PERM_ASK);
     if (!ask || !FEATURE_SCOPES[ask.feature] || !(Date.now() - (ask.at || 0) < 30 * 60000)) ask = null;
@@ -1375,7 +1381,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       ownerId: (p.owner && p.owner.id) || '', collaborative: !!p.collaborative,
       ownerName: (p.owner && p.owner.display_name) || '', snap: p.snapshot_id || '',   // v2.24: for Make a copy ('' = unknown)
       count: count,   // number of songs, for Most songs
-      sub: 'Playlist' + (p.owner && p.owner.display_name ? ' · ' + p.owner.display_name : '') + (count ? ' · ' + count + ' songs' : '')
+      sub: 'Playlist' + (p.owner && p.owner.display_name ? ' · ' + p.owner.display_name : '') + (count ? ' · ' + count + (count === 1 ? ' song' : ' songs') : '')
     };
   }
   function mapArtist(a) {
@@ -1386,7 +1392,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     };
   }
   function likedItem(d) {
-    return { kind: 'liked', name: 'Liked Songs', uri: null, url: 'https://open.spotify.com/collection/tracks', sub: 'Playlist · ' + d.likedTotal + ' songs' };
+    return { kind: 'liked', name: 'Liked Songs', uri: null, url: 'https://open.spotify.com/collection/tracks', sub: 'Playlist · ' + d.likedTotal + (d.likedTotal === 1 ? ' song' : ' songs') };
   }
   function mapShow(s) {
     if (!s || !s.id) return null;
@@ -2061,7 +2067,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     e.type = type; e.q = q;
     cachePut(type, q, e);
     state.search = { q: q };
-    addRecentSearch(q);
+    if (!coolLeft('search')) addRecentSearch(q);   // while search is paused nothing is sent, so nothing is saved
     renderList();
     fetchSearchPage(type, q, e);
   }
@@ -4611,7 +4617,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // A card's second line: short enough for a 112 px card.
   function cardSub(i) {
     if (i.kind === 'track') return i.artist || '';
-    if (i.kind === 'playlist') return i.count ? i.count + ' songs' : 'Playlist';
+    if (i.kind === 'playlist') return i.count ? i.count + (i.count === 1 ? ' song' : ' songs') : 'Playlist';
     if (i.kind === 'album') return i.artist || 'Album';
     if (i.kind === 'artist') return 'Artist';
     if (i.kind === 'show') return 'Podcast';
@@ -5191,7 +5197,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (p.why === 'cap') note = 'That needs ' + p.reqs + ' requests. Spotify allows only about 20 an hour for playlist and album songs, so this works for up to ' + (FIND_CAT_MAX * FIND_PAGE) + ' more songs. Clear the box and use Load more instead.';
     else if (p.why === 'paused') note = coolText(p.group);
     else if (p.memo || (p.group === 'catalog' && !p.reqs)) note = 'Already loaded this visit. No requests.';
-    else if (p.group !== 'catalog') note = 'Loads ' + fmtCount(Math.min(p.more, p.reqs * FIND_PAGE)) + ' more ' + noun + ' (' + p.reqs + (p.reqs === 1 ? ' request' : ' requests') + ')' +
+    else if (p.group !== 'catalog') note = 'Loads ' + fmtCount(Math.min(p.more, p.reqs * FIND_PAGE)) + ' more ' + (Math.min(p.more, p.reqs * FIND_PAGE) === 1 ? noun.replace(/s$/, '') : noun) + ' (' + p.reqs + (p.reqs === 1 ? ' request' : ' requests') + ')' +
       (capped ? ', ' + fmtCount(p.more - p.reqs * FIND_PAGE) + ' left after that. Tap again for the rest.' : '.');
     if (note) f.appendChild(el('p', { class: 'snote', text: note }));
   }
@@ -5247,6 +5253,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     function paintNew(mapped, last) {
       if (d.item.kind === 'album') { remapDetail(d); return; }   // first: d.items follows d.raw even off screen (it paints only on screen)
       if (state.detail !== d) return;
+      if (d.editing) { paintDetailList(); paintDetailFoot(); return; }   // Edit was tapped while it ran: late rows get edit buttons too
       var tok = findTokens(d), plain = sortIsDefault(detailView(d.item));
       if (tok) {
         var n = mapped.filter(function (i) { return findHit(i, tok); }).length;
@@ -5482,6 +5489,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (r.status === 403 && d.item.kind === 'playlist') { noList[d.item.id] = true; d.restricted = true; if (cur) { paintDetailSort(); paintDetailFoot(); } return; }
       if (!r.ok || !r.json) throw new Error(errMsg(r));
       d.next = r.json.next || null;
+      // A podcast's next page goes by the page's own short link, the one a reopened saved copy builds, so a page
+      // already kept this visit isn't asked again (Spotify's full next link would be a different key).
+      if (kind === 'show' && d.next) {
+        var nOff = /[?&]offset=\d+/.test(d.next) ? pageOffset(d.next) : pageOffset(url, r.json) + (r.json.items || []).length;
+        if (nOff > 0) d.next = showPage(d.item.id, nOff);   // otherwise Spotify's own link stays
+      }
       if (typeof r.json.total === 'number') d.total = r.json.total;
       if (kind === 'album' || kind === 'show') {
         // v2.15: kept as minimal objects and saved on this phone (lib-cache-album / lib-cache-show).
@@ -5608,7 +5621,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (!p || seen.indexOf(p) !== -1) return;
       seen.push(p);
       p.count = n;
-      if (typeof p.sub === 'string') p.sub = p.sub.replace(/ · \d+ songs$/, '') + (n ? ' · ' + n + ' songs' : '');
+      if (typeof p.sub === 'string') p.sub = p.sub.replace(/ · \d+ songs?$/, '') + (n ? ' · ' + n + (n === 1 ? ' song' : ' songs') : '');
     });
     if (state.data && (state.data.playlists || []).some(function (p) { return p.id === id; })) set(K.cache, state.data);
   }
@@ -5715,7 +5728,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       var ul = el('ul', { class: 'devlist' });
       rows.forEach(function (p) {
         var b = el('button', { class: 'devrow', type: 'button', 'data-pl': p.id }, [
-          el('span', {}, [el('span', { class: 'devname', text: p.name || 'Untitled' }), el('span', { class: 'sub', text: p.collaborative && !isOwn(p) ? 'Collaborative' : (p.count ? p.count + ' songs' : '') })])
+          el('span', {}, [el('span', { class: 'devname', text: p.name || 'Untitled' }), el('span', { class: 'sub', text: p.collaborative && !isOwn(p) ? 'Collaborative' : (p.count ? p.count + (p.count === 1 ? ' song' : ' songs') : '') })])
         ]);
         b.addEventListener('click', function () { pickPl(p, b); });
         ul.appendChild(el('li', {}, [b]));
@@ -6732,6 +6745,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     $('top').hidden = true;
     $('banner').hidden = true;
     closeSheet();
+    closePerm();   // the permission sheet and the Add to playlist / Remove sheet belong to that sign-in too
+    closePl();     // (closed in the reverse of the order they can open: the permission sheet opens from this one)
     closeQueue(false);
     closeNp(false);
     closePl(); closePerm();   // v2.28: Add to playlist and the permission sheet close on sign-out too
