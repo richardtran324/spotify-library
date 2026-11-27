@@ -151,6 +151,10 @@ a.item:active { opacity: 0.6; }
 @media (hover: hover) { .act:hover { background: var(--chip); } }
 .act[aria-pressed="true"] { color: var(--accent); }
 .act[disabled] { opacity: 0.5; cursor: default; }
+/* v2.32: controls Spotify doesn't allow right now (still focusable, so a tap or VoiceOver can give the reason) */
+.act[aria-disabled="true"], .slider[aria-disabled="true"] { opacity: 0.5; cursor: default; }
+.slider[aria-disabled="true"] .sfill, .slider[aria-disabled="true"] .sthumb { background: var(--muted); }
+.row.nope a.item { opacity: 0.55; }   /* v2.32: a song Spotify says can't play */
 .cover {
   width: 56px; height: 56px; border-radius: 6px; flex: none;
   background: var(--chip); object-fit: cover;
@@ -560,6 +564,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       <button class="act" id="npBack15" type="button" aria-label="Back 15 seconds"></button>
       <button class="act" id="npFwd30" type="button" aria-label="Forward 30 seconds"></button>
     </div>
+    <div class="idleline" id="npAllow" hidden></div>
     <div class="npf-vol" id="npVolRow" hidden>
       <span id="npVolIcon"></span>
       <div class="slider" id="npVol" role="slider" tabindex="0" aria-label="Volume" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="strack"><div class="sfill"></div><div class="sthumb"></div></div></div>
@@ -1344,7 +1349,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       img: o.noImg ? '' : img(ep ? (t.images || (t.show && t.show.images)) : (t.album && t.album.images)),
       sub: sub, num: o.num, ctx: o.ctx,
       artist: by,   // for sorting: the song's artists, or an episode's show
-      durMs: t.duration_ms || 0   // for the total length above a song list
+      durMs: t.duration_ms || 0,   // for the total length above a song list
+      nope: unplayableWhy(t) || undefined   // v2.32: why Spotify says it can't play (left out when it says nothing)
     };
   }
   function mapAlbum(a) {
@@ -3170,7 +3176,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.27 (2026-11-27)';
+  var VERSION = 'v2.32 (2026-11-27)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -3574,6 +3580,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (item.uri) requestSaved([item.uri]);
     bar.hidden = false;
     document.body.classList.add('has-player');
+    paintAllowed();   // v2.32
     paintNp();
   }
   function command(method, path, optimistic) {
@@ -3905,6 +3912,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     function move(v) { s.value = v; s.paint(v); if (o.input) o.input(v); }
     node.addEventListener('pointerdown', function (e) {
       if ((e.button != null && e.button > 0) || !s.max()) return;
+      if (o.locked && o.locked()) { if (o.onLocked) o.onLocked(); return; }   // v2.32
       s.dragging = true;
       try { node.setPointerCapture(e.pointerId); } catch (err) {}
       move(fromX(e.clientX));
@@ -3921,6 +3929,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     node.addEventListener('keydown', function (e) {
       var max = s.max(), v = s.value;
       if (!max) return;
+      if (o.locked && o.locked() && /^(Arrow|Home$|End$)/.test(e.key)) { e.preventDefault(); if (o.onLocked) o.onLocked(); return; }   // v2.32
       if (e.key === 'ArrowRight' || e.key === 'ArrowUp') v += o.step;
       else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') v -= o.step;
       else if (e.key === 'Home') v = 0;
@@ -3950,6 +3959,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       paintIdle();
       return;
     }
+    if (!allowTap('seeking')) { paintProgress(); return; }   // v2.32: puts the bar back where it was
     command('PUT', '/me/player/seek?position_ms=' + ms, function (x) { x.progress_ms = ms; state.playerAt = Date.now(); });
   }
   function seekBy(delta) { seekTo(curPos() + delta); }
@@ -3962,7 +3972,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   var REPEAT_LABEL = { off: 'Repeat off', context: 'Repeat all', track: 'Repeat one' };
   function repeatState() { var r = state.player && state.player.repeat_state; return REPEAT_LABEL[r] ? r : 'off'; }
   function cycleRepeat() {
-    var n = REPEAT_NEXT[repeatState()];
+    var n = repeatNext();   // v2.32: skips a state Spotify doesn't allow
+    if (!n) { toast(ALLOW_WHY.toggling_repeat_context + '.'); return; }
     command('PUT', '/me/player/repeat?state=' + n, function (x) { x.repeat_state = n; });
   }
   function paintRepeat(b) {
@@ -3973,6 +3984,103 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     b.setAttribute('aria-label', REPEAT_LABEL[r] + ' (tap to change)');
     b.innerHTML = r === 'track' ? ICON.repeatOne : ICON.repeat;
   }
+  // ---------- Controls that follow what Spotify allows (v2.32) ----------
+  // The /me/player answer the page already gets carries `actions`, usually as {disallows: {skipping_prev: true, …}}
+  // (true = not allowed). Spotify's reference lists the same flags straight under `actions` without saying what true
+  // means; that form is read the same way, unless pausing and resuming are both true, which can't mean "not allowed"
+  // (then it's ignored).
+  // A missing flag never greys anything out. The saved "asleep" playback has no actions, so all controls work there.
+  var ALLOW_FLAGS = ['interrupting_playback', 'pausing', 'resuming', 'seeking', 'skipping_next', 'skipping_prev',
+    'toggling_repeat_context', 'toggling_repeat_track', 'toggling_shuffle', 'transferring_playback'];
+  var ALLOW_WHY = {
+    skipping_prev: 'Spotify doesn’t allow skipping back here',
+    skipping_next: 'Spotify doesn’t allow skipping ahead here',
+    seeking: 'Spotify doesn’t allow seeking here',
+    toggling_shuffle: 'Spotify doesn’t allow shuffle here',
+    toggling_repeat_context: 'Spotify doesn’t allow changing repeat here',
+    toggling_repeat_track: 'Spotify doesn’t allow changing repeat here'
+  };
+  var ALLOW_NOUN = { skipping_prev: 'skipping back', skipping_next: 'skipping ahead', seeking: 'seeking', toggling_shuffle: 'shuffle', repeat: 'changing repeat' };
+  function playerDisallows(p) {
+    var a = p && !p.idle && p.actions;
+    if (!a || typeof a !== 'object') return null;
+    if (a.disallows && typeof a.disallows === 'object') return a.disallows;
+    if (!ALLOW_FLAGS.some(function (k) { return typeof a[k] === 'boolean'; })) return null;
+    if (a.pausing === true && a.resuming === true) return null;
+    return a;
+  }
+  // Repeat's next state that Spotify allows, or '' when none is. Leaving or entering all needs
+  // toggling_repeat_context, leaving or entering one needs toggling_repeat_track; a disallowed state is skipped
+  // (off → one when all isn't allowed; all → off when one isn't), so the page never asks for it.
+  var REPEAT_FLAG = { context: 'toggling_repeat_context', track: 'toggling_repeat_track' };
+  function repeatNext() {
+    var cur = repeatState();
+    var d = playerDisallows(state.player);
+    for (var n = REPEAT_NEXT[cur]; n !== cur; n = REPEAT_NEXT[n]) {
+      if (!d || ![REPEAT_FLAG[cur], REPEAT_FLAG[n]].some(function (f) { return f && d[f] === true; })) return n;
+    }
+    return '';
+  }
+  // The reason a control is greyed out right now, or '' when it's allowed (or Spotify didn't say).
+  function notAllowed(flag) {
+    var d = playerDisallows(state.player);
+    return d && d[flag] === true ? (ALLOW_WHY[flag] || 'Spotify doesn’t allow that here') : '';
+  }
+  // A tap on a greyed-out control: say why and send nothing.
+  function allowTap(flag) {
+    var why = notAllowed(flag);
+    if (why) toast(why + '.');
+    return !why;
+  }
+  function lockCtl(n, why) {
+    if (!n) return;
+    if (why) {
+      if (n.getAttribute('aria-disabled') !== 'true') n.setAttribute('aria-disabled', 'true');
+      if (n.getAttribute('title') !== why) { n.setAttribute('title', why); n.setAttribute('aria-description', why); }
+    } else if (n.hasAttribute('aria-disabled')) {
+      n.removeAttribute('aria-disabled'); n.removeAttribute('title'); n.removeAttribute('aria-description');
+    }
+  }
+  // Greys out (or brings back) Previous, Next, Shuffle and Repeat on the bar and the Now Playing screen, the
+  // progress bar and Back 15 / Forward 30, and fills the one-line note under the Now Playing controls.
+  function paintAllowed() {
+    var p = state.player;
+    var why = { prev: notAllowed('skipping_prev'), next: notAllowed('skipping_next'), seek: notAllowed('seeking'),
+      shuf: notAllowed('toggling_shuffle'), rep: repeatNext() ? '' : ALLOW_WHY.toggling_repeat_context };
+    ['p', 'np'].forEach(function (pre) {
+      lockCtl($(pre + 'Prev'), why.prev);
+      lockCtl($(pre + 'Next'), why.next);
+      lockCtl($(pre + 'Shuffle'), why.shuf);
+      lockCtl($(pre + 'Repeat'), why.rep);
+    });
+    lockCtl($('npSeek'), why.seek);
+    lockCtl($('npBack15'), why.seek);
+    lockCtl($('npFwd30'), why.seek);
+    var no = [];
+    if (why.prev) no.push(ALLOW_NOUN.skipping_prev);
+    if (why.next) no.push(ALLOW_NOUN.skipping_next);
+    if (why.seek) no.push(ALLOW_NOUN.seeking);
+    if (why.shuf) no.push(ALLOW_NOUN.toggling_shuffle);
+    if (why.rep) no.push(ALLOW_NOUN.repeat);
+    var t = [];
+    var live = p && !p.idle;
+    if (live && p.currently_playing_type === 'ad') t.push('An ad is playing.');
+    if (live && p.device && p.device.is_private_session === true) t.push('Private session is on.');
+    if (no.length) t.push('Spotify doesn’t allow ' + (no.length > 1 ? no.slice(0, -1).join(', ') + ' or ' + no[no.length - 1] : no[0]) + ' here.');
+    var line = t.join(' ');
+    var n = $('npAllow');
+    if (n.textContent !== line) n.textContent = line;
+    n.hidden = !line;
+  }
+  // Songs Spotify marks as unplayable (is_playable: false, or restrictions.reason). Spotify adds these only to
+  // answers asked with a market, which the page doesn't pass, so most rows never carry them.
+  var NOPE_WHY = { market: 'Not available in your country', explicit: 'Explicit content is off', product: 'Not available on your plan' };
+  function unplayableWhy(t) {
+    if (!t) return '';
+    var r = t.restrictions && typeof t.restrictions === 'object' ? t.restrictions.reason : '';
+    if (r) return NOPE_WHY[r] || 'Not available';
+    return t.is_playable === false ? 'Not available' : '';
+  }
   // Play/Pause freezes or restarts the local progress estimate where it is.
   function togglePlay(ev) {
     if (state.playerIdle) { resumeFromIdle(ev); return; }   // asleep: resume the last playback (wakes Spotify per the wake mode)
@@ -3981,6 +4089,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     else command('PUT', '/me/player/play', function (x) { x.progress_ms = curPos(); state.playerAt = Date.now(); x.is_playing = true; });
   }
   function toggleShuffle() {
+    if (!allowTap('toggling_shuffle')) return;   // v2.32
     var on = !(state.player && state.player.shuffle_state);
     command('PUT', '/me/player/shuffle?state=' + on, function (x) { x.shuffle_state = on; });
   }
@@ -4373,6 +4482,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     markItem(item);   // v2.21: played state follows this phone's marks
     var opens = opensOnTap(item);
     var sub = (item.sub || '') + copySub(item);   // v2.24: " · You have a copy" / " · Copy" (shown only, never stored)
+    if (item.nope) sub += (sub ? ' · ' : '') + item.nope;   // v2.32
     var a = el('a', { class: 'item', href: item.url, 'data-verb': (opens ? 'Open “' : 'Play “') + item.name + '”', 'data-sub': sub, 'data-new': item.fresh ? '' : null }, [
       coverFor(item),
       el('div', { class: 'meta' }, [
@@ -4387,9 +4497,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       // v2.12: albums, playlists, Liked Songs, podcasts and artists open their list (Play is at the top there);
       // songs and episodes play. A release tapped in an artist view opens on top of it, so Back returns to the artist.
       if (opens) { ev.preventDefault(); openDetail(item, { push: !!state.detail }); return; }
+      if (item.nope) { ev.preventDefault(); toast(item.nope + '.'); return; }   // v2.32: Spotify says it can't play
       onItemClick(item, ev);
     });
-    var li = el('li', { class: 'row' }, [a]);
+    var li = el('li', { class: item.nope ? 'row nope' : 'row' }, [a]);   // v2.32: dimmed when Spotify says it can't play
     if (item.kind === 'track' || item.kind === 'episode') {
       li.setAttribute('data-puri', item.uri);
       var cur = playingUri();
@@ -5942,6 +6053,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // alone; Diagnostics → Settings → Clear saved lists removes them.
   // While catalog is paused: an album that isn't saved is found through search (GET /search, its own quota),
   // and a podcast that isn't saved shows your saved episodes (library) and the page's own history of it.
+  // v2.32: an album song also keeps is_playable: false and restrictions {reason (20 chars max)} when Spotify sent them
+  // (same caps as above; absent otherwise).
   var SL_ALBUM = 'lib-cache-album:', SL_SHOW = 'lib-cache-show:';
   var SL_ALBUM_MAX = 150, SL_SHOW_MAX = 60, SL_SHOW_EPS = 50;
   var SHOW_STALE_MS = 12 * 60 * 60 * 1000;
@@ -5995,10 +6108,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   // Minimal Spotify objects: what mapDetail and the rows need.
   function slTrack(t) {
-    return {
+    var o = {
       id: t.id, uri: t.uri, name: t.name || '', artists: (t.artists || []).map(function (a) { return { name: (a && a.name) || '' }; }),
       track_number: t.track_number || 0, disc_number: t.disc_number || 1, duration_ms: t.duration_ms || 0
     };
+    if (t.is_playable === false) o.is_playable = false;   // v2.32: kept only when Spotify says it can't play
+    if (t.restrictions && t.restrictions.reason) o.restrictions = { reason: String(t.restrictions.reason).slice(0, 20) };
+    return o;
   }
   function slEpisode(e) {
     var o = {
@@ -6907,7 +7023,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     max: npDuration, step: 5000,
     text: function (v) { return fmtTime(v) + ' of ' + fmtTime(npDuration()); },
     input: function (v) { paintTimes(v); },
-    commit: function (v) { seekTo(v); }
+    commit: function (v) { seekTo(v); },
+    locked: function () { return !!notAllowed('seeking'); }, onLocked: function () { allowTap('seeking'); }   // v2.32
   });
   volSlider = makeSlider($('npVol'), {
     max: function () { return 100; }, step: 5,
@@ -6947,8 +7064,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     $(pre + 'Play').innerHTML = ICON.pause;
     $(pre + 'Repeat').innerHTML = ICON.repeat;
     $(pre + 'Queue').innerHTML = ICON.queue;
-    $(pre + 'Prev').addEventListener('click', function () { command('POST', '/me/player/previous'); });
-    $(pre + 'Next').addEventListener('click', function () { command('POST', '/me/player/next'); });
+    $(pre + 'Prev').addEventListener('click', function () { if (allowTap('skipping_prev')) command('POST', '/me/player/previous'); });   // v2.32
+    $(pre + 'Next').addEventListener('click', function () { if (allowTap('skipping_next')) command('POST', '/me/player/next'); });
     $(pre + 'Play').addEventListener('click', togglePlay);
     $(pre + 'Shuffle').addEventListener('click', toggleShuffle);
     $(pre + 'Repeat').addEventListener('click', cycleRepeat);
