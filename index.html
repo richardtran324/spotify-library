@@ -237,9 +237,10 @@ ul.list.compact .cover.num { width: 28px; }
 }
 /* Device sheet */
 .sheet { position: fixed; inset: 0; z-index: 20; display: flex; align-items: flex-end; justify-content: center; }
-.sheet-back { position: absolute; inset: 0; background: var(--scrim); }
+.sheet-back { position: absolute; inset: 0; background: var(--scrim); touch-action: none; }   /* audit: a pan on the scrim doesn't scroll the page behind */
 .sheet-panel {
   position: relative; width: 100%; max-width: 640px; max-height: 80vh; overflow: auto;
+  overscroll-behavior: contain;   /* audit: scrolling past the panel's end doesn't move the page behind */
   background: var(--surface); border-radius: 16px 16px 0 0;
   padding: 16px max(16px, env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
   display: flex; flex-direction: column; gap: 10px;
@@ -365,6 +366,7 @@ header.top.detail .schips { display: none; }
 .snote { font-size: 0.8rem; color: var(--muted); margin: 6px 2px 0; }
 /* Full Now Playing screen: slides up over everything except the sheets (device picker, Up next) and the toast */
 body.npopen { overflow: hidden; }
+body.sheetopen { overflow: hidden; }   /* audit: the page stays still behind an open sheet (own class, so NP's lock is never touched) */
 .npfull {
   position: fixed; inset: 0; z-index: 15; background: var(--bg); color: var(--fg);
   overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
@@ -1779,6 +1781,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var mem = memNotes(ep.id);
     if (mem != null) saveNotes(ep.id, mem);   // opened: kept on the phone for next time
     $('notes').hidden = false;
+    syncSheetLock();
     renderNotes();
     $('notesBody').scrollTop = 0;
     $('notesClose').focus();
@@ -1786,6 +1789,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function closeNotes(restore) {
     if ($('notes').hidden) return;
     $('notes').hidden = true;
+    syncSheetLock();
     notesSeq++;
     notesView = null;
     var r = notesReturn;
@@ -3209,8 +3213,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     $('searchFirst').value = searchFirst();
     $('slInfo').textContent = slStatsText();   // v2.15
   }
-  function openDiag() { $('diag').hidden = false; paintWakeModes(); paintSettings(); $('diagClose').focus(); runDiag(); }
-  function closeDiag() { $('diag').hidden = true; }
+  function openDiag() { $('diag').hidden = false; syncSheetLock(); paintWakeModes(); paintSettings(); $('diagClose').focus(); runDiag(); }
+  function closeDiag() { $('diag').hidden = true; syncSheetLock(); }
   function runDiag() {
     var out = [];
     var pre = $('diagOut');
@@ -3682,11 +3686,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     body.appendChild(el('ul', { class: 'permlist' }, fs.allow.map(function (a) { return el('li', { text: a }); })));
     body.appendChild(el('p', { class: 'sethint', text: 'You come back here afterwards. If you cancel, nothing changes.' }));
     $('perm').hidden = false;
+    syncSheetLock();
     $('permGo').focus();
   }
   function closePerm() {
     if ($('perm').hidden) return;
     $('perm').hidden = true;
+    syncSheetLock();
     permView = null;
     var r = permReturn;
     permReturn = null;
@@ -3703,10 +3709,15 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     return !!(r && r.status === 403 && /scope|permission/i.test(JSON.stringify(r.json || '')) && FEATURE_SCOPES[f]);
   }
 
+  // audit: body.sheetopen locks the page behind while any sheet is open. Recomputed from the DOM after every open/close,
+  // so stacked sheets and every close path stay right; it never touches Now Playing's npopen.
+  function syncSheetLock() { document.body.classList.toggle('sheetopen', !!document.querySelector('.sheet:not([hidden])')); }
+
   // ---------- device sheet ----------
   function openSheet(from) {   // from: optional opener to return focus to (an event object is ignored)
     state.sheetReturn = (from && from.nodeType === 1) ? from : document.activeElement;
     $('sheet').hidden = false;
+    syncSheetLock();
     renderSheet();
     loadSheetDevices();
     $('sheetClose').focus();
@@ -3714,6 +3725,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function closeSheet() {
     if ($('sheet').hidden) return;
     $('sheet').hidden = true;
+    syncSheetLock();
     var r = state.sheetReturn;
     state.sheetReturn = null;
     if (r && r.focus && document.body.contains(r)) r.focus();
@@ -4166,6 +4178,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function openQueue(from) {
     queueReturn = (from && from.nodeType === 1) ? from : document.activeElement;
     $('queue').hidden = false;
+    syncSheetLock();
     $('qHide').checked = queueHide();
     loadQueue();
     $('queueClose').focus();
@@ -4173,6 +4186,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function closeQueue(restore) {
     if ($('queue').hidden) return;
     $('queue').hidden = true;
+    syncSheetLock();
     queueSeq++;
     var r = queueReturn;
     queueReturn = null;
@@ -5668,11 +5682,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     plEdit.view = view;
     plEdit.ret = (from && from.nodeType === 1) ? from : document.activeElement;
     $('plsheet').hidden = false;
+    syncSheetLock();
     renderPl();
   }
   function closePl() {
     if ($('plsheet').hidden) return;
     $('plsheet').hidden = true;
+    syncSheetLock();
     plEdit.view = null;
     var r = plEdit.ret;
     plEdit.ret = null;
