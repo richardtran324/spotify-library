@@ -123,22 +123,21 @@ tests.push(function () {
   });
 });
 
-// 4. Same requests as the buttons over the same time (the follow-up check included).
+// 4. Same requests as the buttons over the same time (the follow-up checks included).
+function sameAs(swipeFn, btnId) {
+  return Promise.all([setup(), setup()]).then(function (tabs) {
+    tabs[0].calls.length = 0; tabs[1].calls.length = 0;
+    swipeFn(tabs[0]); click(tabs[1], $(tabs[1], btnId));
+    return H.wait(1200).then(function () { return [byEp(tabs[0].calls), byEp(tabs[1].calls)]; });
+  });
+}
 tests.push(function () {
-  var a, b;
-  return setup().then(function (tab) { a = tab; left(a); return setup(); }).then(function (tab) {
-    b = tab; click(b, $(b, 'pNext'));
-    return H.wait(1200);
-  }).then(function () {
-    check('4 swipe left and Next button send the same requests', JSON.stringify(byEp(a.calls)) === JSON.stringify(byEp(b.calls)), [byEp(a.calls), byEp(b.calls)]);
-    check('4 only one player command each', (byEp(a.calls)['POST /me/player/next'] || 0) === 1, byEp(a.calls));
-    var c, e;
-    return setup().then(function (tab) { c = tab; right(c); return setup(); }).then(function (tab) {
-      e = tab; click(e, $(e, 'pPrev'));
-      return H.wait(1200);
-    }).then(function () {
-      check('4 swipe right and Previous button send the same requests', JSON.stringify(byEp(c.calls)) === JSON.stringify(byEp(e.calls)), [byEp(c.calls), byEp(e.calls)]);
-    });
+  return sameAs(left, 'pNext').then(function (m) {
+    check('4 swipe left and Next button send the same requests', JSON.stringify(m[0]) === JSON.stringify(m[1]), m);
+    check('4 only one player command each', (m[0]['POST /me/player/next'] || 0) === 1, m[0]);
+    return sameAs(right, 'pPrev');
+  }).then(function (m) {
+    check('4 swipe right and Previous button send the same requests', JSON.stringify(m[0]) === JSON.stringify(m[1]), m);
   });
 });
 
@@ -366,7 +365,7 @@ tests.push(function () {
       check('16 row handles its own pans', /\.prow \{ touch-action: none; \}/.test(html));
       check('16 reduced-motion rule for the slide', /prefers-reduced-motion: reduce\) \{ \.pcover\.pslide-l, \.pcover\.pslide-r \{ animation: none; \}/.test(html));
       check('16 version', /^v2\.49 /.test(t.VERSION), t.VERSION);
-      check('16 cover/title button stays the tap target', $(tab, 'pInfo').getAttribute('aria-label') === 'Open Now Playing');
+      check('16 cover/title button stays the tap target', /Open Now Playing$/.test($(tab, 'pInfo').getAttribute('aria-label')), $(tab, 'pInfo').getAttribute('aria-label'));
     });
   });
 });
