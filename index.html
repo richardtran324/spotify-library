@@ -818,7 +818,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     sheetLoading: false, sheetError: '', sheetReturn: null,
     wake: { running: false, timer: null, gen: 0 },
     podTab: 'latest',
-    latest: { cache: null, loading: false, error: '', triedAt: 0, seq: 0 },
+    latest: { cache: null, loading: false, error: '', triedAt: 0, seq: 0, stoppedHidden: false },
     // v2.13: request budget
     lastActiveAt: 0,   // last time something was seen playing (or a control was used): the player check slows after 10 min
     lastPollAt: 0,     // last /me/player request from this copy
@@ -2411,7 +2411,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // Home's "Latest episodes" and the Shows order read the cache only.
   function onLatestView() { return state.started && !state.detail && state.filter === 'podcasts' && state.podTab === 'latest'; }
   function onHome() { return state.started && !state.detail && state.filter === 'home'; }
-  function latestFresh(c) { return !!c && typeof c.at === 'number' && Date.now() - c.at < LATEST_MS && c.at < Date.now() + 60000; }
+  function latestFresh(c) { return !!c && !c.partial && typeof c.at === 'number' && Date.now() - c.at < LATEST_MS && c.at < Date.now() + 60000; }   // audit: partial = cut short by leaving the page
   function hidePlayed() { return get(K.hidePlayed) === true; }
   function rerenderLatest() {
     var onShows = state.started && !state.detail && state.filter === 'podcasts' && state.podTab === 'shows';
@@ -2436,7 +2436,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function refreshLatest() {
     var L = state.latest;
     if (coolBlocked('catalog')) return;
-    var last = Math.max(L.triedAt || 0, (L.cache && L.cache.at) || 0);
+    var last = Math.max(L.triedAt || 0, (L.cache && !L.cache.partial && L.cache.at) || 0);
     var wait = last + LATEST_MANUAL_MS - Date.now();
     if (wait > 0 && last <= Date.now()) {
       var m = Math.max(1, Math.ceil(wait / 60000));
@@ -2470,16 +2470,19 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var all = state.data && state.data.shows;
     if (L.loading || !all || !all.length || document.hidden || coolLeft('catalog')) return;
     var shows = latestShows(all);
-    L.loading = true; L.error = ''; L.triedAt = Date.now();
+    L.loading = true; L.error = ''; L.triedAt = Date.now(); L.stoppedHidden = false;
     var seq = ++L.seq;
-    var found = [], done = {}, failed = 0, next = 0, running = 0, stopped = false, signedOut = false, finished = false;
+    var found = [], done = {}, failed = 0, next = 0, running = 0, stopped = false, hiddenStop = false, signedOut = false, finished = false;
     function finish() {
       if (finished) return;
       finished = true;
       if (seq !== L.seq) return;
       L.loading = false;
       if (signedOut) { renderSignIn(); return; }
-      failed += shows.length - next;   // not asked (paused or hidden): they keep what the cache had
+      // audit: shows not asked because the page was hidden haven't failed: no note, and the list counts as not fresh,
+      // so the next open of Latest (or coming back to it) reloads it.
+      if (hiddenStop) { L.triedAt = 0; L.stoppedHidden = true; }
+      else failed += shows.length - next;   // not asked (paused): they keep what the cache had
       if (!Object.keys(done).length) {
         if (!stopped) L.error = 'Couldn’t load the latest episodes.';
       } else {
@@ -2503,13 +2506,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         var askedAt = {}, prevAsked = (L.cache && L.cache.askedAt) || {}, now = Date.now();
         all.forEach(function (s) { if (done[s.id]) askedAt[s.id] = now; else if (+prevAsked[s.id]) askedAt[s.id] = +prevAsked[s.id]; });
         L.cache = { at: now, items: found.slice(0, LATEST_KEEP).map(function (f) { return f.x; }), failed: failed, newest: newestByShow, asked: shows.length, askedAt: askedAt };
+        if (hiddenStop) L.cache.partial = true;
         set(K.latest, L.cache);
       }
       setTimeout(rerenderLatest, 0);
     }
     function launch() {
       while (running < LATEST_PARALLEL && next < shows.length && !stopped) {
-        if (document.hidden || signedOut || coolLeft('catalog')) { stopped = true; break; }   // nothing while hidden or paused
+        if (document.hidden || signedOut || coolLeft('catalog')) { stopped = true; hiddenStop = document.hidden && !signedOut && !coolLeft('catalog'); break; }   // nothing while hidden or paused
         one(next++);
       }
       if (running === 0) finish();
@@ -7024,6 +7028,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     resumePending(false);
     state.bgHoldUntil = Math.max(state.bgHoldUntil, Date.now() + 3000);
     bgReady();   // then recently played (Home), resume points, Latest (each only when due)
+    if (state.latest.stoppedHidden && onLatestView()) maybeLoadLatest();   // audit: finish a Latest reload cut short by leaving
     startNpTick();
   }
   document.addEventListener('visibilitychange', function () {
