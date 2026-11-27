@@ -426,6 +426,7 @@ a.devrow { text-decoration: none; }
 .devrow[aria-busy="true"] { opacity: 0.6; cursor: progress; }
 /* The song that's playing now, in any list */
 li.row.playing .name { color: var(--accent); }
+.updtag { font-weight: 700; color: var(--accent); }   /* v2.52: "Updated" on a playlist row or card */
 .nowtag, .newtag {
   display: inline-block; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--accent); margin-right: 6px;
@@ -892,6 +893,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     epMarks: 'lib-ep-marks',     // v2.21: {uri: {played, at, pos}}: Mark as played / unplayed, this phone only (400, 180 days)
     playLog: 'lib-play-log',     // v2.30: {e: [[playedAt ms, track id], …] newest first, t: {track id: [name, artists, album, cover]}}: songs from Recently played, kept past its last 50 (1,500 plays, 90 days; names cut at 80 characters with …; covers without the i.scdn.co prefix)
     rewind: 'lib-rewind',        // v2.44: 'off' turns off the rewind when the page resumes an episode; unset = on
+    plSeen: 'lib-pl-seen',       // v2.52: {playlist id: {s: snapshot, o: opened at (0 = not yet), f: first seen at[, e: snapshot after this page's own change]}} (500)
     ctxLast: 'lib-ctx-last',     // v2.23: {album or playlist URI | 'liked': {uri, id, name, positionMs, durMs, at}}: the last song heard in each list (40, 30 days)
     bookmarks: 'lib-bookmarks',  // v2.32: [{uri, id, kind: 'track'|'episode', name, by, img, url, pos, at}], newest first: Bookmarks saved on Now Playing (200, 2 years); local only
     introSkip: 'lib-intro-skip', // v2.33: {show URI: {s, at}}: Skip intro per podcast, s = 15|30|45|60|90|120 seconds, at = last set or used (100 shows, 365 days)
@@ -931,6 +933,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   var BM_MAX = 200;                           // v2.32: bookmarks kept…
   var BM_MS = 730 * 24 * 60 * 60 * 1000;      // …for at most 2 years
   var HOME_BM = 5;                            // v2.32: bookmarks shown on Home before "Show all"
+  var PLSEEN_MAX = 500;                       // v2.52: playlists whose snapshot the page remembers for "Updated"
   var MARK_MOVED_MS = 30000;                  // seen playing this far from where it was marked: played again, the mark goes
   // v2.14: no automatic resume-point checks (GET /episodes/{id}); Continue listening uses the page's own history.
   // v2.44: rewind on resume. When the page resumes an episode from its saved spot, it starts this much earlier,
@@ -4429,6 +4432,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     ev.preventDefault();
     item = introStart(item);   // v2.33: Skip intro (a start from 0:00 begins at the show's setting instead)
     if (coolBlocked('player')) return;   // v2.13: nothing is sent while playback is paused by Spotify
+    if (item && item.kind === 'playlist' && state.data && state.data.me && state.data.me.id && !knownListable(item)) markPlOpened(item);   // v2.52: Play counts as opened for someone else's playlist
     item = stampHeard(item);   // v2.44: when it was last heard, as of this tap (not a Skip intro start: exactPos)
     var mine = ++tapSeq;
     if (deviceFresh()) { playNow(item, opts); return; }
@@ -4920,7 +4924,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.51 (2026-11-27)';
+  var VERSION = 'v2.52 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -5002,6 +5006,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     line('Appearance: ' + themeMode() + ' · Search shows first: ' + searchFirst() + ' · Compact player: ' + (compactPlayer() ? 'on' : 'off') + ' · ＋ on rows: ' + (rowPlusShown() ? 'shown' : 'hidden'));   // v2.49, v2.51
     line('Pinned: ' + readPins().length + ' · Queued with ＋ (24 h): ' + readQueued().length + ' · Recent searches: ' + recentSearches().length);
     line('Up next “Next from”: uses song lists already loaded, no requests · Liked Songs known this visit: ' + upnLikedN);   // v2.41
+    line(plSeenDiag());   // v2.52
     line('Playlist copies linked: ' + Object.keys(readCopies()).length + (readCopyWatch() ? ' · watching for a new copy' : ''));   // v2.24
     line('Latest episodes: ' + (lc ? lc.items.length + ' cached, updated ' + ago(new Date(lc.at).toISOString()) + (lc.failed ? ', ' + lc.failed + ' show(s) failed' : '') +
       (lc.quiet ? ', no new episodes by the counts' : '') + (lc.left ? ', ' + lc.left + ' left for next time' : '') : 'not loaded') +
@@ -6402,6 +6407,118 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       .map(function (p) { return lib[p.uri] || p; });
   }
 
+  // ---------- v2.52: "Updated" playlists (stored on this phone only; nothing is sent) ----------
+  // /me/playlists already carries each playlist's snapshot_id (mapPlaylist keeps it as snap). The page remembers the
+  // snapshot it saw when you last opened a playlist (someone else's: when you tapped Show songs or Play). A later
+  // library load with another snapshot marks the playlist "Updated" (Playlists list, Home's Your playlists, Pinned)
+  // until you open it. A playlist seen for the first time is only recorded. Playlists owned by "spotify" are left out.
+  // Inside your own and collaborative playlists, songs added since the open before get the New dot.
+  var plSeen = null;     // v2.52: memory copy of K.plSeen (lasts the visit even if storage refuses it)
+  var plNewSince = {};   // v2.52: playlist id -> {from, to}: songs added in between get the New dot (this visit)
+  function plSeenOk(v) {
+    return !!v && typeof v === 'object' && typeof v.s === 'string' && !!v.s && typeof v.o === 'number' && typeof v.f === 'number' &&
+      (v.e === undefined || typeof v.e === 'string');
+  }
+  function loadPlSeen() {
+    var o = get(K.plSeen), out = {};
+    if (o && typeof o === 'object' && !Array.isArray(o)) Object.keys(o).forEach(function (id) { if (plSeenOk(o[id])) out[id] = o[id]; });
+    return out;
+  }
+  function readPlSeen() { if (!plSeen) plSeen = loadPlSeen(); return plSeen; }
+  function plSeenAt(v) { return Math.max(v.o || 0, v.f || 0); }
+  // Ids to keep, best first: playlists in your library, then the most recently opened or first seen.
+  function plSeenOrder(m) {
+    var lib = {};
+    ((state.data && state.data.playlists) || []).forEach(function (p) { if (p && p.id) lib[p.id] = true; });
+    return Object.keys(m).sort(function (a, b) { return ((lib[b] ? 1 : 0) - (lib[a] ? 1 : 0)) || (plSeenAt(m[b]) - plSeenAt(m[a])); });
+  }
+  function plSeenPick(m, ids) { var out = {}; ids.forEach(function (id) { out[id] = m[id]; }); return out; }
+  // Re-reads storage (another tab's opens are kept), applies fn, keeps PLSEEN_MAX and writes. Storage full: tries
+  // again with the best half; still refused, the change lasts this visit only.
+  function changePlSeen(fn) {
+    var mem = readPlSeen(), m = loadPlSeen();
+    Object.keys(mem).forEach(function (id) { if (!m[id] || plSeenAt(mem[id]) >= plSeenAt(m[id])) m[id] = mem[id]; });
+    fn(m);
+    var ids = plSeenOrder(m).slice(0, PLSEEN_MAX);
+    plSeen = plSeenPick(m, ids);
+    try { localStorage.setItem(K.plSeen, JSON.stringify(plSeen)); return true; } catch (e) {}
+    try { localStorage.setItem(K.plSeen, JSON.stringify(plSeenPick(m, ids.slice(0, Math.ceil(ids.length / 2))))); } catch (e2) {}
+    return false;
+  }
+  function plCounts(p) { return !!(p && p.kind === 'playlist' && p.id && p.snap && p.ownerId !== 'spotify'); }
+  // After a library load: playlists seen for the first time are recorded, not marked.
+  function notePlaylists(d) {
+    var m = readPlSeen(), now = Date.now();
+    var add = ((d && d.playlists) || []).filter(function (p) { return plCounts(p) && !m[p.id]; });
+    if (!add.length) return;
+    changePlSeen(function (x) { add.forEach(function (p) { if (!x[p.id]) x[p.id] = { s: p.snap, o: 0, f: now }; }); });
+  }
+  function plUpdated(p) {
+    if (!plCounts(p)) return false;
+    var v = readPlSeen()[p.id];
+    return !!v && p.snap !== v.s && p.snap !== v.e;
+  }
+  // Opened (or Show songs / Play on someone else's): remember the snapshot now; the window since the open before
+  // gives the New dots for this visit. The library's copy holds the latest snapshot the page knows.
+  function markPlOpened(p) {
+    if (!p || p.kind !== 'playlist' || !p.id) return;
+    var lp = libraryPlaylist(p.id), snap = (lp && lp.snap) || p.snap || '';
+    if (!snap || p.ownerId === 'spotify' || (lp && lp.ownerId === 'spotify')) return;
+    var now = Date.now(), v = readPlSeen()[p.id];
+    plNewSince[p.id] = { from: v ? (v.o || v.f) : 0, to: now };
+    changePlSeen(function (m) {
+      var old = m[p.id], e = old && old.e && snap === old.s ? old.e : undefined;   // a library copy from before this page's own change
+      m[p.id] = { s: snap, o: now, f: (old && old.f) || now };
+      if (e) m[p.id].e = e;
+    });
+    clearUpdTags(p.id);
+  }
+  // A change this page made (add, move, remove): its new snapshot doesn't count as Updated, unless the playlist was
+  // already Updated (someone else's change is still unseen).
+  // The library's copy (and the saved library) takes the new snapshot, so an open before the next load stores it.
+  function plSeenEdited(id, snap) {
+    if (!snap) return;
+    var lp = libraryPlaylist(id), v = readPlSeen()[id], was = lp && lp.snap, dt = state.detail;
+    if (lp) lp.snap = snap;
+    if (isEditDetail(dt, id) && dt.item !== lp && dt.item.snap) dt.item.snap = snap;
+    if (lp && state.data && (state.data.playlists || []).indexOf(lp) !== -1) set(K.cache, state.data);
+    if (!v || !was || (was !== v.s && was !== v.e)) return;   // unknown, or already Updated by someone else's change
+    changePlSeen(function (m) { if (m[id]) m[id].e = snap; });
+  }
+  function plRowExtras(parent, it, m) {
+    var w = plNewSince[parent.id], t = it.added_at ? Date.parse(it.added_at) : NaN;
+    if (w && w.from > 0 && t > w.from && t <= w.to && (isOwn(parent) || parent.collaborative)) m.fresh = true;
+    var me = state.data && state.data.me;
+    if (parent.collaborative && me && me.id && it.added_by && it.added_by.id) m.addedBy = it.added_by.id === me.id ? 'you' : 'other';
+  }
+  function addedBySub(item) {
+    if (!item || item.kind !== 'track' || !item.addedBy) return '';
+    return item.addedBy === 'you' ? ' · Added by you' : ' · Added by someone else';
+  }
+  // The second line with an accent "Updated" first.
+  function updSub(item, sub, tag, cls) {
+    return el(tag || 'div', { class: cls || 'sub' }, [el('span', { class: 'updtag', 'data-pid': item.id, text: 'Updated' }), document.createTextNode(sub ? ' · ' + sub : '')]);
+  }
+  // Takes the label off rows and cards already drawn (Play on a Pinned card, Show songs), without a redraw.
+  function clearUpdTags(id) {
+    var tags = document.querySelectorAll('.updtag[data-pid="' + String(id).replace(/[^A-Za-z0-9]/g, '') + '"]');
+    for (var i = 0; i < tags.length; i++) {
+      var box = tags[i].parentNode;
+      box.removeChild(tags[i]);
+      box.textContent = box.textContent.replace(/^ · /, '');
+      var a = box.closest('a');
+      if (!a) continue;
+      if (a.hasAttribute('data-sub')) { a.setAttribute('data-sub', a.getAttribute('data-sub').replace(/^Updated · /, '')); paintRowLabel(a, false); }
+      else a.setAttribute('aria-label', (a.getAttribute('aria-label') || '').replace(', Updated', ''));
+    }
+  }
+  function plSeenDiag() {
+    var pls = (state.data && state.data.playlists) || [];
+    var withSnap = pls.filter(function (p) { return p && p.snap; }).length;
+    return 'Playlists with a snapshot id: ' + withSnap + ' of ' + pls.length + ' · Updated since opened: ' + pls.filter(plUpdated).length +
+      ' · Remembered on this phone: ' + Object.keys(readPlSeen()).length + ' (up to ' + PLSEEN_MAX + ')';
+  }
+
   // ---------- rendering ----------
   function heartBtn(item) {
     var b = el('button', { class: 'act heart', type: 'button', 'data-uri': item.uri, 'data-name': item.name, 'data-kind': item.kind, 'aria-pressed': 'false' });
@@ -6608,12 +6725,14 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   function itemRow(item) {
     markItem(item);   // v2.21: played state follows this phone's marks
     var opens = opensOnTap(item);
-    var sub = (item.sub || '') + copySub(item);   // v2.24: " · You have a copy" / " · Copy" (shown only, never stored)
+    var sub = (item.sub || '') + copySub(item) + addedBySub(item);   // v2.24: " · You have a copy" / " · Copy"; v2.52: " · Added by …" (shown only, never stored)
     if (item.nope) sub += (sub ? ' · ' : '') + item.nope;   // v2.35
     var ex = item.kind === 'track' && item.ex;   // v2.38: "E" badge (drawn by CSS, so the row's text stays the same)
     var nn = item.kind === 'show' ? showNew(item.id) : 0;   // v2.45: "2 new" since you last opened it
     var subEl = el('div', { class: ex ? 'sub ex' : 'sub', text: sub });
     if (nn) { subEl.insertBefore(el('span', { class: 'newtag', text: newText(nn) }), subEl.firstChild); sub = newText(nn) + (sub ? ' · ' + sub : ''); }
+    var upd = plUpdated(item);   // v2.52: "Updated" since you last opened it (playlists; never with a show's "new")
+    if (upd) { subEl = updSub(item, sub, 'div', subEl.className); sub = 'Updated' + (sub ? ' · ' + sub : ''); }
     var a = el('a', { class: 'item', href: item.url, 'data-verb': (opens ? 'Open “' : 'Play “') + item.name + '”', 'data-sub': sub, 'data-new': item.fresh ? '' : null, 'data-ex': ex ? '' : null }, [
       coverFor(item),
       el('div', { class: 'meta' }, [
@@ -6908,11 +7027,12 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       var opens = !!host || opensOnTap(i);
       var nn = shown.kind === 'show' ? showNew(shown.id) : 0;   // v2.45: a dot, and "2 new" on a Pinned card
       if (nn && !host) sub = newText(nn);
-      var a = el('a', { class: 'clcard', href: shown.url, 'aria-label': (opens ? 'Open “' : 'Play “') + shown.name + '”' + (nn && host ? ', ' + newText(nn) : '') + (sub ? ', ' + sub : '') }, [
+      var upd = !host && plUpdated(i);   // v2.52: Pinned and Your playlists cards
+      var a = el('a', { class: 'clcard', href: shown.url, 'aria-label': (opens ? 'Open “' : 'Play “') + shown.name + '”' + (nn && host ? ', ' + newText(nn) : '') + (upd ? ', Updated' : '') + (sub ? ', ' + sub : '') }, [
         coverFor(shown),
         nn ? el('span', { class: 'clname' }, [el('span', { class: 'newdot', 'aria-hidden': 'true' }), document.createTextNode(shown.name)])
           : el('span', { class: 'clname', text: shown.name }),
-        el('span', { class: 'sub' + (nn && !host ? ' newsub' : ''), text: sub })
+        upd ? updSub(i, sub, 'span') : el('span', { class: 'sub' + (nn && !host ? ' newsub' : ''), text: sub })
       ]);
       a.addEventListener('click', function (ev) {
         if (opens) { ev.preventDefault(); openDetail(shown); return; }
@@ -7321,6 +7441,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     var sub = t.type === 'episode' ? ((t.show && t.show.name) || 'Podcast') : names(t.artists) + (t.album && t.album.name ? ' · ' + t.album.name : '');
     var m = mapTrack(t, { sub: sub, ctx: parent.kind === 'liked' ? likedCtx() : parent.uri });
     if (m && it.added_at) m.added = it.added_at;   // when it was added to the playlist (or liked), for sorting
+    if (m && parent.kind === 'playlist') plRowExtras(parent, it, m);   // v2.52: New dot, Added by you / someone else
     if (m && t.album && t.album.name) m.albumName = t.album.name;   // v2.22: for Find in list
     if (m && t.album) m.released = relDay(t.album.release_date);   // v2.34: for the Release date sort
     if (m && parent.kind === 'liked' && state.saved[m.uri] === undefined) state.saved[m.uri] = true;
@@ -7358,6 +7479,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       d.returnScroll = y; d.pushed = false;
     }
     state.detail = d;
+    if (item.kind === 'playlist' && canList(item)) markPlOpened(item);   // v2.52: before the rows are mapped (New dots)
     if (!d.pushed && opts.kpEntry === 'exists') d.pushed = true;   // v2.42: its entry survived the reload, behind this one
     else if (!d.pushed && opts.kpEntry === 'replace') {   // v2.42: the reloaded entry becomes this view's again
       try { history.replaceState({ detail: true, depth: state.detailStack.length + 1 }, '', '#detail'); d.pushed = true; } catch (e) { d.pushed = false; }
@@ -7481,6 +7603,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   // v2.19: an album's "Album · Artist, Artist" line, with each artist's name a button to the artist page.
   // Back from the artist returns to this album. Albums opened from an artist page show the year instead.
   function detailSub(it) {
+    if (plUpdated(it)) return updSub(it, it.sub || '');   // v2.52: someone else's playlist, until Show songs or Play
     var refs = it.kind === 'album' && it.byArtists;
     if (!refs || !refs.length || String(it.sub || '').indexOf('Album · ') !== 0) return el('div', { class: 'sub', text: it.sub });
     var box = el('div', { class: 'sub' }, [document.createTextNode('Album · ')]);
@@ -7996,7 +8119,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   // previews unless Safari is signed in to Spotify; Play and Shuffle above still play on the phone.
   function showSongsButton(d) {
     var b = el('button', { class: 'btn secondary', type: 'button', text: 'Show songs' });
-    b.addEventListener('click', function () { d.embed = true; paintDetailFoot(); });
+    b.addEventListener('click', function () { d.embed = true; markPlOpened(d.item); paintDetailFoot(); });   // v2.52: counts as opened
     return b;
   }
   function pageIsDark() {
@@ -8490,6 +8613,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       if (d.snap !== undefined) d.snap = snap;   // audit: an add doesn't make old positions current (editStale); the kept pages hold its snapshot
       if (state.detail === d && $('dlist')) { paintDetailList(); paintDetailSort(); paintDetailFoot(); }
     }
+    plSeenEdited(id, snap);   // v2.52: this page's own change doesn't mark it Updated
     if (total == null) { var lp = libraryPlaylist(id); if (lp && typeof lp.count === 'number') total = lp.count + 1; }
     setPlCount(id, total);
   }
@@ -8645,6 +8769,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       return raw;
     }, 0, snap);
     d.snap = snap;
+    plSeenEdited(d.item.id, snap);   // v2.52
   }
   // Spotify removes every copy. Copies in pages not loaded yet come after the loaded ones, so the next page's
   // offset moves back by the loaded copies only.
@@ -8658,6 +8783,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     if (typeof d.total === 'number') d.total = Math.max(d.items.length, d.total - gone.length);
     var res = rewriteMemo(d.item.id, function (raw) { return raw.filter(function (x) { return rawUri(x) !== uri; }); }, 0, snap);
     d.snap = snap;
+    plSeenEdited(d.item.id, snap);   // v2.52
     setPlCount(d.item.id, typeof d.total === 'number' ? d.total : res ? res.total : null);
   }
   $('plBack').addEventListener('click', function () { closePl(); });
@@ -9109,7 +9235,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     del(K.plSaved);
     return false;
   }
-  function plPack(x) {
+  function plPack(x, me) {
     var t = x && (x.item || x.track);
     if (!x || x.is_local || !t || !t.id || !t.uri) return 0;   // keeps its place, so positions stay right for Edit
     var ep = t.type === 'episode', o = { i: String(t.id), n: t.name || '', d: t.duration_ms || 0 };
@@ -9125,6 +9251,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     if (t.explicit) o.ex = 1;   // #34: E badge
     if (t.restrictions && t.restrictions.reason) o.x = String(t.restrictions.reason).slice(0, 20);
     if (x.added_at) o.t = x.added_at;
+    if (me && x.added_by && x.added_by.id) o.b = x.added_by.id === me ? 1 : 2;   // v2.52: collaborative only: Added by you (1) / someone else (2)
     return o;
   }
   function plUnpack(o) {
@@ -9136,7 +9263,9 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     if (o.p === 0) t.is_playable = false;   // #51
     if (o.ex) t.explicit = true;   // #34
     if (o.x) t.restrictions = { reason: o.x };
-    return { added_at: o.t || null, is_local: false, track: t };
+    var r = { added_at: o.t || null, is_local: false, track: t }, me = state.data && state.data.me;
+    if ((o.b === 1 || o.b === 2) && me && me.id) r.added_by = { id: o.b === 1 ? me.id : '' + me.id + ':other' };   // v2.52
+    return r;
   }
   // The pages kept this visit become the saved copy, labelled with the snapshot known before page 1 was asked
   // (plLabel). Pages changed by an edit lose that label (rewriteMemo makes new ones), so they're never saved again
@@ -9150,8 +9279,10 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     var map = plRead();
     var raw = [];
     pages.forEach(function (p) { raw = raw.concat(p.r.json.items); });
+    var lpc = libraryPlaylist(id), me0 = state.data && state.data.me;
+    var collabMe = lpc && lpc.collaborative && me0 && me0.id ? me0.id : '';   // v2.52: who added each song, for Added by
     var at = Date.now();
-    map[id] = { s: label, at: at, o: at, t: typeof p0.json.total === 'number' ? Math.max(p0.json.total, raw.length) : raw.length, n: raw.slice(0, PL_SAVE_SONGS).map(plPack) };
+    map[id] = { s: label, at: at, o: at, t: typeof p0.json.total === 'number' ? Math.max(p0.json.total, raw.length) : raw.length, n: raw.slice(0, PL_SAVE_SONGS).map(function (x) { return plPack(x, collabMe); }) };
     if (plWrite(map, id)) { if (on) on.plSavedAt = at; }
     else if (on) on.plSavedAt = 0;
   }
@@ -9917,6 +10048,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       state.libAt = Date.now();   // v2.45: when the podcast counts were read
       syncSeen();   // v2.45: "N new" starting points
       matchCopies(d);   // v2.24: link a new copy, drop links to deleted copies (no requests)
+      notePlaylists(d);   // v2.52: records playlists seen for the first time (no requests)
       seedSaved(d, true);
       renderList();
       paintHearts();
