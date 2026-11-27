@@ -51,7 +51,7 @@ Optional: Share → **Add to Home Screen**. The page brings its own icon (`apple
   - **Back** returns to the link; pressing **Done** (or **Search**) on the keyboard opens it again. Clear the box to get your list or search back.
   - Short `spotify.link` links can't be opened (the page would need to follow Spotify's redirect); the page says so and offers **Open in Spotify**. Links to anything else (Liked Songs, audiobooks, profiles, other sites such as YouTube) show a short message and are never searched by name.
   - The page never reads the clipboard on its own; paste into the box. Nothing is stored on the phone.
-- **Compact view (v2.43):** more of the list fits on screen.
+- **Compact view (v2.51):** more of the list fits on screen.
   - The filter chips sit in one row that scrolls sideways instead of wrapping onto a second row. The chip you picked is always scrolled into view (including Search Spotify, the last one).
   - Scrolling down a list (including a song list) slides the **Library** title row and the status line out of view; the search box and chips stay. Scrolling up, or getting near the top, brings them back. They stay put while you're typing (the keyboard is up), and they always show while the wake message ("Press play in Control Center…", "Spotify didn't wake up yet") is up. With **Reduce Motion** on, they appear and disappear instantly instead of sliding.
   - **Compact player** (**Diagnostics → Settings**, off by default): the Now Playing bar becomes one row: cover, title, **Play/Pause** and **Next**. Up next, the heart, Shuffle, Previous and Repeat stay on the full **Now Playing** screen (tap the title). The space kept free at the bottom of the page, and toasts, follow the shorter bar. While Spotify is asleep, the bar's message is cut to one line; the full message is on the Now Playing screen. The setting is stored only on this phone; if Safari won't store it, it applies until you reload and the page says so.
@@ -257,7 +257,7 @@ Add `?play=…` to the page's address and the page plays that item when it opens
 
 ### Appearance
 
-**Diagnostics → Settings → Appearance:** **Match phone** (default), **Light** or **Dark**. Light and Dark apply right away and override the phone's setting. **Compact player** (v2.43, below Appearance) makes the Now Playing bar one row; see **Compact view** above. Diagnostics' report lists it after Appearance.
+**Diagnostics → Settings → Appearance:** **Match phone** (default), **Light** or **Dark**. Light and Dark apply right away and override the phone's setting. **Compact player** (v2.51, below Appearance) makes the Now Playing bar one row; see **Compact view** above. Diagnostics' report lists it after Appearance.
 
 ### Spotify's request limit (v2.13, per part since v2.14)
 
@@ -348,6 +348,7 @@ Album and podcast details are the part of Spotify's quota that runs out first, s
 - **v2.43** adds the **No internet** line, a short wait before the first check when you come back to the tab, and plain-words errors with **Try again** (see **No internet and errors in plain words**). No new permissions.
 - **v2.44** adds **Rewind on resume**: an episode the page picks back up from where you stopped starts 10 to 30 s earlier, depending on how long ago the page last heard it, and the message says how far back; it can be turned off in Diagnostics → Settings (see **Podcast listening history**). No extra requests and no new permissions.
 - **v2.45** makes Latest ask only the podcasts that have new episodes (from the episode counts your library already includes), while still reaching every podcast within a few reloads, shows **2 new** on podcasts that published since you last opened them, and holds the page's automatic album and podcast lookups when the hour's budget is nearly used (see **Podcasts** and **Spotify's request limit**). It stores `lib-show-seen` (each saved podcast's count when you last opened it) and `lib-cat-meter` (lookups per minute, last hour), both a few KB at most. No new permissions.
+- **v2.51** adds **Compact view**: the filter chips in one row that scrolls sideways, a title row and status line that hide while you scroll down, and an optional **Compact player** (one-row Now Playing bar) in Diagnostics → Settings (see **Compact view**). No requests and no new permissions.
 - If Spotify doesn't let the page check which items are already saved, hearts start outlined and a tap saves the item. A check that only fails (no connection, or a Spotify error) doesn't count: it is tried again when the item shows, at most once a minute.
 - **Refresh** reloads your library and checks for an open Spotify device (whichever isn't paused by Spotify), and forgets the album and podcast pages kept for this visit (the lists saved on the phone stay). The page also checks each time you come back to it (devices at most once every 15 seconds).
 - To update the page later, upload the new `index.html` to the same repo (it replaces the old one).

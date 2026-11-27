@@ -88,7 +88,7 @@ header.top {
   border-bottom: 1px solid var(--line);
 }
 header.top.detail .search, header.top.detail .filters { display: none; }
-/* v2.43: scrolling down a list slides the title row and status line out of view (header.top.slim; --slim-h is their
+/* v2.51: scrolling down a list slides the title row and status line out of view (header.top.slim; --slim-h is their
    height, set by setSlim); scrolling up brings them back. Only the sticky offset changes, so the list doesn't jump. */
 header.top { transition: top 0.2s ease-out; }
 header.top.slim { top: calc(env(safe-area-inset-top, 0px) - var(--slim-h, 0px)); }
@@ -117,7 +117,7 @@ h1 { font-size: 1.5rem; margin: 0; letter-spacing: -0.01em; }
   padding: 10px 12px; border-radius: 10px;
   border: 1px solid var(--line); background: var(--surface); color: var(--fg);
 }
-/* v2.43: the filter chips sit in one row that scrolls sideways (no wrap); setFilter keeps the selected chip in view.
+/* v2.51: the filter chips sit in one row that scrolls sideways (no wrap); setFilter keeps the selected chip in view.
    Each chip's tap area is 44px tall; the transparent top and bottom borders keep the pill itself 36px. */
 .filters {
   display: flex; gap: 8px; margin: 6px -16px 0; padding: 0 16px; flex-wrap: nowrap; position: relative;
@@ -129,7 +129,7 @@ h1 { font-size: 1.5rem; margin: 0; letter-spacing: -0.01em; }
   flex: none; white-space: nowrap; min-height: 44px;
   border-top: 4px solid transparent; border-bottom: 4px solid transparent;
 }
-.filters .chip[aria-pressed] { background-clip: padding-box; }   /* v2.43: beats the background shorthand of the pressed style */
+.filters .chip[aria-pressed] { background-clip: padding-box; }   /* v2.51: beats the background shorthand of the pressed style */
 .chip {
   font: inherit; font-size: 0.9rem; font-weight: 600;
   padding: 6px 13px; border-radius: 999px; border: 0;
@@ -552,7 +552,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
 .coolbar .cleft { color: var(--warn); font-weight: 700; font-variant-numeric: tabular-nums; margin-left: auto; }
 /* v2.43: no internet: one quiet line in place of repeated "Load failed" toasts */
 .netbar { color: var(--muted); }
-/* v2.43: Compact player (Diagnostics → Settings, off by default): the Now Playing bar is one row (cover, title,
+/* v2.51: Compact player (Diagnostics → Settings, off by default): the Now Playing bar is one row (cover, title,
    Play/Pause, Next); Up next, the heart, Shuffle, Previous and Repeat stay on the full Now Playing screen.
    Bar height: 8 + 48 + 8 + 1 = 65px, so the body padding and the toast offset drop by the same 44px as the bar. */
 body.compact-player .pinner { display: flex; align-items: center; gap: 8px; padding-bottom: 8px; }
@@ -839,7 +839,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     queued: 'lib-queued',        // [{uri, at}]: what this page added to the queue with ＋ (last 24 h)
     queueHide: 'lib-queue-hide', // false shows the whole queue; anything else hides Spotify's own additions
     theme: 'lib-theme',          // 'light' | 'dark'; unset = match the phone
-    compactPlayer: 'lib-compact-player', // v2.43: true = one-row Now Playing bar (Diagnostics → Settings); unset = the usual two rows
+    compactPlayer: 'lib-compact-player', // v2.51: true = one-row Now Playing bar (Diagnostics → Settings); unset = the usual two rows
     searchFirst: 'lib-search-first', // the group shown first in Search Spotify → All
     lastplay: 'lib-lastplay',    // v2.10: {item, context, positionMs, deviceId, at[, shuffle, repeat, frozenAt]}: the last song or episode seen playing
     epHistory: 'lib-ep-history', // v2.11: [{uri, id, name, show:{id, name, images}, duration_ms, positionMs, played, at[, checkedAt]}], newest first
@@ -1473,7 +1473,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       $('cool').hidden = false;
       coolTimer = setTimeout(paintCool, (left % 1000 || 1000) + 30);
     } else $('cool').hidden = true;
-    slimMeasure();   // v2.43
+    slimMeasure();   // v2.51
     var pt = paused.indexOf('player') !== -1 ? coolText('player') : '';
     if (pt) { if (n.textContent !== pt) n.textContent = pt; n.hidden = false; } else n.hidden = true;
     var ended = [];
@@ -4113,7 +4113,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       btn.setAttribute('aria-label', 'Choose a device');
     }
     btn.hidden = false;
-    slimMeasure();   // v2.43
+    slimMeasure();   // v2.51
   }
   function likedCtx() { var me = state.data && state.data.me; return me && me.id ? 'spotify:user:' + me.id + ':collection' : null; }
   // kind 'resume' (v2.10) is the last song or episode, played again after Spotify went to sleep.
@@ -4349,7 +4349,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     $('wakeRetry').hidden = !o.retry;
     $('wakeOpen').hidden = !o.open;
     paintIdle();   // the header is covered while Now Playing is open, so the asleep line repeats the wait message
-    if (text) setSlim(false);   // v2.43: the wake message is never scrolled out of view
+    if (text) setSlim(false);   // v2.51: the wake message is never scrolled out of view
   }
   function stopWake() {
     var w = state.wake;
@@ -4672,7 +4672,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     else ok();
   }
 
-  // ---------- v2.43: compact view (chip strip, header that hides on scroll) ----------
+  // ---------- v2.51: compact view (chip strip, header that hides on scroll) ----------
   // Only the chip strip scrolls sideways (scrollLeft); the page itself never moves. The strip is position: relative,
   // so a chip's offsetLeft is measured inside it and doesn't change as it scrolls.
   function chipIntoView(c) {
@@ -4683,8 +4683,8 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     else if (r + pad > sl + w) strip.scrollLeft = r + pad - w;
   }
   // Scrolling down hides the title row and status line (header.top.slim); scrolling up shows them again.
-  // They stay put while a text field has focus (the iPhone keyboard is up), while Now Playing is open, and while
-  // keyboard focus is on a button in them; they come back for the wake message and near the top of the page.
+  // They stay put while a text field has focus (the iPhone keyboard is up) and while Now Playing is open; they come
+  // back for the wake message, near the top of the page, and when focus moves onto one of their buttons.
   var SLIM_MIN_Y = 120;   // closer to the top than this: always shown
   var SLIM_STEP = 12;     // px of scrolling in one direction before the header changes (ignores small jitters)
   var slim = { on: false, lastY: 0, acc: 0 };
@@ -4693,10 +4693,11 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     var a = document.activeElement;
     if (!a || a === document.body) return false;
     if (a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.isContentEditable) return true;
-    if (a.tagName === 'INPUT' && !/^(checkbox|radio|range|button|submit|reset|color|file|image)$/i.test(a.type || '')) return true;
-    var top = $('top');
-    return !!(top.querySelector('.toprow').contains(a) || $('status').contains(a));
+    return a.tagName === 'INPUT' && !/^(checkbox|radio|range|button|submit|reset|color|file|image)$/i.test(a.type || '');
   }
+  // v2.51: focus on a title-row or status button (Tab, or a sheet giving focus back to Diagnostics or the device
+  // button when it closes) doesn't freeze the header; focus moving into them shows them instead (focusin below).
+  function slimInHeader(n) { return !!(n && n.nodeType === 1 && ($('top').querySelector('.toprow').contains(n) || $('status').contains(n))); }
   function slimHeight() {   // header top to the bottom of the status line (includes the top padding and safe area)
     var st = $('status');
     return Math.max(0, Math.round(st.offsetTop + st.offsetHeight));
@@ -4718,7 +4719,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     if (max && y > max) y = max;   // Safari's bounce at either end isn't a change of direction
     return y;
   }
-  // v2.43 review: the status line changes length (device name, error text, wrapping), so --slim-h is measured again
+  // v2.51 review: the status line changes length (device name, error text, wrapping), so --slim-h is measured again
   // whenever it may have changed while the header is slim (showStatus, paintCool, resize, ResizeObserver).
   function slimMeasure() {
     if (slim && slim.on) $('top').style.setProperty('--slim-h', slimHeight() + 'px');
@@ -4727,7 +4728,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     var y = slimY();
     var dy = y - slim.lastY;
     slim.lastY = y;
-    // v2.43 review: near the top (or with the wake message up) it always shows, even while typing: a filter that
+    // v2.51 review: near the top (or with the wake message up) it always shows, even while typing: a filter that
     // shrinks the list moves Safari to the top, and a short list could never scroll up to bring the header back.
     if (y <= SLIM_MIN_Y || !$('wake').hidden) { slim.acc = 0; setSlim(false); return; }
     if (!dy) return;
@@ -4739,7 +4740,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.43 (2026-11-27)';
+  var VERSION = 'v2.51 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -4769,9 +4770,9 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     document.querySelectorAll('input[name="rewind"]').forEach(function (r) { r.checked = r.value === rw; });
     $('searchFirst').value = searchFirst();
     $('slInfo').textContent = slStatsText();   // v2.15
-    $('compactPlayer').checked = compactPlayer();   // v2.43
+    $('compactPlayer').checked = compactPlayer();   // v2.51
   }
-  // v2.43: Compact player. Stored as true, or removed when off. If this phone's storage won't take it (full, or
+  // v2.51: Compact player. Stored as true, or removed when off. If this phone's storage won't take it (full, or
   // blocked), it still applies until the page reloads, and a toast says so.
   var compactMem = null;
   function compactPlayer() { return compactMem !== null ? compactMem : get(K.compactPlayer) === true; }
@@ -4816,7 +4817,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     line('Player: ' + (state.playerIdle ? 'idle (asleep)' : pl ? (pl.is_playing ? 'playing' : 'paused') : 'nothing') +
       ' · Last state: ' + (lp ? '“' + (lp.item.name || '?') + '” at ' + fmtTime(lp.positionMs || 0) + ', ' + ageText(Date.now() - lp.at) + ' old' : 'none'));
     var lc = state.latest.cache;
-    line('Appearance: ' + themeMode() + ' · Search shows first: ' + searchFirst() + ' · Compact player: ' + (compactPlayer() ? 'on' : 'off'));   // v2.43
+    line('Appearance: ' + themeMode() + ' · Search shows first: ' + searchFirst() + ' · Compact player: ' + (compactPlayer() ? 'on' : 'off'));   // v2.51
     line('Pinned: ' + readPins().length + ' · Queued with ＋ (24 h): ' + readQueued().length + ' · Recent searches: ' + recentSearches().length);
     line('Up next “Next from”: uses song lists already loaded, no requests · Liked Songs known this visit: ' + upnLikedN);   // v2.41
     line('Playlist copies linked: ' + Object.keys(readCopies()).length + (readCopyWatch() ? ' · watching for a new copy' : ''));   // v2.24
@@ -6667,7 +6668,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     if (changed && !state.detail) kpY[kpKey()] = kpScrollY();
     state.filter = f; set(K.filter, f);
     document.querySelectorAll('.filters .chip').forEach(function (c) { c.setAttribute('aria-pressed', String(c.dataset.filter === f)); });
-    chipIntoView(document.querySelector('.filters .chip[aria-pressed="true"]'));   // v2.43
+    chipIntoView(document.querySelector('.filters .chip[aria-pressed="true"]'));   // v2.51
     var box = $('search');
     $('schips').hidden = f !== 'search';
     if (f === 'search') {
@@ -9516,7 +9517,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     stopFind(state.detail); state.detailStack.forEach(stopFind);   // v2.22
     state.detail = null; state.detailStack = [];
     $('top').classList.remove('detail');
-    setSlim(false);   // v2.43
+    setSlim(false);   // v2.51
     $('top').hidden = true;
     $('banner').hidden = true;
     paintNet();   // v2.43: hides the no-internet line (state.started is false now)
@@ -9916,19 +9917,20 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   $('permBack').addEventListener('click', function () { closePerm(); });
   $('notesMark').addEventListener('click', function () { if (notesView) toggleMark(notesView.ep); });   // v2.21
   $('qHide').addEventListener('change', function () { set(K.queueHide, $('qHide').checked); renderQueue(); });
-  $('compactPlayer').addEventListener('change', function () { setCompact($('compactPlayer').checked); });   // v2.43
+  $('compactPlayer').addEventListener('change', function () { setCompact($('compactPlayer').checked); });   // v2.51
   applyCompact();
-  window.addEventListener('scroll', onSlimScroll, { passive: true });   // v2.43
+  window.addEventListener('scroll', onSlimScroll, { passive: true });   // v2.51
   var slimW = window.innerWidth;
-  window.addEventListener('resize', function () {   // v2.43: rotating the phone changes the strip's width
+  window.addEventListener('resize', function () {   // v2.51: rotating the phone changes the strip's width
     // Safari's toolbar collapsing or expanding fires resize too (height only): that keeps a sideways swipe of the chips.
     if (window.innerWidth !== slimW) { slimW = window.innerWidth; chipIntoView(document.querySelector('.filters .chip[aria-pressed="true"]')); }
     slimMeasure();
   });
-  document.addEventListener('focusout', function () {   // v2.43 review: the keyboard closed near the top: show it again
+  document.addEventListener('focusin', function (e) { if (slimInHeader(e.target)) { slim.acc = 0; setSlim(false); } });   // v2.51
+  document.addEventListener('focusout', function () {   // v2.51 review: the keyboard closed near the top: show it again
     setTimeout(function () { if (!slimFrozen() && slimY() <= SLIM_MIN_Y) { slim.acc = 0; setSlim(false); } }, 0);
   });
-  if (window.ResizeObserver) { try { new ResizeObserver(slimMeasure).observe($('status')); } catch (e) {} }   // v2.43 review
+  if (window.ResizeObserver) { try { new ResizeObserver(slimMeasure).observe($('status')); } catch (e) {} }   // v2.51 review
   document.querySelectorAll('input[name="theme"]').forEach(function (r) {
     r.addEventListener('change', function () {
       if (!r.checked) return;
@@ -10093,7 +10095,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   window.addEventListener('pagehide', function () { kpSave(); releasePoller(); });   // v2.42: kpSave
   // v2.13: other copies of the page (same storage) share the cool-off and the player answer.
   window.addEventListener('storage', function (e) {
-    if (e.key === K.compactPlayer) {   // v2.43: changed in another tab (applies before sign-in too)
+    if (e.key === K.compactPlayer) {   // v2.51: changed in another tab (applies before sign-in too)
       compactMem = null; applyCompact();
       if (!$('diag').hidden) $('compactPlayer').checked = compactPlayer();
       return;

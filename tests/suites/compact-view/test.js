@@ -1,5 +1,5 @@
 'use strict';
-// Compact view (v2.43) tests: jsdom, mocked fetch, shared localStorage, a small layout stub (jsdom has no layout).
+// Compact view (v2.51) tests: jsdom, mocked fetch, shared localStorage, a small layout stub (jsdom has no layout).
 // Chip strip in one row that scrolls sideways, header title and status that hide on scroll, Compact player setting.
 // Run: node tests/run.js compact-view  (or, after npm ci in tests/: node test.js [path to index.html])
 if (process.argv[2]) process.env.SRC = process.argv[2];
@@ -99,7 +99,7 @@ var tests = [];
 tests.push(function () {
   return setup(store0()).then(function (tab) {
     var t = tab.t();
-    check('1 version is v2.43', /^v2\.43 /.test(t.VERSION), t.VERSION);
+    check('1 version is v2.51', /^v2\.51 /.test(t.VERSION), t.VERSION);
     var s = css(tab, strip(tab));
     check('1 chips never wrap', s.flexWrap === 'nowrap', s.flexWrap);
     check('1 strip scrolls sideways', s.overflowX === 'auto', s.overflowX);
@@ -207,9 +207,17 @@ tests.push(function () {
     cb.blur();
     scrollSteps(tab, 150, 130, 5);
     check('5 after blur: scrolling up shows it', !slimOn(tab));
+    scrollSteps(tab, 130, 700, 20);
+    check('5 slim again', slimOn(tab));
     $(tab, 'diagBtn').focus();
-    check('5 keyboard focus on Diagnostics (in the title row): frozen', t.slimFrozen() === true);
+    check('5 focus moving onto Diagnostics (in the title row): shown', !slimOn(tab));
+    check('5 a focused header button does not freeze scrolling', t.slimFrozen() === false);
+    scrollSteps(tab, 700, 1200, 20);
+    check('5 with Diagnostics still focused (a sheet gave focus back), scrolling down hides it', slimOn(tab));
     $(tab, 'diagBtn').blur();
+    $(tab, 'devBtn').hidden = false; $(tab, 'devBtn').focus();
+    check('5 focus onto the status line device button: shown', !slimOn(tab));
+    $(tab, 'devBtn').blur();
     check('5 zero requests', none(tab), counts(tab));
   });
 });
@@ -326,6 +334,23 @@ tests.push(function () {
       check('10 off: class gone', !d(tab).body.classList.contains('compact-player'));
       check('10 off: key removed', store.getItem('lib-compact-player') === null);
       check('10 off: zero requests', none(tab), counts(tab));
+    });
+  });
+});
+
+// 10b. Closing Diagnostics gives focus back to its button (main's sheet focus rule); the header still hides afterwards.
+tests.push(function () {
+  return setup(store0()).then(function (tab) {
+    click(tab, $(tab, 'diagBtn'));
+    return H.wait(200).then(function () {
+      click(tab, $(tab, 'diagClose'));
+      return H.wait(100);
+    }).then(function () {
+      check('10b focus back on Diagnostics', d(tab).activeElement === $(tab, 'diagBtn'), d(tab).activeElement && d(tab).activeElement.id);
+      scrollSteps(tab, 0, 600, 20);
+      check('10b scrolling down after closing Diagnostics still hides the title row', slimOn(tab));
+      scrollSteps(tab, 600, 560, 5);
+      check('10b and scrolling up shows it', !slimOn(tab));
     });
   });
 });
