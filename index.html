@@ -410,6 +410,13 @@ header.top.detail .schips { display: none; }
 .efbar .chip { min-height: 44px; font-size: 0.85rem; padding: 6px 12px; }
 #dfilt .empty { margin: 10px 2px 0; }
 .epfreset { margin-top: 8px; min-height: 44px; }
+/* v2.56: year headers and Jump to year in Liked Songs (Recently liked order). Chips are 44px tall for a thumb. */
+.yearbar .chip { min-height: 44px; min-width: 44px; font-variant-numeric: tabular-nums; }
+.yearbar .chip[disabled] { opacity: 0.5; cursor: default; }
+ul.list li.yhead { border-bottom: 0; padding: 14px 2px 4px; scroll-margin-top: 120px; }
+ul.list li.yhead:focus { outline: none; }
+ul.list li.yhead:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.yhead h3 { margin: 0; font-size: 0.9rem; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
 /* Full Now Playing screen: slides up over everything except the sheets (device picker, Up next) and the toast */
 body.npopen { overflow: hidden; }
 body.sheetopen { overflow: hidden; }   /* audit: the page stays still behind an open sheet (own class, so NP's lock is never touched) */
@@ -4636,7 +4643,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.45 (2026-11-27)';
+  var VERSION = 'v2.56 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -6166,6 +6173,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var opens = opensOnTap(item);
     var sub = (item.sub || '') + copySub(item);   // v2.24: " · You have a copy" / " · Copy" (shown only, never stored)
     if (item.nope) sub += (sub ? ' · ' : '') + item.nope;   // v2.35
+    if (lyRows) sub += likedSub(item);   // v2.56: " · Liked Mar 2021" in Liked Songs, Recently liked order
     var ex = item.kind === 'track' && item.ex;   // v2.38: "E" badge (drawn by CSS, so the row's text stays the same)
     var nn = item.kind === 'show' ? showNew(item.id) : 0;   // v2.45: "2 new" since you last opened it
     var subEl = el('div', { class: ex ? 'sub ex' : 'sub', text: sub });
@@ -7019,11 +7027,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     ]));
     main.appendChild(el('p', { class: 'lnote', id: 'dnote', hidden: true }));   // v2.15: saved list / fallback note
     main.appendChild(el('div', { id: 'dedit' }));   // v2.26: Edit (your own and collaborative playlists)
+    d.lyJump = null;   // v2.56: a jump waiting on Older doesn't carry over a redraw of the whole view (Back, a new list)
     var fbox = findBox(d);   // v2.22: Find in list
     main.appendChild(fbox);
     if (fsel && !fbox.hidden) { try { $('dfind').focus({ preventScroll: true }); $('dfind').setSelectionRange(fsel[0], fsel[1]); } catch (e) {} }
     main.appendChild(el('div', { id: 'dfilt' }));   // v2.40: episode filter chips
     main.appendChild(el('div', { id: 'dsort' }));
+    main.appendChild(el('div', { id: 'dyears', hidden: true }));   // v2.56: Jump to year (Liked Songs)
     main.appendChild(el('ul', { class: 'list compact', id: 'dlist' }));
     main.appendChild(el('div', { class: 'dfoot', id: 'dfoot' }));
     main.appendChild(el('div', { class: 'dcopy', id: 'dcopy', hidden: true }));   // v2.24: Make a copy
@@ -7170,20 +7180,115 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var ul = $('dlist');
     if (!ul) return;
     if (state.detail && state.detail.item.kind === 'liked') items = items.map(withLastPlay);   // v2.30: "Played 3 days ago"
-    var discs = discMode(state.detail);
+    var d = state.detail, discs = discMode(d), yrs = likedYearsOn(d);   // v2.56: year headers (Liked Songs) beside disc headers (albums)
     if (discs && !fresh && ul.children.length && !ul.hasAttribute('data-disc')) { paintDetailList(); return; }   // Load more brought disc 2: redraw from Disc 1
-    items.forEach(function (i) {
-      if (discs) {
-        var n = String(i.disc || 1);
-        if (ul.getAttribute('data-disc') !== n) {
-          ul.appendChild(el('li', { class: 'dischead' }, [el('h3', { text: 'Disc ' + n })]));
-          ul.setAttribute('data-disc', n);
+    if (!yrs && ul.querySelector('.yhead')) { paintDetailList(); return; }   // v2.56: a page brought a song with no date: redraw without headers
+    var hs = yrs ? ul.querySelectorAll('.yhead') : [], last = hs.length ? hs[hs.length - 1].getAttribute('data-year') : '';
+    lyRows = yrs;
+    try {
+      items.forEach(function (i) {
+        if (discs) {
+          var n = String(i.disc || 1);
+          if (ul.getAttribute('data-disc') !== n) {
+            ul.appendChild(el('li', { class: 'dischead' }, [el('h3', { text: 'Disc ' + n })]));
+            ul.setAttribute('data-disc', n);
+          }
         }
-      }
-      ul.appendChild(itemRow(i));
-    });
+        if (yrs) {   // v2.56
+          var y = likedYM(i).slice(0, 4);
+          if (y !== last) { ul.appendChild(yearHead(y)); last = y; }
+        }
+        ul.appendChild(itemRow(i));
+      });
+    } finally { lyRows = false; }
     requestSaved(savableUris(items));
     paintDetailFilter();   // v2.40: the chips and their count follow the rows
+    paintYears(d);   // v2.56
+  }
+  // ---------- v2.56: year headers and Jump to year in Liked Songs ----------
+  // Only in Liked Songs with the Recently liked order (Spotify's own: newest like first), with nothing typed in Find
+  // and every loaded song carrying a like date (added_at): if any lacks one, no headers at all, since the years
+  // could then mislead. Headers are drawn from what's loaded, so they cost no requests, and they never count songs.
+  // "Jump to year" scrolls to a year's header; "Older" loads more pages with Find in list's Search all (library
+  // group, the same caps, cool-offs and memo), then jumps to the first year that wasn't loaded before.
+  var lyRows = false;   // true while appendDetailRows draws rows that get the " · Liked Mar 2021" subtitle
+  var LY_MIN = 2008;   // Spotify opened in 2008: an earlier year (such as 1970 from a zero date) counts as missing
+  function likedYM(i) {   // 'YYYY-MM' of the like in this phone's time zone, '' when missing or unreadable
+    if (i.likedYM == null) {
+      var t = i.added ? Date.parse(i.added) : NaN, dt = new Date(t);
+      i.likedYM = isNaN(t) || dt.getFullYear() < LY_MIN ? '' : dt.getFullYear() + '-' + ('0' + (dt.getMonth() + 1)).slice(-2);
+    }
+    return i.likedYM;
+  }
+  function likedSub(i) { var ym = likedYM(i); return ym ? ' · Liked ' + fmtDate(ym) : ''; }
+  function likedYearsOn(d) {
+    if (!d || d.kind === 'artist' || !d.item || d.item.kind !== 'liked' || d.editing || d.restricted || !d.items.length) return false;
+    if (sortMode('d-liked') !== 'default' || findTokens(d)) return false;
+    for (var k = 0; k < d.items.length; k++) { if (!likedYM(d.items[k])) return false; }
+    return true;
+  }
+  function yearHead(y) {
+    return el('li', { class: 'yhead', id: 'ly-' + y, 'data-year': y, tabindex: '-1' }, [el('h3', { text: y })]);
+  }
+  function loadedYears(d) {
+    var ys = [], seen = {};
+    d.items.forEach(function (i) { var y = likedYM(i).slice(0, 4); if (y && !seen[y]) { seen[y] = true; ys.push(y); } });
+    return ys;
+  }
+  function paintYears(d) {
+    var box = $('dyears');
+    if (!box || !d || state.detail !== d) return;
+    var a = document.activeElement, had = a && box.contains(a) ? a.getAttribute('data-year') : null;
+    box.textContent = '';
+    var on = likedYearsOn(d), ys = on ? loadedYears(d) : [];
+    box.hidden = !on || (ys.length < 2 && !d.next);
+    if (!on) d.lyJump = null;   // another sort, Find text or a missing date: no jump
+    if (box.hidden) { lyJumpDone(d); return; }
+    var g = el('div', { class: 'sortbar yearbar', role: 'group', 'aria-label': 'Jump to year' }, [
+      el('span', { class: 'sortlbl', 'aria-hidden': 'true', text: 'Jump to' })
+    ]);
+    ys.forEach(function (y) {
+      var b = el('button', { class: 'chip', type: 'button', 'data-year': y, 'aria-label': 'Jump to ' + y, text: y });
+      b.addEventListener('click', function () { jumpYear(y); });
+      g.appendChild(b);
+    });
+    var p = d.next ? findPlan(d) : null;
+    if (d.next) {
+      var ob = el('button', { class: 'chip', type: 'button', 'data-year': 'older', 'aria-label': 'Load older years', text: 'Older' });
+      if (!p || p.disabled || d.loading || d.findRun) ob.disabled = true;
+      ob.addEventListener('click', function () { olderYears(d); });
+      g.appendChild(ob);
+    }
+    box.appendChild(g);
+    if (p && p.why === 'paused' && !d.findRun) box.appendChild(el('p', { class: 'snote', text: coolText(p.group) }));
+    if (had) { var nb = box.querySelector('[data-year="' + had + '"]'); if (nb && !nb.disabled) nb.focus({ preventScroll: true }); }
+    lyJumpDone(d);
+  }
+  // Older finished: go to the first year that wasn't loaded before it started.
+  function lyJumpDone(d) {
+    if (d.lyJump && !d.loading && !d.findRun) { var j = d.lyJump; d.lyJump = null; afterOlder(d, j); }
+  }
+  function jumpYear(y) {
+    var h = document.getElementById('ly-' + y);
+    if (!h) return;
+    var top = $('top'), off = top && !top.hidden ? top.getBoundingClientRect().height : 0;
+    var to = Math.max(0, h.getBoundingClientRect().top + (window.pageYOffset || 0) - off - 8);
+    var still = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    try { window.scrollTo({ top: to, behavior: still ? 'auto' : 'smooth' }); } catch (e) { try { window.scrollTo(0, to); } catch (e2) {} }
+    try { h.focus({ preventScroll: true }); } catch (e) {}
+  }
+  function olderYears(d) {
+    if (state.detail !== d || d.loading || d.findRun) return;
+    var j = { years: loadedYears(d), n: d.items.length };
+    searchAll(d);   // nothing happens if paused (it says so) or disabled; Find in list's own rules apply
+    if (d.findRun) d.lyJump = j;   // loading, or waiting for another load: paintYears jumps once it ends
+    else if (d.items.length > j.n) afterOlder(d, j);   // kept from an earlier Search all this visit: no requests
+  }
+  function afterOlder(d, j) {
+    if (state.detail !== d || !likedYearsOn(d)) return;
+    var ys = loadedYears(d);
+    for (var k = 0; k < ys.length; k++) { if (j.years.indexOf(ys[k]) === -1) { jumpYear(ys[k]); return; } }
+    if (d.items.length > j.n) toast(d.next ? 'No older year in the songs loaded so far. Tap Older again for more.' : 'No older years.');
   }
   // v2.38: the album details footer under the last song: release date at Spotify's precision, ℗/© lines, label.
   // Saved albums have them from the library answer; others (search, an artist's releases) have the date only.
@@ -7250,6 +7355,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     paintEditBar();   // v2.26
     paintDetailCopy();   // v2.24: its own box, so the steps never redraw #dfoot or reload an open player
     paintFindBox(d);   // v2.22
+    paintYears(d);   // v2.56: the Older chip follows loading and pauses
     if (d.restricted && d.embed && f.querySelector('.sembed-box')) return;   // v2.16: keep the open player (redrawing would reload it)
     dropEmbed(d);
     f.textContent = '';
