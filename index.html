@@ -1443,8 +1443,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function sortText(s) { return String(s || '').replace(/^the\s+/i, ''); }
   function cmpText(a, b) { return sortText(a).localeCompare(sortText(b), undefined, { sensitivity: 'base', numeric: true }); }
   function byName(a, b) { return cmpText(a.name, b.name); }
-  // v2.31: a release date as YYYY, YYYY-MM or YYYY-MM-DD; anything else (Spotify's "0000" for unknown) is ''.
-  function relDay(s) { return /^\d{4}(-\d{2}(-\d{2})?)?$/.test(s || '') && !/^0000/.test(s) ? s : ''; }
+  // v2.31: a release date as YYYY, YYYY-MM or YYYY-MM-DD (month 01–12, day 01–31); anything else (Spotify's "0000"
+  // for unknown, a zero month or day) is ''.
+  function relDay(s) { return /^\d{4}(-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?)?$/.test(s || '') && !/^0000/.test(s) ? s : ''; }
   // Dates and times as strings (ISO or YYYY[-MM[-DD]]); a missing value always goes last.
   function cmpDesc(x, y) { if (x === y) return 0; if (!x) return 1; if (!y) return -1; return x < y ? 1 : -1; }
   function cmpAsc(x, y) { if (x === y) return 0; if (!x) return 1; if (!y) return -1; return x < y ? -1 : 1; }
