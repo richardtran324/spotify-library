@@ -1942,6 +1942,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var shows = pages('/me/shows?limit=50', function (it) { return mapShow(it && it.show); }).catch(optional);
     var episodes = api('/me/episodes?limit=1').then(function (r) { return r.ok && r.json && typeof r.json.total === 'number' ? r.json.total : null; }).catch(optional);
     return Promise.all([me, playlists, albums, liked, artists, shows, episodes]).then(function (v) {
+      // audit: a failed /me or /me/tracks answer keeps what the last load had, so your own playlists
+      // stay yours and the Liked Songs row stays. With no account known yet, the load fails and nothing is cached.
+      var prev = state.data || {};
+      if (!v[0]) {
+        if (prev.me && prev.me.id) v[0] = prev.me;
+        else throw new Error('your account details didn’t load');
+      }
+      if (v[3] == null && typeof prev.likedTotal === 'number') v[3] = prev.likedTotal;
       var data = { at: Date.now(), me: v[0], playlists: v[1], albums: v[2], likedTotal: v[3], artists: v[4], shows: v[5], episodesTotal: v[6] };
       set(K.cache, data);
       return data;
