@@ -499,16 +499,20 @@ tests.push(function () {
   });
 });
 
-// 22. Refresh refused (invalid_grant) at start: token deleted, sign-in screen, Client ID kept.
+// 22. Refresh refused (invalid_grant) at start: since AUTH-1 (#14) the page first waits up to 2 s for another
+// copy's newer token; none comes, so the token is deleted and the sign-in screen shows. Client ID kept.
 tests.push(function () {
   var store = tokenStore({ access: 'old', refresh: 'revoked', expires: 0, scope: ALL_SCOPES });
   return setup(store, { token: function () { return { status: 400, json: { error: 'invalid_grant', error_description: 'Refresh token revoked' } }; } }).then(function (tab) {
-    check('22 token deleted', store.getItem('lib-token') === null);
-    check('22 sign-in screen shown', heading(tab) === 'Sign in', heading(tab));
-    check('22 app stopped, top bar and banner hidden', tab.t().state.started === false && topHidden(tab) && bannerHidden(tab));
-    check('22 Client ID kept', getJ(store, 'lib-client-id') === 'fakeclient');
-    check('22 no API request with the old token', apiReqs(tab).length === 0, apiReqs(tab));
-    check('22 one refresh tried', tokenReqs(tab).length === 1, tokenReqs(tab).length);
+    check('22 token kept for now while waiting for another copy\'s newer token', (getJ(store, 'lib-token') || {}).refresh === 'revoked' && heading(tab) !== 'Sign in' && tab.t().state.started === true, { tok: getJ(store, 'lib-token'), h: heading(tab) });
+    return H.wait(2300).then(function () {
+      check('22 token deleted', store.getItem('lib-token') === null);
+      check('22 sign-in screen shown', heading(tab) === 'Sign in', heading(tab));
+      check('22 app stopped, top bar and banner hidden', tab.t().state.started === false && topHidden(tab) && bannerHidden(tab));
+      check('22 Client ID kept', getJ(store, 'lib-client-id') === 'fakeclient');
+      check('22 no API request with the old token', apiReqs(tab).length === 0, apiReqs(tab));
+      check('22 one refresh tried', tokenReqs(tab).length === 1, tokenReqs(tab).length);
+    });
   });
 });
 
@@ -675,7 +679,8 @@ tests.push(function () {
   });
 });
 
-// 32. Signed out mid-visit (refresh refused while the app runs): sign-in screen replaces the library.
+// 32. Signed out mid-visit (refresh refused while the app runs): sign-in screen replaces the library, about 2 s
+// later (AUTH-1, #14: the page first waits for another copy's newer token).
 tests.push(function () {
   var store = H.seedStore();
   return setup(store, { token: function () { return { status: 400, json: { error: 'invalid_grant' } }; } }).then(function (tab) {
@@ -683,9 +688,13 @@ tests.push(function () {
     var tok = getJ(store, 'lib-token'); tok.expires = 0; store.setItem('lib-token', JSON.stringify(tok));
     click(tab, d(tab).getElementById('refreshBtn'));
     return H.wait(150).then(function () {
+      check('32 still in the library just after the refused refresh', heading(tab) !== 'Sign in' && t.state.started === true && (getJ(store, 'lib-token') || {}).refresh === 'r', heading(tab));
+      return H.wait(2400);
+    }).then(function () {
       check('32 sign-in screen after refused refresh', heading(tab) === 'Sign in' && t.state.started === false, heading(tab));
       check('32 token removed', store.getItem('lib-token') === null);
       check('32 top bar hidden', topHidden(tab));
+      check('32 one refresh sent for the whole wait', tokenReqs(tab).length === 1, tokenReqs(tab).length);
     });
   });
 });
@@ -725,13 +734,80 @@ tests.push(function () {
   });
 });
 
-// 35. A cancelled sign-in while still holding a token (not a feature sign-in) still goes to the sign-in screen.
+// 35. A cancelled "Sign in again" while still holding a token (not a feature sign-in): since AUTH-2 (#15) the page
+// goes back to the library with a toast; the token and the last playback are kept.
 tests.push(function () {
   var store = tokenStore({ access: 'fake', refresh: 'r', expires: Date.now() + 3600e3, scope: ALL_SCOPES });
   store.setItem('lib-state', JSON.stringify('st1'));
+  var lastplay = { item: { uri: 'spotify:track:t1', id: 't1', name: 'Song One', type: 'track', duration_ms: 240000,
+    album: { id: 'a1', name: 'Album', images: [], uri: 'spotify:album:a1' }, artists: [{ name: 'Artist' }], show: null },
+    context: { type: 'album', uri: 'spotify:album:a1' }, positionMs: 60000, deviceId: 'A', shuffle: false, repeat: 'off', at: Date.now() };
+  store.setItem('lib-lastplay', JSON.stringify(lastplay));
+  var tokBefore = store.getItem('lib-token');
   return setup(store, { url: BASE + '?error=access_denied&state=st1' }).then(function (tab) {
-    check('35 sign-in screen with the cancelled message', heading(tab) === 'Sign in' && /cancelled or failed \(access_denied\)/.test(errText(tab)), errText(tab));
-    check('35 nothing sent, URL cleaned', tab.env.req.length === 0 && tab.w.location.search === '', tab.env.req);
+    check('35 back in the library with the cancelled toast', heading(tab) !== 'Sign in' && tab.t().state.started === true && !topHidden(tab) &&
+      tab.toasts().indexOf('Sign-in was cancelled. You’re still signed in.') >= 0, { h: heading(tab), err: errText(tab), toasts: tab.toasts() });
+    check('35 no token request, URL cleaned', tokenReqs(tab).length === 0 && tab.w.location.search === '', tab.env.req.map(function (r) { return r.url; }));
+    check('35 token and last playback kept', store.getItem('lib-token') === tokBefore && (getJ(store, 'lib-lastplay') || { item: {} }).item.uri === 'spotify:track:t1', { tok: store.getItem('lib-token'), lp: store.getItem('lib-lastplay') });
+    var api = apiReqs(tab);
+    check('35 library loads with the old token', api.length > 0 && api.every(function (q) { return q.headers.authorization === 'Bearer fake'; }), api.map(function (q) { return q.headers.authorization; }));
+  });
+});
+
+// 36. AUTH-2 (#15): a failed state check or a failed code exchange while still holding a token also goes back to
+// the library with a toast; on a state mismatch lib-state and lib-verifier stay (another tab may be signing in).
+tests.push(function () {
+  var store = tokenStore({ access: 'fake', refresh: 'r', expires: Date.now() + 3600e3, scope: ALL_SCOPES });
+  store.setItem('lib-state', JSON.stringify('st1'));
+  store.setItem('lib-verifier', JSON.stringify('V'.repeat(64)));
+  var tokBefore = store.getItem('lib-token');
+  return setup(store, { url: BASE + '?code=abc&state=WRONG', token: okToken('A1') }).then(function (tab) {
+    check('36 state mismatch: no exchange, toast, still in the library', tokenReqs(tab).length === 0 && tab.toasts().indexOf('Sign-in check failed. You’re still signed in.') >= 0 &&
+      heading(tab) !== 'Sign in' && tab.t().state.started === true, { toasts: tab.toasts(), h: heading(tab) });
+    check('36 state mismatch: token, state and verifier kept, URL cleaned', store.getItem('lib-token') === tokBefore && getJ(store, 'lib-state') === 'st1' &&
+      getJ(store, 'lib-verifier') === 'V'.repeat(64) && tab.w.location.search === '', tab.w.location.href);
+  }).then(function () {
+    var s = tokenStore({ access: 'fake', refresh: 'r', expires: Date.now() + 3600e3, scope: ALL_SCOPES });
+    s.setItem('lib-state', JSON.stringify('st1'));
+    s.setItem('lib-verifier', JSON.stringify('V'.repeat(64)));
+    var before = s.getItem('lib-token');
+    return setup(s, { url: BASE + '?code=old&state=st1',
+      token: function () { return { status: 400, json: { error: 'invalid_grant', error_description: 'Invalid authorization code' } }; } }).then(function (tab) {
+      check('36 failed exchange: one token request, toast, still in the library', tokenReqs(tab).length === 1 &&
+        tab.toasts().indexOf('Could not finish sign-in (Invalid authorization code). You’re still signed in.') >= 0 &&
+        heading(tab) !== 'Sign in' && tab.t().state.started === true, { toasts: tab.toasts(), h: heading(tab) });
+      check('36 failed exchange: old token kept and used', s.getItem('lib-token') === before &&
+        apiReqs(tab).length > 0 && apiReqs(tab).every(function (q) { return q.headers.authorization === 'Bearer fake'; }), apiReqs(tab).map(function (q) { return q.headers.authorization; }));
+    });
+  });
+});
+
+// 37. AUTH-1 (#14): two copies renew at once. Spotify refuses the second use of the refresh token, but the other
+// copy has saved a newer one (before the refusal arrives, or within 2 s of it): it is used, nobody is signed out.
+tests.push(function () {
+  var store = tokenStore({ access: 'old', refresh: 'r', expires: 0, scope: ALL_SCOPES });
+  var other = { access: 'B1', refresh: 'r2', expires: Date.now() + 3600e3, scope: ALL_SCOPES };
+  return setup(store, { token: function () {
+    store.setItem('lib-token', JSON.stringify(other));   // the other copy won the race and saved first
+    return { status: 400, json: { error: 'invalid_grant', error_description: 'Invalid refresh token' } };
+  } }).then(function (tab) {
+    check('37 other copy saved first: one refresh sent, still in the library', tokenReqs(tab).length === 1 && tab.t().state.started === true && heading(tab) !== 'Sign in', { n: tokenReqs(tab).length, h: heading(tab) });
+    check('37 other copy saved first: its token kept', JSON.stringify(getJ(store, 'lib-token')) === JSON.stringify(other), getJ(store, 'lib-token'));
+    var api = apiReqs(tab);
+    check('37 other copy saved first: requests use its token', api.length > 0 && api.every(function (q) { return q.headers.authorization === 'Bearer B1'; }), api.map(function (q) { return q.headers.authorization; }));
+  }).then(function () {
+    var s = tokenStore({ access: 'old', refresh: 'r', expires: 0, scope: ALL_SCOPES });
+    var late = { access: 'B2', refresh: 'r3', expires: Date.now() + 3600e3, scope: ALL_SCOPES };
+    return setup(s, { token: function () { return { status: 400, json: { error: 'invalid_grant' } }; } }).then(function (tab) {
+      check('37 refused, other copy not saved yet: nothing sent yet, token kept', apiReqs(tab).length === 0 && (getJ(s, 'lib-token') || {}).refresh === 'r' && tab.t().state.started === true, apiReqs(tab));
+      s.setItem('lib-token', JSON.stringify(late));   // the other copy saves its renewal a moment later
+      return H.wait(2300).then(function () {
+        check('37 other copy saved later: still signed in, no second refresh', tokenReqs(tab).length === 1 && tab.t().state.started === true && heading(tab) !== 'Sign in' &&
+          JSON.stringify(getJ(s, 'lib-token')) === JSON.stringify(late), { n: tokenReqs(tab).length, h: heading(tab), tok: getJ(s, 'lib-token') });
+        var api = apiReqs(tab);
+        check('37 other copy saved later: requests use its token', api.length > 0 && api.every(function (q) { return q.headers.authorization === 'Bearer B2'; }), api.map(function (q) { return q.headers.authorization; }));
+      });
+    });
   });
 });
 

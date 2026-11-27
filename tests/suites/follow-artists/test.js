@@ -308,8 +308,10 @@ tests.push(function () {
   var s = store(false);
   seedAsk(s, 31 * 60000);   // older than 30 minutes: not a feature sign-in any more
   return callbackTab(s, 'error=access_denied&state=ST1').then(function (tab) {
-    var txt = d(tab).getElementById('main').textContent;
-    check('7d stale record: treated as an ordinary cancelled sign-in', /Spotify sign-in was cancelled or failed \(access_denied\)/.test(txt), txt.slice(0, 200));
+    // #15 (AUTH-2): an ordinary cancelled sign-in while still holding a token now keeps you signed in.
+    var txt = d(tab).getElementById('main').textContent, toasts = tab.toasts();
+    check('7d stale record: treated as an ordinary cancelled sign-in (still signed in)', toasts.indexOf('Sign-in was cancelled. You’re still signed in.') !== -1 &&
+      !toasts.some(function (x) { return /^Nothing changed\./.test(x); }) && !/Spotify sign-in was cancelled or failed/.test(txt) && tab.t().state.started === true, { toasts: toasts, main: txt.slice(0, 200) });
     check('7d stale record removed', s.getItem('lib-perm-ask') === null);
   });
 });
