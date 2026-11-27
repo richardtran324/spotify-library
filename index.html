@@ -505,6 +505,36 @@ ul.list li.yhead { border-bottom: 0; padding: 14px 2px 4px; scroll-margin-top: 1
 ul.list li.yhead:focus { outline: none; }
 ul.list li.yhead:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .yhead h3 { margin: 0; font-size: 0.9rem; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+/* v2.58: A–Z strip. 44 px wide, inset 12 px from the right edge (Safari's edge swipe). The nav spans the space
+   between the header and the player bar but takes no touches; only the letters, centred in it, do. Letter heights
+   are set by azPlace (14-28 px). Rows get room on the right so the strip never covers their buttons. */
+.azstrip {
+  position: fixed; z-index: 4; width: 44px; pointer-events: none;
+  right: max(calc(12px + env(safe-area-inset-right, 0px)), calc(50vw - 320px - 52px));
+  bottom: calc(32px + env(safe-area-inset-bottom, 0px));
+  display: flex; flex-direction: column; justify-content: center;
+}
+body.has-player .azstrip { bottom: calc(140px + env(safe-area-inset-bottom, 0px)); }
+.azcol {
+  pointer-events: auto; touch-action: none; display: flex; flex-direction: column;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+}
+.azl {
+  flex: none; height: 28px; width: 44px; padding: 0; margin: 0; overflow: hidden;
+  font: inherit; font-size: 11px; font-weight: 700; line-height: 1; color: var(--accent);
+  background: none; border: 0; border-radius: 6px; cursor: pointer;
+}
+.azl.azskip {   /* dropped for space: off screen but still a VoiceOver and keyboard button */
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+}
+.azbub {
+  position: fixed; z-index: 4; top: 50%; right: max(calc(68px + env(safe-area-inset-right, 0px)), calc(50vw - 320px + 4px));
+  transform: translateY(-50%); width: 64px; height: 64px; border-radius: 14px;
+  display: flex; align-items: center; justify-content: center; pointer-events: none;
+  font-size: 32px; font-weight: 700; background: var(--surface); color: var(--fg);
+  border: 1px solid var(--line); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+@media (max-width: 760px) { body.has-az #main { padding-right: 44px; } }
 /* Full Now Playing screen: slides up over everything except the sheets (device picker, Up next) and the toast */
 body.npopen { overflow: hidden; }
 body.sheetopen { overflow: hidden; }   /* audit: the page stays still behind an open sheet (own class, so NP's lock is never touched) */
@@ -1664,6 +1694,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       coolTimer = setTimeout(paintCool, (left % 1000 || 1000) + 30);
     } else $('cool').hidden = true;
     slimMeasure();   // v2.49
+    azPlace();   // v2.58: the header's height may have changed
     var pt = paused.indexOf('player') !== -1 ? coolText('player') : '';
     if (pt) { if (n.textContent !== pt) n.textContent = pt; n.hidden = false; } else n.hidden = true;
     var ended = [];
@@ -2327,6 +2358,199 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       if (nb) nb.focus({ preventScroll: true });
     });
     return b;
+  }
+  // ---------- A–Z strip (v2.58) ----------
+  // On Albums, Artists, Playlists and Podcasts (Shows) sorted A–Z or Artist A–Z with more than AZ_MIN rows, and on
+  // Liked Songs once every song is loaded, a thin letter strip sits on the right, inset from the edge (Safari's
+  // edge swipe). Tap or drag a letter to jump to the first row with it. Letters come from the sort's own key and
+  // compare the way the sort does (sortText: a leading "The" is ignored; É, Ø, Ł, Æ go with E, O, L, A); digits,
+  // symbols and non-Latin names are "#". Only letters the list has are shown, in the list's order (so # sits where
+  // those rows sort). The strip is only as tall as its letters and centred; touches above, below or beside them
+  // scroll the page as usual. When letters would be under AZ_ROW_MIN px, every other one is shown (the rest stay as
+  // VoiceOver buttons); when even that doesn't fit, the strip hides. Hidden while the name filter has text or Find
+  // in list is in use. VoiceOver and keyboards get one button per letter ("Jump to M"). Nothing is asked of Spotify.
+  var AZ_MIN = 40;   // v2.58: more than 40 rows
+  var AZ_ROW_MIN = 14, AZ_ROW_MAX = 28;   // v2.58: a letter's height in px
+  var az = { nav: null, col: null, bub: null, rows: [], sig: '', want: '', on: false, drag: false, cur: '', ptrAt: 0, ptrL: '', fit: 'all' };
+  var azColl = null, azMemo = {};
+  var AZ_ABC = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+  var AZ_LATIN = /^[A-Za-zªºÀ-ÖØ-öø-ɏḀ-ỿ]$/;
+  function azLetter(s) {   // v2.58
+    var t = sortText(s);   // leading spaces sort with symbols, so they stay under #
+    var m = /^[\ud800-\udbff][\udc00-\udfff]|^[\s\S]/.exec(t);
+    var c = m ? m[0] : '';
+    if (Object.prototype.hasOwnProperty.call(azMemo, c)) return azMemo[c];
+    var L = '#';
+    if (/^[A-Za-z]$/.test(c)) L = c.toUpperCase();
+    else if (AZ_LATIN.test(c)) {
+      // Where the list's own sort puts this letter: the last of A–Z it doesn't sort before (Ø → O, Æ → A).
+      if (!azColl) { try { azColl = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true }); } catch (e) { azColl = { compare: function (a, b) { return a.localeCompare(b); } }; } }
+      for (var i = 0; i < AZ_ABC.length; i++) { if (azColl.compare(c, AZ_ABC[i]) >= 0) L = AZ_ABC[i]; else break; }
+    }
+    azMemo[c] = L;
+    return L;
+  }
+  // v2.58: the field a view's A–Z sort compares, or null when that view and sort get no strip.
+  function azField(view, mode) {
+    if (!{ albums: 1, artists: 1, playlists: 1, shows: 1, 'd-liked': 1 }[view]) return null;
+    if (mode === 'az') return 'name';
+    if (mode === 'artist' && (view === 'albums' || view === 'd-liked')) return 'artist';
+    return null;
+  }
+  // v2.58: this list gets no strip. During a drag the strip stays until the finger lifts (a redraw mid-drag, such
+  // as Shows after a Now Playing check, then doesn't cut the drag short); force: hide now (signing out).
+  function azHide(force) {
+    az.on = false; az.rows = []; az.want = '';
+    if (az.drag && !force) return;
+    az.drag = false;
+    azOff();
+  }
+  function azOff() {   // the buttons stay (hidden), so a redraw with the same letters reuses them
+    az.cur = '';
+    if (az.nav) az.nav.hidden = true;
+    if (az.bub) az.bub.hidden = true;
+    document.body.classList.remove('has-az');
+  }
+  // v2.58: pairs = [{item, li}] in list order (only the sorted rows, never the pinned ones above them).
+  function azShow(view, pairs) {
+    var field = azField(view, sortMode(view));
+    if (!field || pairs.length <= AZ_MIN) return azHide();
+    var rows = [], seen = {};
+    pairs.forEach(function (p) {
+      var L = azLetter(p.item[field]);
+      if (!seen[L]) { seen[L] = true; rows.push({ L: L, li: p.li }); }
+    });
+    if (rows.length < 2) return azHide();   // one letter: nothing to jump between
+    azBuild();
+    az.on = true;
+    az.rows = rows;   // new rows take effect at once, even mid-drag
+    az.want = rows.map(function (r) { return r.L; }).join('');
+    if (!az.drag) azPaint();   // the buttons wait for the finger to lift
+  }
+  // v2.58: draws the buttons when the letters changed, then shows and sizes the strip.
+  function azPaint() {
+    if (!az.on) return azOff();
+    if (az.want !== az.sig) {
+      az.sig = az.want;
+      az.col.textContent = '';
+      az.rows.forEach(function (r) {
+        var b = el('button', { class: 'azl', type: 'button', 'data-az': r.L, 'aria-label': r.L === '#' ? 'Jump to numbers and symbols' : 'Jump to ' + r.L, text: r.L });
+        b.addEventListener('click', function () {
+          if (Date.now() - az.ptrAt < 500) {
+            // A touch already jumped. After the same letter (a VoiceOver double-tap), still move focus there.
+            if (az.ptrL === r.L) azJump(r.L, true, true);
+            return;
+          }
+          azJump(r.L, true);
+        });
+        az.col.appendChild(b);
+      });
+    }
+    az.nav.hidden = false;
+    azPlace();
+  }
+  function azBuild() {   // v2.58: one strip for the page, made on first use
+    if (az.nav) return;
+    az.col = el('div', { class: 'azcol' });
+    az.nav = el('nav', { class: 'azstrip', id: 'azstrip', 'aria-label': 'Jump to letter', hidden: true }, [az.col]);
+    az.bub = el('div', { class: 'azbub', id: 'azbub', 'aria-hidden': 'true', hidden: true });
+    document.body.appendChild(az.nav);
+    document.body.appendChild(az.bub);
+    function shown() { return [].slice.call(az.col.querySelectorAll('.azl:not(.azskip)')); }
+    // The letter under the finger. Outside the letters: '' for a press (the page scrolls instead); during a drag,
+    // the nearest end. A dropped letter's gap goes to the shown letter it falls in.
+    function at(ev, clamp) {
+      var bs = shown();
+      if (!bs.length) return '';
+      var y = ev.clientY;
+      var first = bs[0].getBoundingClientRect(), last = bs[bs.length - 1].getBoundingClientRect();
+      if (y < first.top) return clamp ? bs[0].getAttribute('data-az') : '';
+      if (y >= last.bottom) return clamp ? bs[bs.length - 1].getAttribute('data-az') : '';
+      for (var i = 0; i < bs.length; i++) { if (y < bs[i].getBoundingClientRect().bottom) return bs[i].getAttribute('data-az'); }
+      return bs[bs.length - 1].getAttribute('data-az');
+    }
+    function move(L) {
+      if (!L || L === az.cur) return;
+      az.cur = L; az.ptrL = L;
+      azJump(L, false);
+      az.bub.textContent = L;
+      az.bub.hidden = false;
+    }
+    function end() {
+      if (!az.drag) return;
+      az.drag = false; az.cur = ''; az.ptrAt = Date.now();
+      az.bub.hidden = true;
+      azPaint();   // a redraw that came during the drag: new letters, or hidden
+    }
+    az.col.addEventListener('pointerdown', function (ev) {
+      if (ev.button > 0) return;
+      var L = at(ev, false);
+      if (!L) return;   // beside the letters: leave it to the page
+      ev.preventDefault();   // no text selection or focus ring while scrubbing
+      az.drag = true; az.cur = ''; az.ptrAt = Date.now();
+      try { az.col.setPointerCapture(ev.pointerId); } catch (e) {}
+      move(L);
+    });
+    az.col.addEventListener('pointermove', function (ev) { if (az.drag) move(at(ev, true)); });
+    az.col.addEventListener('pointerup', end);
+    az.col.addEventListener('pointercancel', end);
+    az.col.addEventListener('lostpointercapture', end);
+    window.addEventListener('resize', azPlace);
+    window.addEventListener('orientationchange', azPlace);
+    if (typeof ResizeObserver === 'function' && $('top')) { try { new ResizeObserver(function () { azPlace(); }).observe($('top')); } catch (e) {} }
+  }
+  // v2.58: the space runs from under the sticky header to above the player bar (CSS bottom); the letters share it,
+  // AZ_ROW_MIN to AZ_ROW_MAX px each, every other letter when they don't fit, none when even that doesn't.
+  // Runs again on resize, orientation change and when the header changes height (cool-off line shown or hidden).
+  function azPlace() {
+    if (!az || !az.on || !az.nav || az.drag) return;   // !az: called before this part of the script ran
+    var top = $('top');
+    var hb = top && !top.hidden ? top.getBoundingClientRect().bottom : 0;
+    az.nav.hidden = false;
+    az.nav.style.top = Math.max(0, Math.round(hb)) + 8 + 'px';
+    var avail = az.nav.getBoundingClientRect().height;
+    var bs = [].slice.call(az.col.querySelectorAll('.azl'));
+    var n = bs.length, fit = 'all', h = AZ_ROW_MAX;
+    if (avail > 0) {   // 0: no layout to measure (never on a phone); every letter is shown
+      if (avail / n >= AZ_ROW_MIN) h = Math.min(AZ_ROW_MAX, Math.floor(avail / n));
+      else if (avail / Math.ceil(n / 2) >= AZ_ROW_MIN) { fit = 'half'; h = Math.min(AZ_ROW_MAX, Math.floor(avail / Math.ceil(n / 2))); }
+      else fit = 'none';
+    }
+    az.fit = fit;
+    bs.forEach(function (b, i) {
+      var skip = fit === 'half' && i % 2 === 1;
+      b.classList.toggle('azskip', skip);
+      b.style.height = skip ? '' : h + 'px';
+    });
+    az.nav.hidden = fit === 'none';
+    document.body.classList.toggle('has-az', fit !== 'none');
+  }
+  // v2.58: scroll the first row with letter L just under the sticky header. focus: a button press (keyboard or
+  // VoiceOver) moves focus to that row's link; a drag keeps the finger's place on the strip. noScroll: focus only.
+  function azJump(L, focus, noScroll) {
+    var row = null;
+    for (var i = 0; i < az.rows.length; i++) { if (az.rows[i].L === L) { row = az.rows[i]; break; } }
+    if (!row || !row.li || !document.body.contains(row.li)) return false;
+    if (!noScroll) {
+      var top = $('top');
+      var hb = top && !top.hidden ? top.getBoundingClientRect().bottom : 0;
+      var y = (window.pageYOffset || 0) + row.li.getBoundingClientRect().top - hb - 4;
+      window.scrollTo(0, Math.max(0, Math.round(y)));   // always instant: a scrub can't wait for smooth scrolling
+    }
+    if (focus) {
+      var f = row.li.querySelector('a, button');
+      if (f) { try { f.focus({ preventScroll: true }); } catch (e) {} }
+    }
+    return true;
+  }
+  // v2.58: Liked Songs gets the strip only with every song loaded, nothing loading and Find in list empty.
+  function azDetail() {
+    var d = state.detail, ul = $('dlist');
+    if (!d || d.kind === 'artist' || !ul || d.item.kind !== 'liked') return azHide();
+    if (d.next || d.loading || d.findRun || d.error || d.restricted || d.editing || findTokens(d) || (d.find || '').trim()) return azHide();
+    var lis = ul.children, list = sortList('d-liked', d.items);
+    if (lis.length !== list.length) return azHide();   // rows and songs out of step: no guessing
+    azShow('d-liked', list.map(function (item, i) { return { item: item, li: lis[i] }; }));
   }
   function savedEpisodesItem(d) {
     return { kind: 'episodes', name: 'Saved episodes', uri: null, url: 'https://open.spotify.com/collection/your-episodes', sub: 'Podcast · ' + d.episodesTotal + (d.episodesTotal === 1 ? ' episode' : ' episodes') };
@@ -5122,7 +5346,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.57 (2026-11-27)';
+  var VERSION = 'v2.58 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -7141,6 +7365,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     if (state.detail) return;   // the song list view owns the page
     var main = $('main');
     main.textContent = '';
+    azHide();   // v2.58: shown again below when this list qualifies
     var plk = linkOf($('search').value);   // v2.36: a pasted Spotify link replaces the list
     if (plk) return renderLink(main, plk);
     if (state.filter === 'search') return renderSearch(main);
@@ -7208,10 +7433,16 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       return;
     }
     var ul = el('ul', { class: 'list' });
-    items.forEach(function (i) { ul.appendChild(itemRow(i)); });
+    var azPairs = [];   // v2.58: the sorted rows (Liked Songs and Saved episodes stay pinned first and are left out)
+    items.forEach(function (i) {
+      var li = itemRow(i);
+      ul.appendChild(li);
+      if (i.kind !== 'liked' && i.kind !== 'episodes') azPairs.push({ item: i, li: li });
+    });
     main.appendChild(ul);
     // v2.56: By you is on but you own none of these playlists (Liked Songs is still listed above).
     if (byYou && !state.query.trim() && !base.some(isOwn)) main.appendChild(el('p', { class: 'empty', text: 'You don’t own any playlists yet. Tap “By you” to show them all.' }));
+    if (!state.query.trim() && view !== 'all') azShow(view, azPairs);   // v2.58
   }
   // ---------- Home (v2.10): shortcuts to your own things, nothing Spotify recommends ----------
   // Built only from what the page already loads: your library, your pins, the Latest episodes cache,
@@ -7977,6 +8208,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   }
   function renderDetail() {
     var d = state.detail;
+    azHide();   // v2.58: paintDetailList / paintDetailFoot show it again for a fully loaded Liked Songs
     if (d.kind === 'artist') return renderArtist(d);
     var it = d.item;
     $('top').classList.add('detail');
@@ -8088,6 +8320,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     }
     list = view ? sortShown(view, sortList(view, list)) : list;
     appendDetailRows(tok ? list.slice(0, FIND_SHOW) : list, true);
+    azDetail();   // v2.58
   }
   // v2.40: the filter chips above a podcast's episodes and Saved episodes, with "Showing 3 of 50 loaded" while a
   // filter is on, and "Show all episodes" when it hides every loaded row (Load more stays below: older pages may
@@ -8364,6 +8597,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     paintDetailCopy();   // v2.24: its own box, so the steps never redraw #dfoot or reload an open player
     paintFindBox(d);   // v2.22
     paintYears(d);   // v2.54: the Older chip follows loading and pauses
+    azDetail();   // v2.58: the last page landing (appended rows) or Find in list starting/ending
     if (d.restricted && d.embed && f.querySelector('.sembed-box')) return;   // v2.16: keep the open player (redrawing would reload it)
     dropEmbed(d);
     f.textContent = '';
@@ -10528,6 +10762,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     releasePoller();
     paintCool();       // hides the cool-off line (state.started is false now)
     stopFind(state.detail); state.detailStack.forEach(stopFind);   // v2.22
+    azHide(true);   // v2.58
     state.detail = null; state.detailStack = [];
     $('top').classList.remove('detail');
     setSlim(false);   // v2.49
@@ -10868,6 +11103,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       state.query = e.target.value;
       clearTimeout(queryTimer); queryTimer = null;
       var f0 = state.filter;
+      if (state.query.trim() && !state.detail) azHide();   // v2.58: the A–Z strip goes at once, not after the redraw delay
       if (!state.query || $('main').getElementsByTagName('li').length <= QUERY_DEBOUNCE_ROWS) renderList();
       else queryTimer = setTimeout(function () { queryTimer = null; if (state.filter === f0) renderList(); }, 150);
     }
