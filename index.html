@@ -4133,7 +4133,17 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (opts.shuffle && item.uris && body.uris.length > 1) shuffleList(body.uris);   // v2.31: a song list is shuffled here too
     var q = '?device_id=' + encodeURIComponent(d.id);
     function send(b) { return api('/me/player/play' + q, { method: 'PUT', body: b }); }
-    function shuffle() { return api('/me/player/shuffle?state=true&device_id=' + encodeURIComponent(d.id), { method: 'PUT' }); }
+    // Play on a whole list (no song picked) starts it in order, so it turns Spotify's Shuffle off
+    // when the last check saw it on; Shuffle turns it on. A song tap or Continue keeps Spotify's setting.
+    var wholeList = !body.offset && (!!body.context_uri || item.kind === 'likedby');   // likedby: Liked songs by an artist, played as a song list
+    var shuffleOff = !opts.shuffle && wholeList && !!(state.player && state.player.shuffle_state);
+    var wantShuffle = opts.shuffle ? true : shuffleOff ? false : null;
+    function shuffle() {
+      return api('/me/player/shuffle?state=' + wantShuffle + '&device_id=' + encodeURIComponent(d.id), { method: 'PUT' }).then(function (r) {
+        if (r.ok && state.player) state.player.shuffle_state = wantShuffle;
+        return r;
+      });
+    }
     var shuffleOk = true;
     state.pollSeq++;   // audit: ignore any check that started before this play (it would repaint the old song and cancel the check below)
     state.pollExpect = null;
@@ -4147,13 +4157,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         return !!(x.context && x.context.uri === b.context_uri) || x.item.uri !== uriBefore;
       };
     }
-    var pre = opts.shuffle ? shuffle().then(function (r) { shuffleOk = r.ok; }, function () { shuffleOk = false; }) : Promise.resolve();
+    var pre = wantShuffle !== null ? shuffle().then(function (r) { shuffleOk = r.ok; }, function () { shuffleOk = false; }) : Promise.resolve();
     var back = (item.positionMs > 0 && body.position_ms != null) ? Math.round(item.positionMs) - body.position_ms : 0;   // v2.44
     function done(sent) {
       // v2.33: Skip intro says where it started; v2.44: a rewound resume says how far back (never both: intro is for starts at 0 only)
       toast((opts.shuffle ? 'Shuffling “' : 'Playing “') + item.name + '” on ' + d.name + (item.introSecs ? ' from ' + fmtTime(item.introSecs * 1000) : '') + rewindText(back));
       // Shuffle on a device that wasn't active yet can fail; try again now that it plays.
-      if (opts.shuffle && !shuffleOk) shuffle().catch(function () {});
+      if (wantShuffle !== null && !shuffleOk) shuffle().catch(function () {});
       noteStarted(item, sent.position_ms);   // v2.11: an episode goes into the podcast history right away (v2.44: at the spot sent)
       state.lastActiveAt = Date.now();
       expectAfter(started(sent));
@@ -4636,7 +4646,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.45 (2026-11-27)';
+  var VERSION = 'v2.46 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
