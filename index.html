@@ -372,6 +372,7 @@ header.top.detail .schips { display: none; }
 .sortlbl { font-size: 0.8rem; font-weight: 600; color: var(--muted); margin-right: 2px; }
 .sortbar .chip { font-size: 0.85rem; padding: 5px 11px; min-height: 34px; }
 .snote { font-size: 0.8rem; color: var(--muted); margin: 6px 2px 0; }
+.sortdir { margin-left: 4px; }   /* v2.34: ↑ or ↓ on a chosen sort that turns around */
 /* Full Now Playing screen: slides up over everything except the sheets (device picker, Up next) and the toast */
 body.npopen { overflow: hidden; }
 body.sheetopen { overflow: hidden; }   /* audit: the page stays still behind an open sheet (own class, so NP's lock is never touched) */
@@ -791,7 +792,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // Search Spotify result types. key: the page object in the /search answer; map: row mapper.
   var SEARCH_TYPES = ['all', 'track', 'artist', 'album', 'playlist', 'show', 'episode'];
   var STYPE = {
-    track: { key: 'tracks', label: 'Songs', map: function (t) { return mapTrack(t); } },
+    track: { key: 'tracks', label: 'Songs', map: function (t) { var m = mapTrack(t); if (m && t.album) { m.albumName = t.album.name || ''; m.released = relDay(t.album.release_date); } return m; } },   // v2.34: album and date for sorting
     artist: { key: 'artists', label: 'Artists', map: function (a) { var m = mapArtist(a); if (m) m.sub = 'Artist'; return m; } },
     album: { key: 'albums', label: 'Albums', map: function (a) { return mapAlbum(a); } },
     playlist: { key: 'playlists', label: 'Playlists', map: function (p) { return mapPlaylist(p); } },
@@ -1517,6 +1518,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // ---------- sorting: one chip row per view, the choice stored per view ('lib-sort-<view>') ----------
   // The first option of each view is its default, which is always the order the page used before sorting existed.
   // Detail views (song and episode lists) start with 'd-'. They sort only the rows loaded so far.
+  // v2.34: a sort in SORT_FLIP turns around when its chip is tapped again; the reversed choice is stored as '<option>:rev'.
   var SORTS = {
     playlists: [['default', 'Default'], ['az', 'A–Z'], ['songs', 'Most songs']],
     albums: [['saved', 'Recently saved'], ['az', 'A–Z'], ['artist', 'Artist A–Z'], ['released', 'Release date']],
@@ -1524,13 +1526,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     all: [['default', 'Default'], ['az', 'A–Z']],
     shows: [['updated', 'Recently updated'], ['az', 'A–Z'], ['saved', 'Recently saved']],
     latest: [['newest', 'Newest first'], ['oldest', 'Oldest first'], ['show', 'Show A–Z']],
-    'd-album': [['track', 'Track order'], ['az', 'A–Z'], ['artist', 'Artist A–Z']],
-    'd-playlist': [['default', 'Default'], ['az', 'Title A–Z'], ['artist', 'Artist A–Z'], ['added', 'Recently added']],
-    'd-liked': [['default', 'Recently liked'], ['az', 'Title A–Z'], ['artist', 'Artist A–Z'], ['lastplay', 'Not played lately']],   // v2.30: Not played lately
+    'd-album': [['track', 'Track order'], ['az', 'A–Z'], ['artist', 'Artist A–Z'], ['dur', 'Duration']],
+    'd-playlist': [['default', 'Default'], ['az', 'Title A–Z'], ['artist', 'Artist A–Z'], ['added', 'Recently added'], ['dur', 'Duration'], ['album', 'Album'], ['rel', 'Release date']],
+    'd-liked': [['default', 'Recently liked'], ['az', 'Title A–Z'], ['artist', 'Artist A–Z'], ['lastplay', 'Not played lately'], ['dur', 'Duration'], ['album', 'Album'], ['rel', 'Release date']],   // v2.30: Not played lately
     'd-show': [['newest', 'Newest'], ['oldest', 'Oldest']],
     'd-episodes': [['saved', 'Recently saved'], ['newest', 'Newest'], ['oldest', 'Oldest']],
     // Search Spotify with one result type: 's-<type>'. Best match is Spotify's own order.
-    's-track': [['best', 'Best match'], ['az', 'A–Z']],
+    's-track': [['best', 'Best match'], ['az', 'A–Z'], ['dur', 'Duration'], ['album', 'Album'], ['rel', 'Release date']],
     's-artist': [['best', 'Best match'], ['az', 'A–Z']],
     's-album': [['best', 'Best match'], ['az', 'A–Z'], ['newest', 'Newest']],
     's-playlist': [['best', 'Best match'], ['az', 'A–Z'], ['songs', 'Most songs']],
@@ -1541,9 +1543,34 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function sortText(s) { return String(s || '').replace(/^the\s+/i, ''); }
   function cmpText(a, b) { return sortText(a).localeCompare(sortText(b), undefined, { sensitivity: 'base', numeric: true }); }
   function byName(a, b) { return cmpText(a.name, b.name); }
+  // v2.34: a release date as YYYY, YYYY-MM or YYYY-MM-DD (month 01–12, day 01–31); anything else (Spotify's "0000"
+  // for unknown, a zero month or day) is ''.
+  function relDay(s) { return /^\d{4}(-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?)?$/.test(s || '') && !/^0000/.test(s) ? s : ''; }
   // Dates and times as strings (ISO or YYYY[-MM[-DD]]); a missing value always goes last.
   function cmpDesc(x, y) { if (x === y) return 0; if (!x) return 1; if (!y) return -1; return x < y ? 1 : -1; }
   function cmpAsc(x, y) { if (x === y) return 0; if (!x) return 1; if (!y) return -1; return x < y ? -1 : 1; }
+  // v2.34: song sorts that turn around: [first tap, tap again], each [how the chip's label says the order, arrow].
+  var SORT_FLIP = {
+    dur: [['shortest first', '↑'], ['longest first', '↓']],
+    album: [['A–Z', '↑'], ['Z–A', '↓']],
+    rel: [['newest first', '↓'], ['oldest first', '↑']]
+  };
+  // v2.34: rev turns the order around; a missing value (no length, album or date) still goes last, and ties keep the default order.
+  function cmpDur(a, b, rev) { var x = a.durMs || 0, y = b.durMs || 0; if (x === y) return 0; if (!x) return 1; if (!y) return -1; return rev ? y - x : x - y; }
+  function cmpAlbum(a, b, rev) { var x = a.albumName || '', y = b.albumName || ''; if (!x || !y) return (!x) - (!y); var r = cmpText(x, y); return rev ? -r : r; }
+  // Release dates come as YYYY, YYYY-MM or YYYY-MM-DD. Compared part by part: newest first (rev: oldest first), and
+  // within a year (or month) a date given only that far goes after the more exact ones, either way.
+  function cmpRel(a, b, rev) {
+    var x = (a.released || '').split('-'), y = (b.released || '').split('-');
+    for (var i = 0; i < 3; i++) {
+      var p = x[i] || '', q = y[i] || '';
+      if (p === q) { if (!p) return 0; continue; }
+      if (!p) return 1;
+      if (!q) return -1;
+      return (p < q ? 1 : -1) * (rev ? -1 : 1);
+    }
+    return 0;
+  }
   // Comparators per view and option; a default option has none and keeps the list as it came.
   // Sorting is stable, so ties keep that original order.
   var SORT_CMP = {
@@ -1560,12 +1587,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       oldest: function (a, b) { return cmpAsc(a.date, b.date); },
       show: function (a, b) { return cmpText(a.showName, b.showName); }   // ties stay newest first
     },
-    'd-album': { az: byName, artist: function (a, b) { return cmpText(a.artist, b.artist); } },
-    'd-playlist': { az: byName, artist: function (a, b) { return cmpText(a.artist, b.artist); }, added: function (a, b) { return cmpDesc(a.added, b.added); } },
-    'd-liked': { az: byName, artist: function (a, b) { return cmpText(a.artist, b.artist); }, lastplay: function (a, b) { return cmpLastPlay(a, b); } },   // v2.30
+    'd-album': { az: byName, artist: function (a, b) { return cmpText(a.artist, b.artist); }, dur: cmpDur },
+    'd-playlist': { az: byName, artist: function (a, b) { return cmpText(a.artist, b.artist); }, added: function (a, b) { return cmpDesc(a.added, b.added); }, dur: cmpDur, album: cmpAlbum, rel: cmpRel },
+    'd-liked': { az: byName, artist: function (a, b) { return cmpText(a.artist, b.artist); }, lastplay: function (a, b) { return cmpLastPlay(a, b); }, dur: cmpDur, album: cmpAlbum, rel: cmpRel },   // v2.30
     'd-show': { oldest: function (a, b) { return cmpAsc(a.date, b.date); } },
     'd-episodes': { newest: function (a, b) { return cmpDesc(a.date, b.date); }, oldest: function (a, b) { return cmpAsc(a.date, b.date); } },
-    's-track': { az: byName },
+    's-track': { az: byName, dur: cmpDur, album: cmpAlbum, rel: cmpRel },
     's-artist': { az: byName },
     's-album': { az: byName, newest: function (a, b) { return cmpDesc(a.released, b.released); } },
     's-playlist': { az: byName, songs: function (a, b) { return (b.count || 0) - (a.count || 0); } },
@@ -1577,17 +1604,20 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!opts) return '';
     var v = get('lib-sort-' + view);
     if (v == null && view === 'shows') v = get(K.showSort);   // the Shows choice from v2.7
+    if (typeof v === 'string' && SORT_FLIP[v.replace(/:rev$/, '')]) v = v.replace(/:rev$/, '');   // v2.34
     for (var i = 0; i < opts.length; i++) { if (opts[i][0] === v) return v; }
     return opts[0][0];
   }
+  // v2.34: true when the chosen sort was tapped again ('dur:rev' stored).
+  function sortRev(view) { var m = sortMode(view); return !!SORT_FLIP[m] && get('lib-sort-' + view) === m + ':rev'; }
   function sortIsDefault(view) { return !SORTS[view] || sortMode(view) === SORTS[view][0][0]; }
   function sortList(view, list) {
-    var m = sortMode(view);
+    var m = sortMode(view), rev = sortRev(view);
     if (view === 'shows' && m === 'updated') return showsByNewest(list);
     var cmp = SORT_CMP[view] && SORT_CMP[view][m];
     if (!cmp) return list.slice();
     return list.map(function (x, i) { return { x: x, i: i }; })
-      .sort(function (a, b) { return cmp(a.x, b.x) || a.i - b.i; })
+      .sort(function (a, b) { return cmp(a.x, b.x, rev) || a.i - b.i; })
       .map(function (w) { return w.x; });
   }
   // The chip row. rerender() repaints whatever the row sorts; focus then returns to the chip just pressed.
@@ -1598,9 +1628,16 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     ]);
     SORTS[view].forEach(function (s) {
       var b = el('button', { class: 'chip', type: 'button', 'data-sort': s[0], 'aria-pressed': String(cur === s[0]), text: s[1] });
+      var flip = SORT_FLIP[s[0]];
+      if (flip && cur === s[0]) {   // v2.34: the chosen one shows its direction: "Duration ↑", read as "Duration, shortest first"
+        var f = flip[sortRev(view) ? 1 : 0];
+        b.setAttribute('aria-label', s[1] + ', ' + f[0]);
+        b.appendChild(el('span', { class: 'sortdir', 'aria-hidden': 'true', text: f[1] }));
+      }
       b.addEventListener('click', function () {
-        if (sortMode(view) === s[0]) return;
-        set('lib-sort-' + view, s[0]);
+        var same = sortMode(view) === s[0];
+        if (same && !flip) return;
+        set('lib-sort-' + view, same && !sortRev(view) ? s[0] + ':rev' : s[0]);   // v2.34: tapped again, it turns around
         rerender();
         var nb = document.querySelector('.sortbar[data-view="' + view + '"] [data-sort="' + s[0] + '"]');
         if (nb) nb.focus();
@@ -1608,6 +1645,16 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       g.appendChild(b);
     });
     return g;
+  }
+  // v2.34: while a Duration or Release date sort is on, each row's second line ends with that value ("· 3:45",
+  // "· May 1999"). Drawn on copies, so nothing stored or matched changes.
+  function sortShown(view, list) {
+    var m = sortMode(view);
+    if (m !== 'dur' && m !== 'rel') return list;
+    return list.map(function (i) {
+      var x = m === 'dur' ? (i.durMs ? fmtTime(i.durMs) : '') : fmtDate(i.released);
+      return x ? Object.assign({}, i, { sub: (i.sub || '') + ' · ' + x }) : i;
+    });
   }
   function savedEpisodesItem(d) {
     return { kind: 'episodes', name: 'Saved episodes', uri: null, url: 'https://open.spotify.com/collection/your-episodes', sub: 'Podcast · ' + d.episodesTotal + (d.episodesTotal === 1 ? ' episode' : ' episodes') };
@@ -3786,7 +3833,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.33 (2026-11-27)';
+  var VERSION = 'v2.34 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -5146,7 +5193,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var ul = $('slist');
     if (!ul) return;
     ul.textContent = '';
-    appendSearchRows(sortList('s-' + e.type, e.items), e);
+    appendSearchRows(sortShown('s-' + e.type, sortList('s-' + e.type, e.items)), e);
   }
   function searchFirst() {
     var v = get(K.searchFirst);
@@ -5481,6 +5528,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var m = mapTrack(t, { sub: sub, ctx: parent.kind === 'liked' ? likedCtx() : parent.uri });
     if (m && it.added_at) m.added = it.added_at;   // when it was added to the playlist (or liked), for sorting
     if (m && t.album && t.album.name) m.albumName = t.album.name;   // v2.22: for Find in list
+    if (m && t.album) m.released = relDay(t.album.release_date);   // v2.34: for the Release date sort
     if (m && parent.kind === 'liked' && state.saved[m.uri] === undefined) state.saved[m.uri] = true;
     if (m && parent.kind === 'liked') likedNote(m, t);   // v2.31: artist IDs, for Liked songs on the artist page
     return m;
@@ -5668,7 +5716,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       list = list.filter(function (i) { return findHit(i, tok); });
       d.findHits = list.length;
     }
-    list = view ? sortList(view, list) : list;
+    list = view ? sortShown(view, sortList(view, list)) : list;
     appendDetailRows(tok ? list.slice(0, FIND_SHOW) : list);
   }
   function firstUnplayed(items) {
