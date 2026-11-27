@@ -2893,13 +2893,22 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!body) return Promise.reject(new Error('your account details haven’t loaded yet'));
     var q = '?device_id=' + encodeURIComponent(d.id);
     function send(b) { return api('/me/player/play' + q, { method: 'PUT', body: b }); }
-    function shuffle() { return api('/me/player/shuffle?state=true&device_id=' + encodeURIComponent(d.id), { method: 'PUT' }); }
+    // Play on a whole list (no song picked) starts it in order, so it turns Spotify's Shuffle off
+    // when the last check saw it on; Shuffle turns it on. A song tap or Continue keeps Spotify's setting.
+    var shuffleOff = !opts.shuffle && !!body.context_uri && !body.offset && !!(state.player && state.player.shuffle_state);
+    var wantShuffle = opts.shuffle ? true : shuffleOff ? false : null;
+    function shuffle() {
+      return api('/me/player/shuffle?state=' + wantShuffle + '&device_id=' + encodeURIComponent(d.id), { method: 'PUT' }).then(function (r) {
+        if (r.ok && state.player) state.player.shuffle_state = wantShuffle;
+        return r;
+      });
+    }
     var shuffleOk = true;
-    var pre = opts.shuffle ? shuffle().then(function (r) { shuffleOk = r.ok; }, function () { shuffleOk = false; }) : Promise.resolve();
+    var pre = wantShuffle !== null ? shuffle().then(function (r) { shuffleOk = r.ok; }, function () { shuffleOk = false; }) : Promise.resolve();
     function done() {
       toast((opts.shuffle ? 'Shuffling “' : 'Playing “') + item.name + '” on ' + d.name);
       // Shuffle on a device that wasn't active yet can fail; try again now that it plays.
-      if (opts.shuffle && !shuffleOk) shuffle().catch(function () {});
+      if (wantShuffle !== null && !shuffleOk) shuffle().catch(function () {});
       noteStarted(item);   // v2.11: an episode goes into the podcast history right away
       state.lastActiveAt = Date.now();
       schedulePoll(600, true);   // v2.13: this copy checks once even if another copy is the poller
