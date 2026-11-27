@@ -326,7 +326,7 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
 /* v2.24: Make a copy (playlists you don't own) */
 .dcopy { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 0 0 12px; overflow-wrap: anywhere; }
 .dcopy p { margin: 0; }
-.dcopy [tabindex="-1"]:focus, .dname[tabindex="-1"]:focus { outline: none; }
+.dcopy [tabindex="-1"]:focus, .dname[tabindex="-1"]:focus, #notesBody:focus { outline: none; }
 .copysteps { margin: 0; padding-left: 1.4em; display: flex; flex-direction: column; gap: 4px; }
 .copynote { font-size: 0.85rem; color: var(--muted); }
 .lnote .copyline { min-width: 0; overflow-wrap: anywhere; }
@@ -599,7 +599,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   <div class="sheet-panel">
     <h2 id="notesTitle">Episode notes</h2>
     <div class="notes-meta" id="notesMeta"></div>
-    <div class="notes-body" id="notesBody"></div>
+    <div class="notes-body" id="notesBody" tabindex="-1"></div>
     <p class="notes-note" id="notesMarkNote">Only on this phone. The Spotify app won’t see it.</p>
     <div class="sheet-btns">
       <button class="btn secondary" id="notesMark" type="button">Mark as played</button>
@@ -1750,10 +1750,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       sp: typeof x.sp === 'boolean' ? x.sp : !!x.played };
   }
   var notesView = null;      // {ep, loading, error} while the notes sheet is open
-  var notesReturn = null, notesSeq = 0;
+  var notesReturn = null, notesReturnLabel = '', notesSeq = 0;
   function openNotes(ep, from) {
     if (!ep || !ep.id) return;
     notesReturn = (from && from.nodeType === 1) ? from : document.activeElement;
+    notesReturnLabel = (notesReturn && notesReturn.getAttribute && notesReturn.getAttribute('aria-label')) || '';   // audit: A11Y-6c
     notesView = { ep: ep, loading: false, error: '' };
     notesSeq++;
     var mem = memNotes(ep.id);
@@ -1768,9 +1769,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     $('notes').hidden = true;
     notesSeq++;
     notesView = null;
-    var r = notesReturn;
-    notesReturn = null;
-    if (restore !== false && r && r.focus && document.body.contains(r)) r.focus();
+    var r = notesReturn, lab = notesReturnLabel;
+    notesReturn = null; notesReturnLabel = '';
+    if (restore === false || !r || !r.focus) return;
+    if (document.body.contains(r)) { r.focus(); return; }
+    // audit: A11Y-6c the list was redrawn meanwhile (Mark as played): focus the redrawn row's button
+    if (!lab) return;
+    var bs = document.querySelectorAll('#main button');
+    for (var i = 0; i < bs.length; i++) { if (bs[i].getAttribute('aria-label') === lab) { bs[i].focus({ preventScroll: true }); return; } }
   }
   // Load notes: one GET /episodes/{id} (podcast and album details), only on that tap, kept for the visit.
   function loadNotes() {
@@ -1810,6 +1816,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     mb.textContent = shownPlayed(ep) ? 'Mark as unplayed' : 'Mark as played';
     var body = $('notesBody');
     var y = body.scrollTop;
+    var ae = document.activeElement, refocus = body.contains(ae) || !ae || ae === document.body;   // audit: A11Y-6b
     body.textContent = '';
     var n = notesFor(ep.id);
     function loadBtn(label) {
@@ -1832,6 +1839,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }
     if (v.error) body.appendChild(el('p', { class: 'err', text: v.error }));
     body.scrollTop = y;
+    if (refocus) {   // the focused control was just replaced: its replacement, else the notes box, keeps focus in the sheet
+      var nb = body.querySelector('button.btn:not([disabled])');
+      (nb || body).focus({ preventScroll: true });
+    }
   }
   function notesNode(text, ep) {
     var box = el('p', { class: 'notes-text' });
@@ -2723,7 +2734,15 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       a.addEventListener('click', function (ev) { onItemClick(i, ev); });   // plays from positionMs
       var mb = el('button', { class: 'clmark', type: 'button', 'aria-label': 'Mark “' + i.name + '” as played' });   // v2.21
       mb.innerHTML = ICON.check;
-      mb.addEventListener('click', function () { toggleMark({ uri: i.uri, name: i.name, sp: false }); });
+      mb.addEventListener('click', function () {
+        var at = [].indexOf.call(document.querySelectorAll('.cl .clmark'), mb);
+        toggleMark({ uri: i.uri, name: i.name, sp: false });
+        if (document.body.contains(mb)) return;
+        // audit: A11Y-6a the card went away with the redraw: the next card's button, else the last, else the active filter
+        var ms = document.querySelectorAll('.cl .clmark');
+        var nb = ms[at] || ms[ms.length - 1] || document.querySelector('.filters .chip[aria-pressed="true"]');
+        if (nb) nb.focus({ preventScroll: true });
+      });
       ul.appendChild(el('li', { 'data-puri': i.uri, class: cur && cur === i.uri ? 'playing' : null }, [a, mb]));
     });
     main.appendChild(ul);
