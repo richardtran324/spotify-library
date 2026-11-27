@@ -6762,15 +6762,31 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // replace: from the artist's song list, Liked Songs takes its place, so Back returns to the artist page.
   function findInLiked(name, replace) {
     if (!state.data) return;
-    // Liked Songs already open under this view: go back to it (nothing asked again) instead of opening it anew.
-    var st = state.detailStack;
+    // Liked Songs already open under this view: that same view moves up to just above the artist page, with what
+    // it has loaded (nothing asked again), so Back from it returns to the artist page and then to where it was.
+    // The number of views stays the same (or drops by the artist's song list), so history stays in step.
+    var st = state.detailStack, cur = state.detail;
     for (var i = st.length - 1; i >= 0; i--) {
       var u = st[i];
       if (!u || u.kind === 'artist' || !u.item || u.item.kind !== 'liked' || u.src !== 'api' || u.restricted) continue;
       u.find = name || '';
-      var n = st.length - i, hist = location.hash === '#detail' && st.slice(i + 1).concat([state.detail]).every(function (v) { return v.pushed; });
-      if (hist) { try { history.go(-n); return; } catch (e) {} }   // popstate closes the views above it
-      while (n-- > 0) closeDetail();
+      var old = u.returnScroll;
+      st.splice(i, 1);
+      var above = st[i] || null;   // the view that sat on it now returns to where it did
+      if (replace) {   // from the artist's song list: Liked Songs goes under it, then the list closes
+        if (above) { above.returnScroll = old; u.returnScroll = cur.returnScroll; }
+        st.push(u);
+        goBack();
+        return;
+      }
+      (above || cur).returnScroll = old;   // from the artist page: Liked Songs on top, the artist page under it
+      u.returnScroll = window.pageYOffset || document.documentElement.scrollTop || 0;
+      st.push(cur);
+      state.detail = u;
+      renderDetail();
+      window.scrollTo(0, 0);
+      var bk = document.querySelector('.dhead .back');
+      if (bk) bk.focus({ preventScroll: true });
       return;
     }
     openDetail(likedDetailItem(), { push: !replace && !!state.detail });
