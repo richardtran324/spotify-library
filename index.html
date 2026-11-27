@@ -809,6 +809,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     search: { q: '' }, stype: 'all',   // results live in searchCache, per type and query
     recent: { items: null, jump: null, loading: false, error: '' }, recentSeq: 0, recentTriedAt: 0,
     saved: {}, busy: {}, containsOff: false, checking: {}, checkQueue: [], checkTimer: null,
+    checkFailedAt: {},   // audit: uri -> when its heart check last failed (not 403/404); asked again after 60 s
     // detail: the open song list or artist view; detailStack: the views under it (v2.12: an album opened from an artist).
     // Each view keeps returnScroll (where the view under it was scrolled) and pushed (it has its own history entry).
     detail: null, detailStack: [],
@@ -1966,7 +1967,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function requestSaved(uris) {
     if (state.containsOff) return;
     uris.forEach(function (u) {
-      if (u && state.saved[u] === undefined && !state.checking[u]) { state.checking[u] = true; state.checkQueue.push(u); }
+      if (u && state.saved[u] === undefined && !state.checking[u] &&
+          // audit: only Spotify items (not spotify:local: files), and not within 60 s of a failed check
+          /^spotify:(track|episode|album|show|playlist|artist):/.test(u) &&
+          Date.now() - (state.checkFailedAt[u] || 0) >= 60000) { state.checking[u] = true; state.checkQueue.push(u); }
     });
     // While cooling off the queue just waits; afterCool() sends it.
     if (state.checkQueue.length && !state.checkTimer && !coolLeft('library')) state.checkTimer = setTimeout(flushChecks, 60);
@@ -1981,7 +1985,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function checkBatch(batch) {
     api('/me/library/contains?uris=' + encodeURIComponent(batch.join(','))).then(function (r) {
-      if (!r.ok || !Array.isArray(r.json)) throw new Error(errMsg(r));
+      if (!r.ok || !Array.isArray(r.json)) throw httpError(r);
       batch.forEach(function (u, i) {
         if (state.saved[u] === undefined) state.saved[u] = r.json[i] === true;
         delete state.checking[u];
@@ -1994,9 +1998,16 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         batch.forEach(function (u) { if (state.saved[u] === undefined) state.checkQueue.push(u); else delete state.checking[u]; });
         return;
       }
+      batch.forEach(function (u) { delete state.checking[u]; });
+      // audit: a network error, 5xx, 401 or unreadable answer is a blip, not "unavailable":
+      // leave these unchecked and let a later render ask again, at most once a minute per item.
+      if (e.status !== 403 && e.status !== 404) {
+        var now = Date.now();
+        batch.forEach(function (u) { state.checkFailedAt[u] = now; });
+        return;
+      }
       // Unavailable (e.g. not offered to Development Mode apps): stop asking this session.
       // Hearts stay outlined and a tap saves unless we already know it's saved.
-      batch.forEach(function (u) { delete state.checking[u]; });
       state.containsOff = true;
       state.checkQueue = [];
     });
