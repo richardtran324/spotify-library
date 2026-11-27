@@ -406,7 +406,8 @@ tests.push(function () {
   var store = store0({ latest: { at: Date.now() - 2 * MIN, items: items, failed: 0, newest: { s1: dayIso(1) }, asked: 1 } });
   store.setItem('lib-hide-played', 'true');
   return setup(store, { shows: [showObj(1)] }).then(function (tab) {
-    check('9 all played and hidden: explains', /Everything here is played\. Turn off Hide played to see it\./.test(q(tab, '#main').textContent));
+    // #40: Hide played is now the Unplayed filter chip, so the message points to All.
+    check('9 all played and hidden: explains', /Everything here is played\. Tap All to see it\./.test(q(tab, '#main').textContent), q(tab, '#main').textContent.slice(-120));
     var at0 = tab.t().state.latest.cache.at;
     store.setItem('lib-latest', JSON.stringify({ at: at0 + 1000, items: [lrow('y1', 's1', 'Show 1', 0)], failed: 0, newest: { s1: dayIso(0) }, asked: 1 }));
     store.setItem('lib-hide-played', 'false');
