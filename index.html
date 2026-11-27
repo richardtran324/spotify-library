@@ -5519,7 +5519,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         var raws = (r.json.items || []).filter(function (x) { return x && x.id && x.uri; }).map(kind === 'album' ? slTrack : slEpisode);
         if (first) d.checkedAt = Date.now();
         if (kind === 'album' && first) d.raw = raws;   // the first page (or Reload from Spotify) starts the list over
-        else if (kind === 'show' && first && d.raw.length) {
+        else if (kind === 'show' && first && d.raw.length && r.json.next && raws.length && !d.raw.some(function (x) { return x.id === raws[raws.length - 1].id; })) {
+          // audit: page 1's oldest episode isn't in the saved copy (50+ new since it was saved, or Latest's newest few
+          // on top of an older copy), so joining them would hide a gap: the list starts over from page 1.
+          d.raw = raws;
+        } else if (kind === 'show' && first && d.raw.length) {
           // Page 1 over a saved copy: Spotify's newest episodes first, then the saved ones it didn't include.
           var ids = {};
           raws.forEach(function (x) { ids[x.id] = true; });
@@ -6064,6 +6068,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var had = {};
     c.items.forEach(function (x) { had[x.id] = true; });
     var overlap = raws.some(function (x) { return had[x.id]; });
+    if (!overlap) return;   // audit: no overlap would leave a gap under them; the copy stays, and opening checks page 1
     var ids = {};
     raws.forEach(function (x) { ids[x.id] = true; });
     c.items = raws.concat(c.items.filter(function (x) { return !ids[x.id]; })).slice(0, SL_SHOW_EPS);
