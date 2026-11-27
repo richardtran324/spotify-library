@@ -438,6 +438,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
 }
 .cardplay svg { width: 20px; height: 20px; display: block; }
 .cardplay:active { opacity: 0.7; }
+/* v2.21: Mark as played on a Continue listening card: a small round button on the cover's top right */
+.clmark {
+  position: absolute; top: 4px; right: 4px; width: 32px; height: 32px; padding: 0; border: 1px solid var(--line); border-radius: 50%;
+  display: grid; place-items: center; background: var(--surface); color: var(--fg); cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+.clmark svg { width: 18px; height: 18px; display: block; }
+.clmark:active { opacity: 0.7; }
 .acover { flex: none; display: flex; }   /* artist view: holds the picture, which arrives a moment later */
 .cover.round.dcover { border-radius: 50%; }
 /* v2.13: Spotify answered 429 (too many requests); a slim line at the bottom of the header while the page waits */
@@ -575,7 +583,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     <h2 id="notesTitle">Episode notes</h2>
     <div class="notes-meta" id="notesMeta"></div>
     <div class="notes-body" id="notesBody"></div>
+    <p class="notes-note" id="notesMarkNote">Only on this phone. The Spotify app won’t see it.</p>
     <div class="sheet-btns">
+      <button class="btn secondary" id="notesMark" type="button">Mark as played</button>
       <button class="btn secondary" id="notesClose" type="button">Close</button>
     </div>
   </div>
@@ -668,6 +678,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     lastplay: 'lib-lastplay',    // v2.10: {item, context, positionMs, deviceId, at[, shuffle, repeat, frozenAt]}: the last song or episode seen playing
     epHistory: 'lib-ep-history', // v2.11: [{uri, id, name, show:{id, name, images}, duration_ms, positionMs, played, at[, checkedAt]}], newest first
     epNotes: 'lib-ep-notes',     // v2.18: [{id, t, at[, cut]}], newest first: notes of episodes you opened or played (40, 4,000 characters each)
+    epMarks: 'lib-ep-marks',     // v2.21: {uri: {played, at, pos}}: Mark as played / unplayed, this phone only (400, 180 days)
     // v2.13 rate limits. Shared by every copy of the page that shares this storage (Safari tabs on one origin).
     cool: 'lib-cooloff',         // v2.14: {group: {until, reason, strikes, quotaAt, retryAfter, last429:{at, reason, retryAfter, what}}}
     poller: 'lib-poller',        // {id, at, every}: the one visible copy that runs the player check
@@ -694,6 +705,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   var EP_HIST_MS = 60 * 24 * 60 * 60 * 1000; // entries older than 60 days are dropped
   var EP_HIST_WRITE_MS = 15000;              // storage writes for one episode at most this often (memory is always current)
   var EP_PLAYED_TAIL_MS = 60000;             // within the last minute counts as played
+  var MARKS_MAX = 400;                        // v2.21: played marks kept…
+  var MARKS_MS = 180 * 24 * 60 * 60 * 1000;   // …for at most 180 days
+  var MARK_MOVED_MS = 30000;                  // seen playing this far from where it was marked: played again, the mark goes
   // v2.14: no automatic resume-point checks (GET /episodes/{id}); Continue listening uses the page's own history.
   var LASTPLAY_MS = 6 * 60 * 60 * 1000;   // the last playback stays on screen (as paused) this long after Spotify goes idle
   var HOME_RECENT_MS = 15 * 60 * 1000;    // Home: recently played is asked for at most this often (v2.13: was 10 min)
@@ -803,6 +817,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     pinOn: svg('<path fill="currentColor" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M9 3h6v6l3 3v2.5h-5V21h-2v-6.5H6V12l3-3z"/>'),
     back15: svg('<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M5.2 8.5A8 8 0 1 1 4 12"/><path fill="currentColor" d="M3.5 4v6h6z"/><text x="12.5" y="15.5" font-size="7.5" font-weight="700" text-anchor="middle" fill="currentColor" font-family="-apple-system, system-ui, sans-serif">15</text>'),
     fwd30: svg('<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M18.8 8.5A8 8 0 1 0 20 12"/><path fill="currentColor" d="M20.5 4v6h-6z"/><text x="11.5" y="15.5" font-size="7.5" font-weight="700" text-anchor="middle" fill="currentColor" font-family="-apple-system, system-ui, sans-serif">30</text>'),
+    check: svg('<path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M5 12.5l4.5 4.5L19 7.5"/>'),   // v2.21
     notes: svg('<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M6 3h9l4 4v14H6z"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M9 11h7M9 14.5h7M9 18h4"/>'),   // v2.18
     share: svg('<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 3v12M8 7l4-4 4 4M8 10H6v11h12V10h-2"/>'),   // v2.20
     volume: svg('<path fill="currentColor" d="M4 9h4l5-4v14l-5-4H4z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12"/>')
@@ -1449,26 +1464,78 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function epWhen(played, pos, dur) {
     return played ? 'Played' : (pos && dur ? Math.max(1, Math.round((dur - pos) / 60000)) + ' min left' : (dur ? fmtDur(dur) : ''));
   }
+  // ---------- played marks (v2.21) ----------
+  // Spotify gives apps no way to set an episode's played state, so Mark as played / Mark as unplayed are kept on
+  // this phone only ({uri: {played, at, pos}}, 400 at most, 180 days). A mark wins over Spotify's resume point and
+  // the page's own history wherever the page shows played state (Continue listening, Hide played, Play newest, the
+  // green dot, the Played label), until the page sees the episode play again: a tap here, or a player check with
+  // it playing more than 30 s from where it was marked. Saved copies (Latest, podcasts, history) keep Spotify's
+  // own state; the mark goes on top when rows are drawn. No requests.
+  var epMarks = null;   // loaded on first use (memory only, if storage is blocked)
+  function markOk(m, now) {
+    return !!m && typeof m === 'object' && typeof m.played === 'boolean' && typeof m.at === 'number' && now - m.at < MARKS_MS && m.at < now + 60000;
+  }
+  function loadMarks() {
+    var o = get(K.epMarks);
+    if (o && typeof o === 'object' && !Array.isArray(o)) epMarks = o;
+    else if (!epMarks) epMarks = {};
+  }
+  function readMarks() { if (!epMarks) { loadMarks(); pruneMarks(); } return epMarks; }
+  // Drops old or broken entries and keeps the newest MARKS_MAX.
+  function pruneMarks() {
+    var now = Date.now();
+    var keys = Object.keys(epMarks).filter(function (u) { return /^spotify:episode:/.test(u) && markOk(epMarks[u], now); });
+    keys.sort(function (a, b) { return epMarks[b].at - epMarks[a].at; });
+    var out = {};
+    keys.slice(0, MARKS_MAX).forEach(function (u) { out[u] = epMarks[u]; });
+    epMarks = out;
+  }
+  function markOf(uri) {
+    var m = uri ? readMarks() : null;
+    m = m && Object.prototype.hasOwnProperty.call(m, uri) ? m[uri] : null;
+    return markOk(m, Date.now()) ? m : null;
+  }
+  function markCount() { var m = readMarks(), now = Date.now(); return Object.keys(m).filter(function (u) { return markOk(m[u], now); }).length; }
+  // m: {played, at, pos} to set, or null to clear. Re-reads storage first, so another copy's marks are kept.
+  function writeMark(uri, m) {
+    readMarks();
+    loadMarks();
+    if (m) epMarks[uri] = m; else delete epMarks[uri];
+    pruneMarks();
+    set(K.epMarks, epMarks);
+  }
+  // played and pos as known (Spotify's or the page's own), with this phone's mark on top.
+  function withMark(uri, played, pos) {
+    var m = markOf(uri);
+    var p = m ? m.played : !!played;
+    return { played: p, pos: (p || played) ? 0 : (pos || 0) };
+  }
+  // A row item that carries its unmarked state (sp, spos) and the start of its sub line (subBase): played,
+  // positionMs and sub follow the mark. Rows are re-marked whenever they're drawn.
+  function markItem(i) {
+    if (!i || i.kind !== 'episode' || !i.subBase) return i;
+    var r = withMark(i.uri, i.sp, i.spos);
+    i.played = r.played;
+    i.positionMs = r.pos;
+    i.sub = i.subBase.concat(epWhen(r.played, r.pos, i.durMs)).filter(Boolean).join(' · ');
+    return i;
+  }
   // Episode rows: "Episode · <show name or date> · <duration | X min left | Played>".
   // showName: true uses the episode's show name (saved episodes); otherwise the release date.
   function mapEpisode(e, showName) {
     if (!e || !e.uri || !e.id) return null;
     keepNotes(e);   // v2.18: Saved episodes and search answers carry the notes
     var rs = resumeOf(e);
-    var played = rs.played;
-    var pos = rs.pos;
     var dur = e.duration_ms || 0;
-    var when = epWhen(played, pos, dur);
     var by = showName ? ((e.show && e.show.name) || fmtDate(e.release_date)) : (fmtDate(e.release_date) || (e.show && e.show.name) || '');
-    return {
+    return markItem({
       kind: 'episode', id: e.id, name: e.name || 'Untitled', uri: e.uri,
       url: 'https://open.spotify.com/episode/' + e.id,
       img: img(e.images && e.images.length ? e.images : (e.show && e.show.images)),
-      sub: ['Episode', by, when].filter(Boolean).join(' · '),
-      positionMs: pos, played: played,
+      sp: rs.played, spos: rs.pos, subBase: ['Episode', by],   // v2.21: sub, positionMs and played come from markItem
       date: e.release_date || '',   // for sorting
       durMs: dur, showName: (e.show && e.show.name) || ''   // for the total length and Continue listening
-    };
+    });
   }
   // ---------- episode notes (v2.18) ----------
   // The podcaster's own description of an episode, shown as plain text (never as HTML), with its timestamps as
@@ -1589,11 +1656,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function notesEp(x) {
     if (!x) return null;
     if (x.type === 'episode') {   // a Spotify episode object (the Now Playing check)
+      var h = histByUri()[x.uri];   // v2.21: played as the page knows it, for Mark as played / unplayed
       return { id: x.id, uri: x.uri, name: x.name || 'Untitled', url: spotifyUrl(x),
-        showName: (x.show && x.show.name) || '', date: x.release_date || '', durMs: x.duration_ms || 0 };
+        showName: (x.show && x.show.name) || '', date: x.release_date || '', durMs: x.duration_ms || 0,
+        sp: h ? !!h.played : resumeOf(x).played };
     }
     return { id: x.id, uri: x.uri, name: x.name || 'Untitled', url: x.url || ('https://open.spotify.com/episode/' + x.id),
-      showName: x.showName || '', date: x.date || '', durMs: x.durMs || 0 };
+      showName: x.showName || '', date: x.date || '', durMs: x.durMs || 0,
+      sp: typeof x.sp === 'boolean' ? x.sp : !!x.played };
   }
   var notesView = null;      // {ep, loading, error} while the notes sheet is open
   var notesReturn = null, notesSeq = 0;
@@ -1651,6 +1721,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var ep = v.ep;
     $('notesTitle').textContent = ep.name || 'Episode notes';
     $('notesMeta').textContent = [ep.showName, fmtDate(ep.date), ep.durMs ? fmtDur(ep.durMs) : ''].filter(Boolean).join(' · ');
+    var mb = $('notesMark'), canMark = /^spotify:episode:/.test(ep.uri || '');   // v2.21
+    mb.hidden = !canMark; $('notesMarkNote').hidden = !canMark;
+    mb.textContent = shownPlayed(ep) ? 'Mark as unplayed' : 'Mark as played';
     var body = $('notesBody');
     var y = body.scrollTop;
     body.textContent = '';
@@ -1705,6 +1778,42 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     // Without a device known to be open, Spotify may have to wake first: the sheet closes so its instructions show.
     if (!deviceFresh()) closeNotes(false);
     onItemClick({ kind: 'episode', id: ep.id, name: ep.name, uri: ep.uri, url: ep.url, positionMs: ms, exactPos: true }, ev);
+  }
+  // ---------- Mark as played / unplayed (v2.21; on this phone only, see markOf) ----------
+  // ep: {uri, name, sp}, sp being played as known without this phone's mark.
+  function shownPlayed(ep) { var m = markOf(ep.uri); return m ? m.played : !!ep.sp; }
+  function toggleMark(ep) {
+    if (!ep || !/^spotify:episode:/.test(ep.uri || '')) return;
+    var before = markOf(ep.uri);
+    var played = !shownPlayed(ep);
+    var m = { played: played, at: Date.now() };
+    var p = state.player;
+    if (p && p.item && p.item.uri === ep.uri) m.pos = Math.round(curPos());   // on screen now: only a play away from here clears it
+    writeMark(ep.uri, m);
+    marksChanged();
+    toast('Marked “' + (ep.name || 'Untitled') + '” as ' + (played ? 'played' : 'unplayed') + ' on this phone', null,
+      { text: 'Undo', fn: function () { writeMark(ep.uri, before); marksChanged(); } });
+  }
+  // The page saw this episode playing (a player answer from `at`): played again after the mark, so the mark goes.
+  function markSeenPlaying(it, pos, at) {
+    if (!it || it.type !== 'episode' || !it.uri) return;
+    var m = markOf(it.uri);
+    if (!m || !(at > m.at)) return;
+    if (typeof m.pos === 'number' && Math.abs((pos || 0) - m.pos) <= MARK_MOVED_MS) return;
+    writeMark(it.uri, null);
+    marksChanged();
+  }
+  // Redraws what shows played state: the open notes sheet, a podcast's list, or the lists with episodes in them.
+  function marksChanged() {
+    if (notesView) renderNotes();
+    if (!state.started) return;
+    var d = state.detail;
+    if (d) { if (d.kind !== 'artist' && isPod(d.item)) paintDetailList(); return; }
+    var f = state.filter;
+    if (f !== 'home' && f !== 'podcasts' && f !== 'recent' && f !== 'search') return;
+    var y = window.pageYOffset || document.documentElement.scrollTop || 0;
+    renderList();
+    window.scrollTo(0, y);
   }
   function loadData() {
     var me = api('/me').then(function (r) { return r.ok && r.json ? { id: r.json.id, name: r.json.display_name } : null; });
@@ -2204,13 +2313,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var h = histByUri()[x.uri], c = state.latest.cache;
     if (h && (!c || histSnap(h) > c.at)) x = Object.assign({}, x, { positionMs: h.played ? 0 : (h.positionMs || 0), played: !!h.played });
     var age = daysAgo(x.date);
-    return {
+    var i = markItem({
       kind: 'episode', id: x.id, name: x.name, uri: x.uri, url: 'https://open.spotify.com/episode/' + x.id, img: x.img,
-      sub: [x.showName, relDate(x.date), epWhen(x.played, x.positionMs, x.durMs)].filter(Boolean).join(' · '),
-      positionMs: x.positionMs, played: x.played,
-      showName: x.showName || '', date: x.date || '', durMs: x.durMs || 0,   // v2.18: for the notes sheet
-      fresh: !x.played && !(x.positionMs > 0) && age != null && age < 7   // released in the last 7 days, not started
-    };
+      sp: !!x.played, spos: x.positionMs || 0, subBase: [x.showName, relDate(x.date)],   // v2.21: this phone's mark on top
+      showName: x.showName || '', date: x.date || '', durMs: x.durMs || 0   // v2.18: for the notes sheet
+    });
+    i.fresh = !i.played && !(i.positionMs > 0) && age != null && age < 7;   // released in the last 7 days, not started
+    return i;
   }
   // ---------- podcast listening history (v2.11) ----------
   // Spotify's GET /me/player/recently-played leaves out podcast episodes, so the page keeps its own list:
@@ -2290,6 +2399,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // player check a moment later records it with the full details.
   function noteStarted(item) {
     if (!item || !/^spotify:episode:/.test(item.uri || '')) return;
+    if (markOf(item.uri)) { writeMark(item.uri, null); marksChanged(); }   // v2.21: played again from this page
     var h = histByUri()[item.uri], info = null;
     if (h) info = { show: h.show, dur: h.duration_ms };
     else {
@@ -2319,12 +2429,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function histRow(h) {
     var dur = h.duration_ms || 0, played = !!h.played, pos = played ? 0 : (h.positionMs || 0);
     var showName = (h.show && h.show.name) || '';
-    return {
+    return markItem({
       kind: 'episode', id: h.id, name: h.name || 'Untitled', uri: h.uri, url: 'https://open.spotify.com/episode/' + h.id,
       img: img(h.show && h.show.images),
-      sub: ['Episode', showName, agoAt(h.at), epWhen(played, pos, dur)].filter(Boolean).join(' · '),
-      positionMs: pos, played: played, at: h.at, durMs: dur, showName: showName
-    };
+      sp: played, spos: pos, subBase: ['Episode', showName, agoAt(h.at)],   // v2.21: this phone's mark on top
+      at: h.at, durMs: dur, showName: showName
+    });
   }
   // Jump back in: one card per show, its newest episode heard.
   function jumpEpisodes() {
@@ -2335,6 +2445,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       seen[k] = true;
       var r = histRow(h);
       r.sub = r.showName || 'Podcast';
+      delete r.subBase;   // v2.21: keeps this sub when the card is drawn
       // v2.12: the card opens the podcast when the page knows its id; otherwise it stays an episode card that resumes.
       if (h.show && h.show.id) r.show = mapShow({ id: h.show.id, name: h.show.name, images: h.show.images, uri: 'spotify:show:' + h.show.id });
       out.push(r);
@@ -2366,14 +2477,17 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (c && c.items) c.items.forEach(function (x) {
       put(c.at, { id: x.id, uri: x.uri, name: x.name, img: x.img, showName: x.showName, date: x.date, durMs: x.durMs, positionMs: x.positionMs, played: x.played });
     });
-    Object.keys(epSeen).forEach(function (u) { put(epSeen[u].at, epSeen[u].x); });
+    Object.keys(epSeen).forEach(function (u) {
+      var x = epSeen[u].x;
+      put(epSeen[u].at, x.subBase ? Object.assign({}, x, { played: !!x.sp, positionMs: x.spos || 0 }) : x);   // v2.21: as Spotify had it
+    });
     epHistory().forEach(function (h) {
       heard[h.uri] = h.at;
       put(histSnap(h), { id: h.id, uri: h.uri, name: h.name, img: img(h.show && h.show.images), showName: (h.show && h.show.name) || '', date: '',
         durMs: h.duration_ms || 0, positionMs: h.played ? 0 : (h.positionMs || 0), played: !!h.played });
     });
     var out = Object.keys(byUri).map(function (u) { return byUri[u].i; })
-      .filter(function (i) { return i.positionMs > 0 && !i.played; })
+      .filter(function (i) { var r = withMark(i.uri, i.played, i.positionMs); return r.pos > 0 && !r.played; })   // v2.21: a mark wins
       .map(function (i, k) { return { i: i, k: k, h: heard[i.uri] || 0, d: i.date || dates[i.uri] || '' }; });
     out.sort(function (a, b) {
       if (a.h !== b.h) { if (!a.h) return 1; if (!b.h) return -1; return b.h - a.h; }
@@ -2401,7 +2515,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         el('span', { class: 'sub', text: i.sub })
       ]);
       a.addEventListener('click', function (ev) { onItemClick(i, ev); });   // plays from positionMs
-      ul.appendChild(el('li', { 'data-puri': i.uri, class: cur && cur === i.uri ? 'playing' : null }, [a]));
+      var mb = el('button', { class: 'clmark', type: 'button', 'aria-label': 'Mark “' + i.name + '” as played' });   // v2.21
+      mb.innerHTML = ICON.check;
+      mb.addEventListener('click', function () { toggleMark({ uri: i.uri, name: i.name, sp: false }); });
+      ul.appendChild(el('li', { 'data-puri': i.uri, class: cur && cur === i.uri ? 'playing' : null }, [a, mb]));
     });
     main.appendChild(ul);
   }
@@ -2847,7 +2964,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.20 (2026-11-27)';
+  var VERSION = 'v2.21 (2026-11-27)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -2893,7 +3010,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       ' · Latest: refreshes only when you open it (up to ' + LATEST_SHOWS + ' shows, cache ' + Math.round(LATEST_MS / 3600000) + ' h)');
     var eh = epHistory();
     line(slStatsText() + ' · albums kept until cleared, podcasts re-checked after ' + Math.round(SHOW_STALE_MS / 3600000) + ' h');   // v2.15
-    line('Podcast history: ' + eh.length + (eh.length === 1 ? ' episode' : ' episodes') + (eh[0] ? ' (newest: ' + eh[0].name + ', ' + agoAt(eh[0].at) + ')' : ''));
+    line('Podcast history: ' + eh.length + (eh.length === 1 ? ' episode' : ' episodes') + (eh[0] ? ' (newest: ' + eh[0].name + ', ' + agoAt(eh[0].at) + ')' : '') +
+      ' · Marked played or unplayed on this phone: ' + markCount());   // v2.21
     line('Resume points: from this page’s own podcast history (no automatic Spotify checks)');
     var npi = pl && pl.item;   // v2.18: does Spotify's Now Playing answer carry the episode's notes?
     line('Episode notes: ' + readNotes().length + ' on this phone, ' + (Object.keys(epNotes).length + Object.keys(epNotesRaw).length) + ' this visit' +
@@ -3187,6 +3305,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       state.playerAt = Math.min(Date.now(), o.at || Date.now());   // progress_ms is as of this answer; the Now Playing screen counts on from here
       saveLastPlay(p, p.progress_ms || 0);
       noteEpisode(p.item, p.progress_ms || 0, !!p.is_playing, p.timestamp);   // v2.11: podcast history (episodes only)
+      if (p.is_playing) markSeenPlaying(p.item, p.progress_ms || 0, o.at || Date.now());   // v2.21
       if (p.item.type === 'episode' && p.item.id && p.item.id !== notesPlayerId) { notesPlayerId = p.item.id; keepNotes(p.item, true); }   // v2.18
     } else {
       // Nothing from Spotify: freeze the live playback where it got to, then show the saved one as asleep.
@@ -3993,6 +4112,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     for (var i = 0; i < rows.length; i++) markPlaying(rows[i], !!cur && rows[i].getAttribute('data-puri') === cur);
   }
   function itemRow(item) {
+    markItem(item);   // v2.21: played state follows this phone's marks
     var opens = opensOnTap(item);
     var a = el('a', { class: 'item', href: item.url, 'data-verb': (opens ? 'Open “' : 'Play “') + item.name + '”', 'data-sub': item.sub || '', 'data-new': item.fresh ? '' : null }, [
       coverFor(item),
@@ -4522,7 +4642,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     appendDetailRows(view ? sortList(view, d.items) : d.items);
   }
   function firstUnplayed(items) {
-    for (var i = 0; i < items.length; i++) { if (!items[i].played) return items[i]; }
+    for (var i = 0; i < items.length; i++) { if (!markItem(items[i]).played) return items[i]; }   // v2.21: marks count
     return items[0] || null;
   }
   function appendDetailRows(items) {
@@ -5324,6 +5444,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   $('queueRefresh').addEventListener('click', loadQueue);
   $('notesClose').addEventListener('click', function () { closeNotes(); });   // v2.18
   $('notesBack').addEventListener('click', function () { closeNotes(); });
+  $('notesMark').addEventListener('click', function () { if (notesView) toggleMark(notesView.ep); });   // v2.21
   $('qHide').addEventListener('change', function () { set(K.queueHide, $('qHide').checked); renderQueue(); });
   document.querySelectorAll('input[name="theme"]').forEach(function (r) {
     r.addEventListener('change', function () {
