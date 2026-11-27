@@ -209,7 +209,8 @@ tests.push(function () {
     var s12 = stored(store1, 'lib-cache-show:s12'), s11 = stored(store1, 'lib-cache-show:s11');
     check('1 saved podcast copy gets the new episodes on top', s12 && JSON.stringify(s12.items.map(function (x) { return x.id; })) === JSON.stringify(['e12-0', 'e12-1', 'e12-2', 'e12-3', 'e12-4', 'old12x']), s12 && s12.items.map(function (x) { return x.id; }));
     check('1 overlapping copy counts as checked now', s12.at >= t0, s12.at - t0);
-    check('1 copy without overlap keeps its age', s11 && s11.items[0].id === 'e11-0' && s11.items[5].id === 'old11x' && s11.at === at11, s11 && { at: s11.at, ids: s11.items.map(function (x) { return x.id; }) });
+    // #39 (audit/list-paging-fixes): no overlap would leave a gap under the new episodes, so that copy is left as it was.
+    check('1 copy without overlap stays as it was and keeps its age', s11 && JSON.stringify(s11.items.map(function (x) { return x.id; })) === '["old11x"]' && s11.at === at11, s11 && { at: s11.at, ids: s11.items.map(function (x) { return x.id; }) });
     check('1 no copies made for other shows; no notes in them', store1.getItem('lib-cache-show:s1') === null && store1.getItem('lib-cache-show:s12').indexOf('Notes for') === -1);
   });
 });
