@@ -2889,7 +2889,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.18 (2026-11-26)';
+  var VERSION = 'v2.25 (2026-11-27)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -3984,6 +3984,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (!ep.showName && dt && dt.kind === 'show') ep.showName = dt.name || '';   // a podcast's own list leaves the name off its rows
       openNotes(ep, ev.currentTarget);
     }));
+    if (item.kind === 'artist' && item.id && state.filter === 'search' && !state.detail) out.push(followBtn(item, true));   // v2.25
     if (canPin(item)) out.push(pinBtn(item));
     // v2.12: no › button; the row itself opens albums, playlists, podcasts and artists.
     return out;
@@ -5090,6 +5091,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var playA = el('a', { class: 'btn', href: it.url, text: 'Play', 'aria-label': 'Play “' + it.name + '”' });
     playA.addEventListener('click', function (ev) { onItemClick(it, ev); });
     var btns = [playA];
+    if (it.id) btns.push(followBtn(it));   // v2.25
     if (canPin(it)) btns.push(pinBtn(it));
     main.appendChild(el('section', { class: 'dhead' }, [
       backButton(),
@@ -5166,6 +5168,91 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }
   }
 
+  // ---------- follow artists (v2.25) ----------
+  // A Follow / Following button on the artist page and a heart on artist rows in Search Spotify. Whether you
+  // follow an artist comes from the followed-artists list the library already loads, so nothing is asked to
+  // show it; while that list isn't loaded the buttons stay hidden. A tap needs user-follow-modify (needFeature
+  // asks for it the first time) and sends one library request: PUT or DELETE /me/library?uris=spotify:artist:{id}
+  // (Spotify removed /me/following writes in February 2026). The list changes only after Spotify says yes.
+  var followBusy = {};
+  function followKnown() { return !!(state.data && Array.isArray(state.data.artists)); }
+  function isFollowed(id) {
+    return followKnown() && state.data.artists.some(function (a) { return a && a.id === id; });
+  }
+  function followRecord(item) {
+    return { kind: 'artist', id: item.id, name: item.name || '', uri: item.uri || 'spotify:artist:' + item.id,
+      url: item.url || 'https://open.spotify.com/artist/' + item.id, img: item.img || '', sub: item.sub || 'Artist' };
+  }
+  // The followed list in memory and in the saved library copy, so the Artists filter changes at once.
+  function setFollowed(item, on) {
+    function apply(list) {
+      var rest = list.filter(function (a) { return !a || a.id !== item.id; });
+      return on ? [followRecord(item)].concat(rest) : rest;
+    }
+    if (followKnown()) state.data.artists = apply(state.data.artists);
+    var c = get(K.cache);
+    if (c && Array.isArray(c.artists)) { c.artists = apply(c.artists); set(K.cache, c); }
+  }
+  function paintFollow(b) {
+    var id = b.getAttribute('data-follow'), name = b.getAttribute('data-name') || '';
+    var on = isFollowed(id);
+    b.hidden = !followKnown();
+    b.setAttribute('aria-pressed', String(on));
+    if (followBusy[id]) b.setAttribute('aria-busy', 'true'); else b.removeAttribute('aria-busy');
+    if (b.classList.contains('followheart')) {
+      b.innerHTML = on ? ICON.heartOn : ICON.heart;
+      b.setAttribute('aria-label', (on ? 'Unfollow “' : 'Follow “') + name + '”');
+    } else {
+      b.textContent = on ? 'Following' : 'Follow';
+      b.setAttribute('aria-label', (on ? 'Following “' : 'Follow “') + name + '”' + (on ? ', tap to unfollow' : ''));
+    }
+  }
+  function paintFollows() {
+    var bs = document.querySelectorAll('[data-follow]');
+    for (var i = 0; i < bs.length; i++) paintFollow(bs[i]);
+  }
+  // heart: true for the small heart on a search row, otherwise the artist page's button.
+  function followBtn(item, heart) {
+    var b = el('button', { class: heart ? 'act followheart' : 'btn secondary followbtn', type: 'button', 'data-follow': item.id, 'data-name': item.name });
+    paintFollow(b);
+    b.addEventListener('click', function () { toggleFollow(item, b); });
+    return b;
+  }
+  // want: true to follow, false to unfollow (Undo passes it); otherwise the opposite of now.
+  function toggleFollow(item, from, want) {
+    var id = item && item.id;
+    if (!id || followBusy[id]) return;
+    if (!needFeature('follow', from)) return;   // nothing is sent until the permission is there
+    if (coolBlocked('library')) return;
+    var on = typeof want === 'boolean' ? want : !isFollowed(id);
+    var name = item.name || '';
+    followBusy[id] = true;
+    paintFollows();
+    var done = function () { delete followBusy[id]; paintFollows(); };
+    api('/me/library?uris=' + encodeURIComponent('spotify:artist:' + id), { method: on ? 'PUT' : 'DELETE', feature: 'follow' }).then(function (r) {
+      if (!r.ok) {
+        done();
+        if (featureDenied('follow', r)) { openPerm('follow', from && document.body.contains(from) ? from : null); return; }
+        if (r.status === 400) { toast('Spotify didn’t accept ' + (on ? 'following' : 'unfollowing') + ' from this page (' + errMsg(r) + ').'); return; }
+        toast((on ? 'Couldn’t follow “' : 'Couldn’t unfollow “') + name + '” (' + errMsg(r) + ').');
+        return;
+      }
+      setFollowed(item, on);
+      done();
+      if (!state.detail && state.filter !== 'search' && state.filter !== 'recent') {
+        var y = window.pageYOffset || document.documentElement.scrollTop || 0;
+        renderList();
+        window.scrollTo(0, y);
+      }
+      var undo = { text: 'Undo', fn: function () { toggleFollow(item, null, !on); } };
+      if (typeof want === 'boolean') toast(on ? 'Following “' + name + '” again' : 'Unfollowed “' + name + '”');
+      else toast(on ? 'Following “' + name + '”' : 'Unfollowed “' + name + '”', null, undo);
+    }).catch(function (e) {
+      done();
+      onFail(on ? 'Couldn’t follow “' + name + '”' : 'Couldn’t unfollow “' + name + '”')(e);
+    });
+  }
+
   // ---------- screens ----------
   function stopApp() {
     state.started = false;
@@ -5233,6 +5320,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       seedSaved(d, true);
       renderList();
       paintHearts();
+      paintFollows();   // v2.25: the followed list arrived or changed
       if (onLatestView()) maybeLoadLatest();   // v2.14: Latest was open before the shows list arrived
     }).catch(function (e) {
       if (e.message === 'signed-out') return renderSignIn();
