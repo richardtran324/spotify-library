@@ -1058,7 +1058,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     ctxLast: 'lib-ctx-last',     // v2.23: {album or playlist URI | 'liked': {uri, id, name, positionMs, durMs, at}}: the last song heard in each list (40, 30 days)
     bookmarks: 'lib-bookmarks',  // v2.32: [{uri, id, kind: 'track'|'episode', name, by, img, url, pos, at}], newest first: Bookmarks saved on Now Playing (200, 2 years); local only
     introSkip: 'lib-intro-skip', // v2.33: {show URI: {s, at}}: Skip intro per podcast, s = 15|30|45|60|90|120 seconds, at = last set or used (100 shows, 365 days)
-    plSaved: 'lib-pl-saved',     // v2.37: {playlist id: {s: snapshot_id, at, o: last opened, t: total, n: [{i, n, a, l, r, d, c, t[, e, u]} | 0 (local file)]}}: songs loaded in your own and collaborative playlists (25 playlists, 1,000 songs each, ≈ 500,000 characters in all, 90 days unopened; least recently opened go first); a change made on the page removes that playlist's copy
+    plSaved: 'lib-pl-saved',     // v2.37: {playlist id: {s: snapshot_id, at, o: last opened, t: total, n: [{i, n, a, l, r, d, c, t[, e, u, ex, p: 0 when not playable, x: restriction reason]} | 0 (local file)]}}: songs loaded in your own and collaborative playlists (25 playlists, 1,000 songs each, ≈ 500,000 characters in all, 90 days unopened; least recently opened go first); a change made on the page removes that playlist's copy
     // v2.13 rate limits. Shared by every copy of the page that shares this storage (Safari tabs on one origin).
     cool: 'lib-cooloff',         // v2.14: {group: {until, reason, strikes, quotaAt, retryAfter, last429:{at, reason, retryAfter, what}}}
     poller: 'lib-poller',        // {id, at, every}: the one visible copy that runs the player check
@@ -2711,7 +2711,10 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   // Plain text of an episode's notes, '' when it has none, null when this answer doesn't say.
   function notesText(e) {
     if (!e) return null;
-    var t = typeof e.html_description === 'string' && e.html_description ? htmlText(e.html_description) : null;
+    var h = typeof e.html_description === 'string' ? e.html_description : '';
+    // A tagless html_description may still hold entities ("Q&amp;A"); Spotify's plain description reads right.
+    if (h && !/<[a-z!\/]/i.test(h) && typeof e.description === 'string' && e.description) h = '';
+    var t = h ? htmlText(h) : null;
     if (t != null) t = tidyNotes(t);
     if (!t && typeof e.description === 'string') t = tidyNotes(e.description);
     return t == null ? null : t;

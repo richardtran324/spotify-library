@@ -390,4 +390,5 @@ Album and podcast details are the part of Spotify's quota that runs out first, s
 - **v2.58** adds the **A–Z strip** on long lists sorted A–Z (see **Features**). No new requests and no new permissions.
 - If Spotify doesn't let the page check which items are already saved, hearts start outlined and a tap saves the item. A check that only fails (no connection, or a Spotify error) doesn't count: it is tried again when the item shows, at most once a minute.
 - **Refresh** reloads your library and checks for an open Spotify device (whichever isn't paused by Spotify), and forgets the album and podcast pages kept for this visit (the lists saved on the phone stay). The page also checks each time you come back to it (devices at most once every 15 seconds).
+- **Small fixes:** episode notes that Spotify sends without formatting show its plain text, so they no longer read `Q&amp;A`. No new requests and no new permissions.
 - To update the page later, upload the new `index.html` to the same repo (it replaces the old one).
