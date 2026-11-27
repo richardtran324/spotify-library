@@ -922,15 +922,22 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var p = plainErr(e);
     return p.raw ? prefix + ' (' + p.text + ').' : prefix + '. ' + p.text;
   }
-  var lastFail = { msg: '', at: 0 };
-  var FAIL_DUP_MS = 6000;   // the same error toast again within this time (while one is showing) is skipped
+  var lastFail = { msg: '', at: 0, retry: null };
+  var FAIL_DUP_MS = 6000;   // the same error toast again within this time (while one is showing) isn't shown again…
   function failToast(prefix, e, retry, link) {
     if (e && e.message === 'signed-out') return renderSignIn();
     if (isCool(e)) return coolToast(e.group);   // v2.13: nothing was sent; say when to try again
     var p = plainErr(e), msg = failText(prefix, e), now = Date.now();
-    if (msg === lastFail.msg && now - lastFail.at < FAIL_DUP_MS && !$('toast').hidden) return;
-    lastFail = { msg: msg, at: now };
-    toast(msg, link || null, (p.retry && typeof retry === 'function') ? { text: 'Try again', fn: retry } : null);
+    var fn = (p.retry && typeof retry === 'function') ? retry : null;
+    if (msg === lastFail.msg && now - lastFail.at < FAIL_DUP_MS && !$('toast').hidden) {
+      // …but its Try again now repeats the newest failed action (or goes, if that one can't be repeated).
+      lastFail.retry = fn;
+      if (!fn) { var old = $('toast').querySelector('.toastbtn[data-retry]'); if (old) old.remove(); }
+      return;
+    }
+    lastFail = { msg: msg, at: now, retry: fn };
+    toast(msg, link || null, fn ? { text: 'Try again', fn: function () { var f = lastFail.retry; lastFail.retry = null; if (f) f(); } } : null);
+    if (fn) { var b = $('toast').querySelector('.toastbtn'); if (b) b.setAttribute('data-retry', '1'); }
   }
   // ---------- v2.41: no internet ----------
   // A fetch that gets no answer at all (iPhone Safari: TypeError "Load failed") marks the page offline: one quiet
@@ -1024,7 +1031,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         state: st
       });
       location.assign(AUTH + '/authorize?' + p.toString());
-    }).catch(function (e) { toast('Couldn’t start sign-in (' + e.message + ').'); });
+    }).catch(function (e) { failToast('Couldn’t start sign-in', e); });   // v2.41
   }
   function saveToken(j, fresh) {
     var old = get(K.token) || {};
@@ -3400,7 +3407,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (r.ok) { rememberQueued(item.uri); toast('Added to queue'); return; }
       if (r.status === 404) { toast(NO_DEVICE); return; }
       throw httpError(r);   // v2.41: keeps status and reason
-    }).catch(onFail('Couldn’t add to queue', function () { addToQueue(item); }));   // v2.41
+    }).catch(onFail('Couldn’t add to queue'));   // v2.41: plain words; no Try again (it could queue the song twice)
   }
 
   // ---------- Now Playing bar ----------
@@ -3693,7 +3700,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         return;
       }
       throw httpError(r);   // v2.41: keeps status and reason
-    }).catch(onFail('Couldn’t control playback', function () { command(method, path, optimistic); })).then(function () { schedulePoll(500, true); });   // v2.41: Try again sends the same command
+    }).catch(onFail('Couldn’t control playback', method === 'PUT' && path.indexOf('/me/player/seek') !== 0 ? function () { command(method, path, optimistic); } : null)).then(function () { schedulePoll(500, true); });   // v2.41: Try again for PUTs only (Next/Previous could skip twice; a seek's spot is stale by then)
   }
 
   // v2.17: Pause. The music stopping is the goal, so a 404 is not an error here. If the request named a device,
@@ -5367,7 +5374,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         if (failed.message === 'signed-out') { if (state.started) renderSignIn(); return; }
         if (state.detail === d) {
           if (isCool(failed)) coolToast(failed.group);
-          else toast('Couldn’t load every ' + (isPod(d.item) ? 'episode' : 'song') + ' (' + (failed.message || 'unknown error') + ').');
+          else failToast('Couldn’t load every ' + (isPod(d.item) ? 'episode' : 'song'), failed);   // v2.41: plain words (Search all stays below the list)
         }
       }
       if (state.detail === d) { paintDetailSort(); paintDetailFoot(); }
