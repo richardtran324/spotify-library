@@ -1350,7 +1350,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       sub: sub, num: o.num, ctx: o.ctx,
       artist: by,   // for sorting: the song's artists, or an episode's show
       durMs: t.duration_ms || 0,   // for the total length above a song list
-      nope: unplayableWhy(t) || undefined   // v2.32: why Spotify says it can't play (left out when it says nothing)
+      nope: unplayableWhy(t) || undefined,   // v2.32: why Spotify says it can't play (left out when it says nothing)
+      noPlay: t.is_playable === false || undefined   // v2.32: a tap then plays nothing (restrictions alone only dim)
     };
   }
   function mapAlbum(a) {
@@ -1861,8 +1862,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var p = state.player;
     if (p && p.item && p.item.uri === ep.uri && p.is_playing && !state.playerIdle) {
       if (coolBlocked('player')) return;
-      seekTo(ms);
-      toast('Jumped to ' + fmtTime(ms));
+      if (seekTo(ms) !== false) toast('Jumped to ' + fmtTime(ms));   // v2.32: not when Spotify doesn't allow seeking
       return;
     }
     // Without a device known to be open, Spotify may have to wake first: the sheet closes so its instructions show.
@@ -3959,7 +3959,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       paintIdle();
       return;
     }
-    if (!allowTap('seeking')) { paintProgress(); return; }   // v2.32: puts the bar back where it was
+    if (!allowTap('seeking')) { paintProgress(); return false; }   // v2.32: puts the bar back where it was; false = not sent
     command('PUT', '/me/player/seek?position_ms=' + ms, function (x) { x.progress_ms = ms; state.playerAt = Date.now(); });
   }
   function seekBy(delta) { seekTo(curPos() + delta); }
@@ -3985,13 +3985,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     b.innerHTML = r === 'track' ? ICON.repeatOne : ICON.repeat;
   }
   // ---------- Controls that follow what Spotify allows (v2.32) ----------
-  // The /me/player answer the page already gets carries `actions`, usually as {disallows: {skipping_prev: true, …}}
-  // (true = not allowed). Spotify's reference lists the same flags straight under `actions` without saying what true
-  // means; that form is read the same way, unless pausing and resuming are both true, which can't mean "not allowed"
-  // (then it's ignored).
-  // A missing flag never greys anything out. The saved "asleep" playback has no actions, so all controls work there.
-  var ALLOW_FLAGS = ['interrupting_playback', 'pausing', 'resuming', 'seeking', 'skipping_next', 'skipping_prev',
-    'toggling_repeat_context', 'toggling_repeat_track', 'toggling_shuffle', 'transferring_playback'];
+  // The /me/player answer the page already gets carries `actions`. Only {disallows: {skipping_prev: true, …}}
+  // (true = not allowed) is read; flags straight under `actions` (as Spotify's reference lists them, without saying
+  // what true means) are ignored. A missing flag never greys anything out. The saved "asleep" playback has no actions,
+  // so all controls work there. Seek, Shuffle and Repeat refuse the tap; Previous and Next only look greyed and
+  // still send the tap (Spotify's own refusal shows the usual message), since skipping_prev can be reported wrongly.
   var ALLOW_WHY = {
     skipping_prev: 'Spotify doesn’t allow skipping back here',
     skipping_next: 'Spotify doesn’t allow skipping ahead here',
@@ -4004,10 +4002,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function playerDisallows(p) {
     var a = p && !p.idle && p.actions;
     if (!a || typeof a !== 'object') return null;
-    if (a.disallows && typeof a.disallows === 'object') return a.disallows;
-    if (!ALLOW_FLAGS.some(function (k) { return typeof a[k] === 'boolean'; })) return null;
-    if (a.pausing === true && a.resuming === true) return null;
-    return a;
+    return a.disallows && typeof a.disallows === 'object' ? a.disallows : null;
   }
   // Repeat's next state that Spotify allows, or '' when none is. Leaving or entering all needs
   // toggling_repeat_context, leaving or entering one needs toggling_repeat_track; a disallowed state is skipped
@@ -4497,7 +4492,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       // v2.12: albums, playlists, Liked Songs, podcasts and artists open their list (Play is at the top there);
       // songs and episodes play. A release tapped in an artist view opens on top of it, so Back returns to the artist.
       if (opens) { ev.preventDefault(); openDetail(item, { push: !!state.detail }); return; }
-      if (item.nope) { ev.preventDefault(); toast(item.nope + '.'); return; }   // v2.32: Spotify says it can't play
+      if (item.noPlay) { ev.preventDefault(); toast(item.nope + '.'); return; }   // v2.32: Spotify says it can't play
       onItemClick(item, ev);
     });
     var li = el('li', { class: item.nope ? 'row nope' : 'row' }, [a]);   // v2.32: dimmed when Spotify says it can't play
@@ -7064,8 +7059,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     $(pre + 'Play').innerHTML = ICON.pause;
     $(pre + 'Repeat').innerHTML = ICON.repeat;
     $(pre + 'Queue').innerHTML = ICON.queue;
-    $(pre + 'Prev').addEventListener('click', function () { if (allowTap('skipping_prev')) command('POST', '/me/player/previous'); });   // v2.32
-    $(pre + 'Next').addEventListener('click', function () { if (allowTap('skipping_next')) command('POST', '/me/player/next'); });
+    $(pre + 'Prev').addEventListener('click', function () { command('POST', '/me/player/previous'); });
+    $(pre + 'Next').addEventListener('click', function () { command('POST', '/me/player/next'); });
     $(pre + 'Play').addEventListener('click', togglePlay);
     $(pre + 'Shuffle').addEventListener('click', toggleShuffle);
     $(pre + 'Repeat').addEventListener('click', cycleRepeat);
