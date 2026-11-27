@@ -380,6 +380,11 @@ li.row.kpflash { animation: kpflash 1.6s ease-out; }
 }
 .seg button[aria-pressed="true"] { background: var(--surface); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18); }
 .lbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; }   /* v2.40: wraps (filter chips) */
+/* v2.50: In Latest: Priority · Normal · Hidden in a podcast's page header */
+.lprirow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.lprilbl { font-size: 0.85rem; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.seg.lpri { flex: 1 1 220px; min-width: 0; margin-top: 0; }
+.seg.lpri button { min-height: 44px; padding: 7px 6px; }
 .lbar .btn { display: inline-flex; align-items: center; gap: 6px; }
 .lbar .btn svg { width: 18px; height: 18px; display: block; }
 .lnote { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 0.85rem; color: var(--muted); margin: 10px 2px 0; }
@@ -844,6 +849,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     searchType: 'lib-searchtype', // Search Spotify result type: 'all' (default) or one of SEARCH_TYPES
     showSort: 'lib-showsort',    // v2.7 Shows order; read only when 'lib-sort-shows' is unset (see sortMode)
     pins: 'lib-pins',            // [{kind, id, name, uri, url, img, sub[, ownerId, collaborative]}], oldest pin first; local only
+    latestPri: 'lib-latest-pri', // v2.50: {show id: 'p' | 'h'}: In Latest Priority or Hidden (Normal isn't stored), 100 at most; local only
     plCopies: 'lib-pl-copies',   // v2.24: {original id: {copyId, name, ownerName, ownerId, uri, img, snap, count, at}}, 50 at most; local only
     copyWatch: 'lib-copy-watch', // v2.24: {origId, name, at, known: [ids] | null, snap, count, ownerName, ownerId, uri, img[, no]}: set by Make a copy, 24 h
     recentSearches: 'lib-recent-searches', // [{q, at}], newest first
@@ -910,6 +916,8 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   var IDLE_TEXT = 'Spotify is asleep. Press play to wake it.';
   var WAKE_FIRST = 'Press play first to wake Spotify.';
   var PINS_MAX = 30;
+  var LATEST_PRI_MAX = 100;   // v2.50: podcasts set to Priority or Hidden in Latest, at most
+  var LATEST_PRI_SLOTS = 8;   // v2.50: of the 12 shows a Latest reload asks, Priority takes at most 8 while 4+ Normal shows exist
   var RECENT_SEARCHES_MAX = 8;
   var QUEUED_MAX = 100;
   var QUEUED_MS = 24 * 60 * 60 * 1000;
@@ -3406,6 +3414,27 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     function ss(list) { return list.map(function (w) { return w.s; }); }
     return { due: ss(more.concat(fresh, unknown)), rose: ss(more), slow: ss(slow), rest: ss(rest), more: more.length, at: atOf };
   }
+  // v2.50: which of the podcasts due a reload asks, in `lim` places. With more due than fit, the last places go to the
+  // ones asked longest ago (never asked first), half the places at most (the audit's rotation, as in v2.45).
+  // Priority podcasts come first but take at most 8 of 12 places (two thirds when fewer fit) while Normal ones are
+  // due, so Normal podcasts are still asked; each part rotates within its own places. With nothing set this is
+  // exactly v2.45's order. Hidden podcasts are already left out of `ask` (see loadLatest).
+  function latestPick(ask, lim, at) {
+    function pick(list, cap) {
+      if (list.length <= cap) return list.slice();
+      var rot = Math.min(Math.floor(cap / 2), list.slice(cap).some(function (s) { return !at[s.id]; }) ? LATEST_ROTATE_NEW : LATEST_ROTATE);
+      if (rot <= 0) return list.slice(0, cap);
+      var tail = list.slice(cap - rot).map(function (s, k) { return { s: s, k: k, a: at[s.id] || 0 }; })
+        .sort(function (a, b) { return (a.a - b.a) || a.k - b.k; }).slice(0, rot).map(function (w) { return w.s; });
+      return list.slice(0, cap - rot).concat(tail);
+    }
+    var pri = readLatestPri();
+    var top = ask.filter(function (s) { return pri[s.id] === 'p'; });
+    if (!top.length) return pick(ask, lim);
+    var normal = ask.filter(function (s) { return pri[s.id] !== 'p'; });
+    var nTop = Math.min(top.length, Math.max(lim - normal.length, Math.min(LATEST_PRI_SLOTS, Math.ceil(lim * 2 / 3))));
+    return pick(top, nTop).concat(pick(normal, lim - nTop));
+  }
   // Nothing to ask: the counts say nothing changed, so the list is up to date as of when they were read.
   // A podcast whose request failed in the last 12 hours still counts as failed (it's asked again after that).
   // audit (kept from loadLatest): the new `at` also dates the rows' positions, so what the page heard since the
@@ -3434,7 +3463,8 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     var manual = mode === 'manual';
     var all = state.data && state.data.shows;
     if (L.loading || !all || !all.length || document.hidden || coolLeft('catalog')) return;
-    var plan = latestPlan(all);
+    var pri = readLatestPri();
+    var plan = latestPlan(all.filter(function (s) { return !s || pri[s.id] !== 'h'; }));   // v2.50: Hidden podcasts are never asked
     var stale = !latestFresh(L.cache);   // audit: a list cut short by leaving the page (partial) counts as stale
     // A list under 12 hours old opening on its own asks nothing (as v2.14); a Refresh, or a list over 12 hours old
     // or cut short, asks only podcasts whose count went up, never asked (or with no count), or not asked for 3 days.
@@ -3454,17 +3484,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       return;
     }
     L.held = false;
-    var lim = Math.min(LATEST_SHOWS, room), shows = ask.slice(0, lim);
-    if (ask.length > lim) {
-      // audit: when more are due than fit, the last places go to the due podcasts asked longest ago (never asked
-      // first), so none waits for good behind podcasts that publish often. Half the places at most.
-      var rot = Math.min(Math.floor(lim / 2), ask.slice(lim).some(function (s) { return !plan.at[s.id]; }) ? LATEST_ROTATE_NEW : LATEST_ROTATE);
-      if (rot > 0) {
-        var tail = ask.slice(lim - rot).map(function (s, k) { return { s: s, k: k, a: plan.at[s.id] || 0 }; })
-          .sort(function (a, b) { return (a.a - b.a) || a.k - b.k; }).slice(0, rot).map(function (w) { return w.s; });
-        shows = ask.slice(0, lim - rot).concat(tail);
-      }
-    }
+    var lim = Math.min(LATEST_SHOWS, room), shows = latestPick(ask, lim, plan.at);   // v2.50: Priority first (8 of 12 at most)
     L.loading = true; L.error = ''; L.triedAt = Date.now(); L.stoppedHidden = false;
     var seq = ++L.seq;
     var found = [], done = {}, bad = {}, failed = 0, next = 0, running = 0, stopped = false, hiddenStop = false, signedOut = false, finished = false;
@@ -3515,7 +3535,14 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
         found.forEach(function (f) { var x = f.x; if (x.showId && x.date && (!newestByShow[x.showId] || x.date > newestByShow[x.showId])) newestByShow[x.showId] = x.date; });
         // v2.45: cache.checks (when each saved show was last answered, and its count then) replaces the audit's
         // askedAt; failed shows wait 12 hours, unsent ones keep theirs, so they come back first.
-        L.cache = { at: Date.now(), items: found.slice(0, LATEST_KEEP).map(function (f) { return f.x; }), failed: failed, newest: newestByShow, asked: shows.length,
+        // v2.50: Hidden shows' rows don't take the 50 places; each keeps only its newest row (its page and pin use it).
+        var kept = [], seenHidden = {}, nVis = 0;
+        found.forEach(function (f) {
+          var sid = f.x.showId;
+          if (pri[sid] === 'h') { if (!seenHidden[sid]) { seenHidden[sid] = true; kept.push(f.x); } }
+          else if (nVis < LATEST_KEEP) { nVis++; kept.push(f.x); }
+        });
+        L.cache = { at: Date.now(), items: kept, failed: failed, newest: newestByShow, asked: shows.length,
           checks: checksNow(), left: left };
         if (hiddenStop) L.cache.partial = true;
         set(K.latest, L.cache);
@@ -3547,6 +3574,85 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     launch();
     setTimeout(rerenderLatest, 0);   // shows "Updating…"
   }
+  // ---------- v2.50: In Latest: Priority · Normal · Hidden (per podcast, this phone only, never sent to Spotify) ----------
+  // Stored as {show id: 'p' | 'h'}; Normal is the absence of an entry. Read from storage each time, so other copies
+  // of the page agree.
+  function readLatestPri() {
+    var o = get(K.latestPri), out = {}, n = 0;
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return out;
+    Object.keys(o).forEach(function (id) { if (id && n < LATEST_PRI_MAX && (o[id] === 'p' || o[id] === 'h')) { out[id] = o[id]; n++; } });
+    return out;
+  }
+  function latestPriOf(showId) { return (showId && readLatestPri()[showId]) || 'n'; }
+  // v: 'p', 'n' or 'h'. False (with a toast) when it couldn't be stored.
+  function setLatestPri(showId, v) {
+    var o = readLatestPri(), cleared = false;
+    if ((o[showId] || 'n') === v) return true;
+    var had = !!o[showId];
+    delete o[showId];   // set again below, so the order of keys is the order they were last set
+    if (v !== 'n') {
+      if (!had && Object.keys(o).length >= LATEST_PRI_MAX) {
+        // Make room. Once this visit's library has loaded: drop settings of podcasts you no longer follow (and refuse
+        // if that frees nothing). Before that the list may be old, so the setting made longest ago goes instead.
+        var lib = state.libAt && state.data && Array.isArray(state.data.shows) && state.data.shows;   // libAt: this visit's library load
+        if (lib && lib.length) {
+          var have = {};
+          lib.forEach(function (s) { if (s && s.id) have[s.id] = true; });
+          Object.keys(o).forEach(function (id) { if (!have[id]) delete o[id]; });
+          if (Object.keys(o).length >= LATEST_PRI_MAX) { toast('You can set up to ' + LATEST_PRI_MAX + ' podcasts. Set one back to Normal first.'); return false; }
+        } else {
+          while (Object.keys(o).length >= LATEST_PRI_MAX) delete o[Object.keys(o)[0]];
+          cleared = true;
+        }
+      }
+      o[showId] = v;
+    }
+    try {
+      if (Object.keys(o).length) localStorage.setItem(K.latestPri, JSON.stringify(o));
+      else localStorage.removeItem(K.latestPri);
+    } catch (e) { toast('Couldn’t save that on this phone. Its storage is full.'); return false; }
+    return cleared ? 'cleared' : true;
+  }
+  // Latest rows as shown: Hidden podcasts left out, then Priority podcasts' unplayed episodes on top (each part keeps
+  // its order). Latest, Home's Latest episodes and Play newest use it.
+  function latestOrder(items, pri) {
+    pri = pri || readLatestPri();
+    var top = [], rest = [];
+    items.forEach(function (i) {
+      var v = pri[i.showId];
+      if (v === 'h') return;
+      (v === 'p' && !i.played ? top : rest).push(i);
+    });
+    return top.concat(rest);
+  }
+  function latestPriCounts() {
+    var o = readLatestPri(), c = { p: 0, h: 0 };
+    Object.keys(o).forEach(function (id) { c[o[id]]++; });
+    return c;
+  }
+  var LATEST_PRI_OPTS = [['p', 'Priority'], ['n', 'Normal'], ['h', 'Hidden']];
+  // Hidden and Normal apply to what Latest already has; Priority does too, but a show whose episodes Latest doesn't
+  // hold yet gets them at the next update.
+  var LATEST_PRI_SAID = { p: ' now comes first in Latest. If its newest episodes aren’t there yet, tap Refresh in Latest.',
+    n: ' shows in Latest as usual.', h: ' is hidden from Latest and Home.' };
+  // The switch in a podcast's page header. A tap repaints it in place (focus stays) and asks Spotify nothing.
+  function latestPriBox(show) {
+    var cur = latestPriOf(show.id);
+    var g = el('div', { class: 'seg lpri', role: 'group', 'aria-label': 'In Latest' });
+    LATEST_PRI_OPTS.forEach(function (o) {
+      var b = el('button', { type: 'button', 'data-lpri': o[0], 'aria-pressed': String(cur === o[0]), text: o[1] });
+      b.addEventListener('click', function () {
+        if (latestPriOf(show.id) === o[0]) return;
+        var ok = setLatestPri(show.id, o[0]);
+        if (!ok) return;
+        var bs = g.querySelectorAll('button');
+        for (var k = 0; k < bs.length; k++) bs[k].setAttribute('aria-pressed', String(bs[k].getAttribute('data-lpri') === o[0]));
+        toast('“' + (show.name || 'This podcast') + '”' + LATEST_PRI_SAID[o[0]] + (ok === 'cleared' ? ' The setting made longest ago was cleared to make room.' : ''));
+      });
+      g.appendChild(b);
+    });
+    return el('div', { class: 'lprirow', id: 'dlpri' }, [el('span', { class: 'lprilbl', 'aria-hidden': 'true', text: 'In Latest' }), g]);
+  }
   // audit: Latest rows of saved podcasts only (a heart removal takes effect at once; Undo brings them back).
   function latestVisible(items) {
     var shows = state.data && state.data.shows, ids = {};
@@ -3562,7 +3668,8 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     var i = markItem({
       kind: 'episode', id: x.id, name: x.name, uri: x.uri, url: 'https://open.spotify.com/episode/' + x.id, img: x.img,
       sp: !!x.played, spos: x.positionMs || 0, subBase: [x.showName, relDate(x.date)],   // v2.21: this phone's mark on top
-      showName: x.showName || '', date: x.date || '', durMs: x.durMs || 0   // v2.18: for the notes sheet
+      showName: x.showName || '', date: x.date || '', durMs: x.durMs || 0,   // v2.18: for the notes sheet
+      showId: x.showId || ''   // v2.50: for In Latest
     });
     i.fresh = !i.played && !(i.positionMs > 0) && age != null && age < 7;   // released in the last 7 days, not started
     return i;
@@ -4003,9 +4110,11 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     syncLatest();
     var c = L.cache;
     var all = c ? latestVisible(c.items).map(latestItem) : [];   // audit: saved podcasts only
+    var pri = readLatestPri();
+    var visible = latestOrder(all, pri);   // v2.50: Hidden podcasts out, Priority ones' unplayed episodes first
     var flt = epFilter('latest');   // v2.40: Unplayed / In progress / All and Fits in (Unplayed is Hide played)
     var fon = flt.s !== 'all' || flt.f > 0;
-    var newest = epFiltered(all, flt).filter(function (i) { return !i.played; })[0] || null;   // v2.40: follows the filter
+    var newest = epFiltered(visible, flt).filter(function (i) { return !i.played; })[0] || null;   // v2.40: follows the filter
     // Header: Play (newest unplayed the filter shows), the filter chips, then when it was updated.
     var playA = el('a', { class: 'btn small', href: newest ? newest.url : '#', 'aria-label': newest ? 'Play newest unplayed episode: ' + newest.name : 'Play newest unplayed episode' });
     playA.innerHTML = ICON.play;
@@ -4040,17 +4149,23 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     main.appendChild(note);
     if (!c) return;
     // Play newest (above) always uses the newest-first order; the list follows the chosen sort.
-    var shown = sortIsDefault('latest') ? all : sortList('latest', latestVisible(c.items)).map(latestItem);
+    // v2.50: Priority on top in Newest first and Oldest first; Show A–Z keeps its A–Z order. Hidden is left out of all three.
+    var shown = visible;
+    if (!sortIsDefault('latest')) {
+      shown = sortList('latest', latestVisible(c.items)).map(latestItem);
+      shown = sortMode('latest') === 'show' ? shown.filter(function (i) { return pri[i.showId] !== 'h'; }) : latestOrder(shown, pri);
+    }
     var items = matches(epFiltered(shown, flt));   // v2.40
     if (!items.length) {
       main.appendChild(el('p', { class: 'empty', text: state.query.trim() ? 'Nothing matches “' + state.query + '”.'
         : !all.length ? 'No episodes yet.'
+        : !visible.length ? 'Only podcasts set to Hidden have episodes here. Change it on a podcast’s page.'   // v2.50
         : flt.s === 'unplayed' && !flt.f ? 'Everything here is played. Tap All to see it.'
-        : 'No ' + epfWords(flt) + ' among the ' + all.length + ' latest episodes.' }));
-      if (fon && all.length && !state.query.trim()) main.appendChild(epfReset('latest', renderList));
+        : 'No ' + epfWords(flt) + ' among the ' + visible.length + ' latest episodes.' }));
+      if (fon && visible.length && !state.query.trim()) main.appendChild(epfReset('latest', renderList));
       return;
     }
-    if (fon) main.appendChild(el('p', { class: 'snote', text: 'Showing ' + items.length + ' of ' + all.length + ' episodes' }));   // v2.40
+    if (fon) main.appendChild(el('p', { class: 'snote', text: 'Showing ' + items.length + ' of ' + visible.length + ' episodes' }));   // v2.40
     var ul = el('ul', { class: 'list' });
     items.forEach(function (i) { ul.appendChild(itemRow(i)); });
     main.appendChild(ul);
@@ -4768,7 +4883,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.49 (2026-11-27)';
+  var VERSION = 'v2.50 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -4861,6 +4976,8 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       line('Podcast episode counts: ' + known + ' of ' + shows.length + ' known' + (state.libAt ? ' (read ' + agoAt(state.libAt) + ')' : ' (from the saved library)') +
         ' · Latest would ask ' + plan.due.length + ' now (' + plan.more + ' with new episodes) · Podcasts marked new: ' + nn);
     })();
+    var lpc = latestPriCounts();   // v2.50: how many podcasts have each setting (not listening stats)
+    line('In Latest (set on this phone): ' + lpc.p + ' Priority · ' + lpc.h + ' Hidden');
     var eh = epHistory();
     line(slStatsText() + ' · albums kept until cleared, podcasts re-checked after ' + Math.round(SHOW_STALE_MS / 3600000) + ' h');   // v2.15
     line('Album songs with the library answer: ' + albumSeedText());   // v2.38
@@ -6672,7 +6789,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       syncLatest();   // v2.14: the cache only; Latest refreshes when you open it
       var c = state.latest.cache;
       var hide = hidePlayed();
-      var eps = c ? matches(latestVisible(c.items).map(latestItem).filter(function (i) { return !(hide && i.played); })) : [];
+      var eps = c ? matches(latestOrder(latestVisible(c.items).map(latestItem)).filter(function (i) { return !(hide && i.played); })) : [];   // v2.50: In Latest
       if (!q) eps = eps.slice(0, HOME_LATEST);
       if (eps.length) {
         main.appendChild(sectHead('hLatest', 'Latest episodes', function () { state.podTab = 'latest'; setFilter('podcasts'); }));
@@ -7162,7 +7279,8 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       ]),
       el('div', { class: 'dbtns' }, btns),
       el('div', { class: 'dbtns', id: 'dcont', hidden: true }),   // v2.23: Continue · <song>
-      it.kind === 'show' ? introBox(it) : null   // v2.33: Skip intro
+      it.kind === 'show' ? introBox(it) : null,   // v2.33: Skip intro
+      it.kind === 'show' && it.id ? latestPriBox(it) : null   // v2.50: In Latest: Priority · Normal · Hidden
     ]));
     main.appendChild(el('p', { class: 'lnote', id: 'dnote', hidden: true }));   // v2.15: saved list / fallback note
     main.appendChild(el('div', { id: 'dedit' }));   // v2.26: Edit (your own and collaborative playlists)
