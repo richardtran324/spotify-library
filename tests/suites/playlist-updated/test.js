@@ -1,5 +1,5 @@
 'use strict';
-// "Updated" playlists (v2.46) tests: snapshot ids from the library load, the Updated label on playlist rows and
+// "Updated" playlists (v2.54) tests: snapshot ids from the library load, the Updated label on playlist rows and
 // cards until opened, New dots and Added by inside playlists, storage limits and quota errors, and zero extra
 // requests. jsdom, mocked fetch, shared localStorage.
 // Run: node tests/run.js playlist-updated  (or, after npm ci in tests/: node test.js [path to index.html])
@@ -317,7 +317,7 @@ tests.push(function () {
       return reload(tab);
     }).then(function () {
       check('7 p2 Updated by someone else', rowUpd(tab, 'Band jams'));
-      t.plEdited('p2', 'b3');
+      t.plSeenEdited('p2', 'b3');
       tab.env.pls.p2.snap = 'b3';
       return reload(tab);
     }).then(function () {
@@ -326,7 +326,7 @@ tests.push(function () {
       return H.wait(200);
     }).then(function () {
       check('7 opening drops the edit snapshot', seen(s).p1.s === 'a5' && seen(s).p1.e === undefined, seen(s).p1);
-      t.plEdited('nope', 'x');
+      t.plSeenEdited('nope', 'x');
       check('7 unknown playlist: nothing stored', !seen(s).nope);
     });
   });
@@ -561,6 +561,38 @@ tests.push(function () {
       return H.wait(300);
     }).then(function () {
       check('16 account known, not paused: recorded', seen(s).p3.s === 'c2' && seen(s).p3.o > 0, seen(s).p3);
+    });
+  });
+});
+
+// 17. Saved playlists (v2.37): a collaborative playlist opened from the copy saved on the phone keeps Added by.
+tests.push(function () {
+  var s = store0();
+  return setup(s, { filter: 'playlists' }).then(function (tab) {
+    var t = tab.t();
+    t.openDetail(lib(t, 'p1'));
+    return H.wait(200).then(function () {
+      t.closeDetail();
+      t.openDetail(lib(t, 'p2'));
+      return H.wait(200);
+    }).then(function () {
+      t.closeDetail();
+      var saved = JSON.parse(s.getItem('lib-pl-saved') || '{}');
+      check('17 collaborative copy saved with who added', saved.p2 && saved.p2.n.map(function (o) { return o.b; }).join() === '1,2', saved.p2);
+      check('17 own playlist copy: no Added by data', saved.p1 && saved.p1.n.every(function (o) { return o.b === undefined; }), saved.p1);
+      t.stopApp();
+      return setup(s, { filter: 'playlists' });
+    }).then(function (tab2) {
+      var t2 = tab2.t();
+      tab2.calls.length = 0;
+      t2.openDetail(lib(t2, 'p2'));
+      return H.wait(200).then(function () {
+        check('17 opened from the saved copy (no song-list request)', !byPath(tab2)['GET /playlists/p2/items'], byPath(tab2));
+        var mine = songRow(tab2, 's3'), theirs = songRow(tab2, 's4');
+        check('17 Added by you from the saved copy', mine && /· Added by you$/.test(mine.querySelector('.sub').textContent), mine && mine.querySelector('.sub').textContent);
+        check('17 Added by someone else from the saved copy', theirs && /· Added by someone else$/.test(theirs.querySelector('.sub').textContent), theirs && theirs.querySelector('.sub').textContent);
+        t2.stopApp();
+      });
     });
   });
 });
