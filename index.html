@@ -2487,7 +2487,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         var old = L.cache && Array.isArray(L.cache.items) ? L.cache.items : [];
         var order = {};
         all.forEach(function (s, i) { order[s.id] = i; });
-        old.forEach(function (x, k) { if (!done[x.showId]) found.push({ x: x, si: order[x.showId] != null ? order[x.showId] : all.length, k: k }); });
+        // audit: the new `at` below also dates their positions, so what the page heard since the old one goes in first.
+        var oldAt = (L.cache && L.cache.at) || 0, hist = histByUri();
+        old.forEach(function (x, k) {
+          if (done[x.showId]) return;
+          var h = hist[x.uri];
+          if (h && histSnap(h) > oldAt) x = Object.assign({}, x, { positionMs: h.played ? 0 : (h.positionMs || 0), played: !!h.played });
+          found.push({ x: x, si: order[x.showId] != null ? order[x.showId] : all.length, k: k });
+        });
         // Newest first; same date keeps the order of your shows, then each show's own order.
         found.sort(function (a, b) { return a.x.date < b.x.date ? 1 : a.x.date > b.x.date ? -1 : (a.si - b.si) || (a.k - b.k); });
         var newestByShow = Object.assign({}, (L.cache && L.cache.newest) || {});   // every show's newest episode date
@@ -6044,7 +6051,15 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var ids = {};
     raws.forEach(function (x) { ids[x.id] = true; });
     c.items = raws.concat(c.items.filter(function (x) { return !ids[x.id]; })).slice(0, SL_SHOW_EPS);
-    if (overlap) c.at = Date.now();
+    if (overlap) {
+      // audit: the new `at` also dates the episodes not re-read, so what the page heard since the old one goes in first.
+      var hist = histByUri(), oldAt = c.at || 0;
+      c.items = c.items.map(function (x) {
+        var h = !ids[x.id] && hist[x.uri];
+        return h && histSnap(h) > oldAt ? Object.assign({}, x, { resume_point: { fully_played: !!h.played, resume_position_ms: h.played ? 0 : (h.positionMs || 0) } }) : x;
+      });
+      c.at = Date.now();
+    }
     slPut(SL_SHOW, showId, c, SL_SHOW_MAX);
   }
   // A podcast with no saved copy that Latest episodes knows: those episodes become its copy (no request).
