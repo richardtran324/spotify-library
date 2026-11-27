@@ -113,7 +113,9 @@ tests.push(function () {
       t.togglePlay();
       return H.wait(1000).then(function () {
         var ts = tab.toasts();
-        check('5 ' + resp.status + ' shows Couldn’t control playback', ts.length === 1 && ts[0].indexOf('Couldn’t control playback (' + resp.json.error.message) === 0, ts);
+        // #41: plain words: a 403 that mentions Premium, a 5xx
+        var want = resp.status === 403 ? 'Couldn’t control playback. Spotify Premium is needed to control playback.' : 'Couldn’t control playback. Spotify isn’t answering right now.';
+        check('5 ' + resp.status + ' shows Couldn’t control playback', ts.length === 1 && ts[0] === want, ts);
         
       });
     });

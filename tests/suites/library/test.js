@@ -246,7 +246,9 @@ tests.push(function () {
   return setup(store, { fail: { '/me/albums': 500 } }).then(function (tab) {
     var e = d(tab).querySelector('#main .err');
     group('4 no cache: the error shows on the page, nothing is cached');
-    check('4 no cache: the error shows on the page', e && e.textContent === 'Couldn’t load your library: Boom /me/albums', e && e.textContent);
+    // #41: a 5xx is said in plain words, with Try again next to it
+    check('4 no cache: the error shows on the page', e && e.textContent === 'Couldn’t load your library. Spotify isn’t answering right now.', e && e.textContent);
+    check('4 no cache: Try again next to the error', !!d(tab).querySelector('#main button.libretry'));
     check('4 a half-loaded library is not cached', store.getItem('lib-cache') === null, store.getItem('lib-cache'));
     finish(tab);
     var store2 = seed();
@@ -256,7 +258,7 @@ tests.push(function () {
     }).then(function (tab3) {
       group('4 with a cache: the list stays and a toast says the refresh failed');
       check('4 with a cache: the cached list is shown', mainNames(tab3).length === 6 && mainNames(tab3)[1] === 'Morning Run', mainNames(tab3));
-      check('4 with a cache: a toast says the refresh failed', tab3.bootToasts.indexOf('Couldn’t refresh: Boom /me/albums') !== -1, tab3.bootToasts);
+      check('4 with a cache: a toast says the refresh failed', tab3.bootToasts.indexOf('Couldn’t refresh. Spotify isn’t answering right now.') !== -1, tab3.bootToasts);   // #41
       finish(tab3);
     });
   });
@@ -609,7 +611,7 @@ tests.push(function () {
     return H.wait(200).then(function () {
       var e = d(tab).querySelector('#dfoot .err');
       group('15 failed album: error shown, nothing saved');
-      check('15 error shown', e && e.textContent === 'Couldn’t load songs (Boom /albums/A3/tracks).', e && e.textContent);
+      check('15 error shown', e && e.textContent === 'Couldn’t load songs. Spotify isn’t answering right now.', e && e.textContent);   // #41: plain words for a 5xx
       check('15 nothing saved for a failed album', store.getItem('lib-cache-album:A3') === null);
       tab.env.fail = {};
       tab.calls.length = 0;
@@ -733,12 +735,13 @@ tests.push(function () {
       return H.wait(100).then(function () {
         group('17 failed like and unlike roll back with a toast');
         check('17 failed like: heart empties again', h2.getAttribute('aria-pressed') === 'false' && t.state.saved['spotify:track:A3t1'] === false);
-        check('17 failed like: toast says so', lastToast(tab) === 'Couldn’t save (Server error).', tab.toasts());
+        // #41: plain words for a 5xx, and Try again on the toast
+        check('17 failed like: toast says so, with Try again', lastToast(tab) === 'Couldn’t save. Spotify isn’t answering right now.' && !!d(tab).querySelector('#toast .toastbtn[data-retry]'), tab.toasts());
         click(tab, heart);
         return H.wait(100);
       }).then(function () {
         check('17 failed unlike: heart stays filled', heart.getAttribute('aria-pressed') === 'true' && t.state.saved[uri] === true);
-        check('17 failed unlike: toast says so', lastToast(tab) === 'Couldn’t remove (Server error).', tab.toasts());
+        check('17 failed unlike: toast says so, with Try again', lastToast(tab) === 'Couldn’t remove. Spotify isn’t answering right now.' && !!d(tab).querySelector('#toast .toastbtn[data-retry]'), tab.toasts());   // #41
         tab.env.over = null;
         // Library paused: nothing sent, heart unchanged, a toast explains.
         store.setItem('lib-cooloff', JSON.stringify({ library: { until: Date.now() + 600000, reason: 'quota', strikes: 1, quotaAt: Date.now() } }));
