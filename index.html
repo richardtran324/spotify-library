@@ -13,6 +13,38 @@
 <script>
 /* Appearance (Diagnostics → Settings), applied before the page paints so a forced theme doesn't flash. */
 try { var libTheme = JSON.parse(localStorage.getItem('lib-theme') || 'null'); if (libTheme === 'light' || libTheme === 'dark') document.documentElement.setAttribute('data-theme', libTheme); } catch (e) {}
+/* v2.53: iPhone Text Size (Dynamic Type). On a touch screen whose Safari knows -apple-system-body, the CSS gives <html> the
+   system body size; this scales it by 16/17 (iOS's default body size is about 17px, not yet measured on the iPhone) so the
+   default Text Size looks as before, caps it at 28px so the bar and rows stay usable at the largest accessibility sizes, and
+   marks big sizes (html.bigtype) so song names wrap to two lines. Re-checked when the page comes back (not on resize, which
+   Safari fires while scrolling) and when (hover: none) changes. Desktop: nothing. The 28px cap is a deliberate limit: above it
+   the Now Playing bar's five controls no longer fit at 375px. */
+var LIB_TS_BASE = 17, LIB_TS_MAX = 28, LIB_TS_BIG = 17.5;   // v2.53
+function libTextSize() {   // v2.53: returns the root size in px it set, or 0 (not an iPhone-style browser)
+  var r = document.documentElement, sys = 0, px = 0;
+  try {
+    r.style.fontSize = '';
+    if (window.CSS && CSS.supports && CSS.supports('font', '-apple-system-body') &&
+        window.matchMedia && window.matchMedia('(hover: none)').matches) {
+      sys = parseFloat(window.getComputedStyle(r).fontSize) || 0;
+      if (sys > 0) {
+        px = Math.min(LIB_TS_MAX, Math.round(sys * 16 / LIB_TS_BASE * 100) / 100);
+        r.style.fontSize = px + 'px';
+      }
+    }
+  } catch (e) { px = 0; }
+  if (px >= LIB_TS_BIG) r.classList.add('bigtype'); else r.classList.remove('bigtype');
+  libTextSize.sys = sys; libTextSize.px = px;
+  return px;
+}
+// v2.53: the first check runs in the small script right after the stylesheet (the -apple-system-body rule must be parsed first).
+document.addEventListener('visibilitychange', function () { if (!document.hidden) libTextSize(); });   // v2.53
+window.addEventListener('pageshow', function () { libTextSize(); });
+try {   // v2.53: an iPad that gains or loses a trackpad flips (hover: none); re-check so the inline size goes with the CSS guard
+  var libHoverMq = window.matchMedia && window.matchMedia('(hover: none)');
+  if (libHoverMq && libHoverMq.addEventListener) libHoverMq.addEventListener('change', function () { libTextSize(); });
+  else if (libHoverMq && libHoverMq.addListener) libHoverMq.addListener(function () { libTextSize(); });
+} catch (e) {}
 </script>
 <style>
 /* Layout: one column for a phone. Sticky top bar (status + search + filters), then a list of covers. A tap opens an album,
@@ -88,6 +120,14 @@ header.top {
   border-bottom: 1px solid var(--line);
 }
 header.top.detail .search, header.top.detail .filters { display: none; }
+/* v2.49: scrolling down a list slides the title row and status line out of view (header.top.slim; --slim-h is their
+   height, set by setSlim); scrolling up brings them back. Only the sticky offset changes, so the list doesn't jump. */
+header.top { transition: top 0.2s ease-out; }
+header.top.slim { top: calc(env(safe-area-inset-top, 0px) - var(--slim-h, 0px)); }
+header.top.slim .toprow, header.top.slim .status { visibility: hidden; transition: visibility 0s linear 0.2s; }
+@media (prefers-reduced-motion: reduce) {
+  header.top, header.top.slim .toprow, header.top.slim .status { transition: none; }
+}
 .toprow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 h1 { font-size: 1.5rem; margin: 0; letter-spacing: -0.01em; }
 .status {
@@ -109,7 +149,19 @@ h1 { font-size: 1.5rem; margin: 0; letter-spacing: -0.01em; }
   padding: 10px 12px; border-radius: 10px;
   border: 1px solid var(--line); background: var(--surface); color: var(--fg);
 }
-.filters { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+/* v2.49: the filter chips sit in one row that scrolls sideways (no wrap); setFilter keeps the selected chip in view.
+   Each chip's tap area is 44px tall; the transparent top and bottom borders keep the pill itself 36px. */
+.filters {
+  display: flex; gap: 8px; margin: 6px -16px 0; padding: 0 16px; flex-wrap: nowrap; position: relative;
+  overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain;
+  scroll-padding: 0 16px; scrollbar-width: none;
+}
+.filters::-webkit-scrollbar { display: none; }
+.filters .chip {
+  flex: none; white-space: nowrap; min-height: 44px;
+  border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+}
+.filters .chip[aria-pressed] { background-clip: padding-box; }   /* v2.49: beats the background shorthand of the pressed style */
 .chip {
   font: inherit; font-size: 0.9rem; font-weight: 600;
   padding: 6px 13px; border-radius: 999px; border: 0;
@@ -244,6 +296,14 @@ li.dischead h3 { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; t
 }
 .prow { display: flex; align-items: center; gap: 10px; }
 .pcover { width: 44px; height: 44px; border-radius: 4px; background: var(--chip); object-fit: cover; flex: none; }
+/* v2.55: swipe the bar's main row (left Next, right Previous, up Now Playing). The row handles its own pans so the
+   page doesn't scroll under the fixed bar; taps still click. The cover slides briefly to show a skip registered. */
+.prow { touch-action: none; }
+.pcover.pslide-l { animation: pSlideL 0.24s ease-out; }
+.pcover.pslide-r { animation: pSlideR 0.24s ease-out; }
+@keyframes pSlideL { 0% { transform: none; opacity: 1; } 45% { transform: translateX(-18px); opacity: 0.35; } 100% { transform: none; opacity: 1; } }
+@keyframes pSlideR { 0% { transform: none; opacity: 1; } 45% { transform: translateX(18px); opacity: 0.35; } 100% { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .pcover.pslide-l, .pcover.pslide-r { animation: none; } }
 .pctl { display: flex; justify-content: center; align-items: center; gap: 20px; margin-top: 2px; }
 .act.big { width: 44px; height: 44px; background: var(--fg); color: var(--bg); }
 .act.big:active { background: var(--fg); opacity: 0.7; }
@@ -293,6 +353,20 @@ li.dischead h3 { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; t
 }
 .notes-text .ts:active { background: var(--chip); }
 .notes-note { font-size: 0.85rem; color: var(--muted); margin: 0; }
+/* v2.51: ⋯ on song and episode rows (a plain 44 px .act, so episode rows keep the width the notes button had;
+   song rows get one more button, about 46 px), and its menu. */
+#rmTitle { overflow-wrap: anywhere; }
+.rm-meta { font-size: 0.85rem; color: var(--muted); margin-top: -6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rm-meta:empty { display: none; }
+.rm-list { display: flex; flex-direction: column; }
+.rmrow {
+  display: block; width: 100%; box-sizing: border-box; min-height: 48px; padding: 13px 4px;
+  font: inherit; color: inherit; text-align: left; text-decoration: none; background: none; border: 0;
+  border-bottom: 1px solid var(--line); cursor: pointer; -webkit-tap-highlight-color: transparent;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rmrow:active { background: var(--chip); }
+@media (hover: hover) { .rmrow:hover { background: var(--chip); } }
 .notes-body > .btn { align-self: flex-start; }
 .toast {
   position: fixed; left: 50%; transform: translateX(-50%);
@@ -360,6 +434,11 @@ li.row.kpflash { animation: kpflash 1.6s ease-out; }
 }
 .seg button[aria-pressed="true"] { background: var(--surface); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18); }
 .lbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; }   /* v2.40: wraps (filter chips) */
+/* v2.50: In Latest: Priority · Normal · Hidden in a podcast's page header */
+.lprirow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.lprilbl { font-size: 0.85rem; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.seg.lpri { flex: 1 1 220px; min-width: 0; margin-top: 0; }
+.seg.lpri button { min-height: 44px; padding: 7px 6px; }
 .lbar .btn { display: inline-flex; align-items: center; gap: 6px; }
 .lbar .btn svg { width: 18px; height: 18px; display: block; }
 .lnote { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 0.85rem; color: var(--muted); margin: 10px 2px 0; }
@@ -387,6 +466,7 @@ a.devrow { text-decoration: none; }
 .devrow[aria-busy="true"] { opacity: 0.6; cursor: progress; }
 /* The song that's playing now, in any list */
 li.row.playing .name { color: var(--accent); }
+.updtag { font-weight: 700; color: var(--accent); }   /* v2.52: "Updated" on a playlist row or card */
 .nowtag, .newtag {
   display: inline-block; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--accent); margin-right: 6px;
@@ -402,9 +482,14 @@ header.top.detail .schips { display: none; }
 .schip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .seeall { display: block; margin: 0; padding: 10px 2px; }
 /* Sort chips: one row per view, wraps on a phone. A little smaller than the main filter chips. */
-.sortbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+.sortbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 6px; margin-top: 10px; }   /* v2.56: 10 px between wrapped rows, so the 44 px touch areas don't overlap */
 .sortlbl { font-size: 0.8rem; font-weight: 600; color: var(--muted); margin-right: 2px; }
 .sortbar .chip { font-size: 0.85rem; padding: 5px 11px; min-height: 34px; }
+/* v2.56: a 44 px tall touch area for the sort chips (the look stays 34 px), and the line before By you */
+.sortbar .chip { position: relative; }
+.sortbar .chip::after { content: ''; position: absolute; left: 0; right: 0; top: -5px; bottom: -5px; }
+.owngrp { display: inline-flex; align-items: center; gap: 6px; align-self: stretch; }
+.sortsep { width: 1px; align-self: stretch; margin: 4px 2px; background: var(--line); }
 .snote { font-size: 0.8rem; color: var(--muted); margin: 6px 2px 0; }
 .sortdir { margin-left: 4px; }   /* v2.34: ↑ or ↓ on a chosen sort that turns around */
 /* v2.40: episode filter chips (44px tap targets; they wrap at phone width) */
@@ -413,6 +498,43 @@ header.top.detail .schips { display: none; }
 .efbar .chip { min-height: 44px; font-size: 0.85rem; padding: 6px 12px; }
 #dfilt .empty { margin: 10px 2px 0; }
 .epfreset { margin-top: 8px; min-height: 44px; }
+/* v2.54: year headers and Jump to year in Liked Songs (Recently liked order). Chips are 44px tall for a thumb. */
+.yearbar .chip { min-height: 44px; min-width: 44px; font-variant-numeric: tabular-nums; }
+.yearbar .chip[disabled] { opacity: 0.5; cursor: default; }
+ul.list li.yhead { border-bottom: 0; padding: 14px 2px 4px; scroll-margin-top: 120px; }
+ul.list li.yhead:focus { outline: none; }
+ul.list li.yhead:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.yhead h3 { margin: 0; font-size: 0.9rem; font-weight: 700; color: var(--muted); font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+/* v2.58: A–Z strip. 44 px wide, inset 12 px from the right edge (Safari's edge swipe). The nav spans the space
+   between the header and the player bar but takes no touches; only the letters, centred in it, do. Letter heights
+   are set by azPlace (14-28 px). Rows get room on the right so the strip never covers their buttons. */
+.azstrip {
+  position: fixed; z-index: 4; width: 44px; pointer-events: none;
+  right: max(calc(12px + env(safe-area-inset-right, 0px)), calc(50vw - 320px - 52px));
+  bottom: calc(32px + env(safe-area-inset-bottom, 0px));
+  display: flex; flex-direction: column; justify-content: center;
+}
+body.has-player .azstrip { bottom: calc(140px + env(safe-area-inset-bottom, 0px)); }
+.azcol {
+  pointer-events: auto; touch-action: none; display: flex; flex-direction: column;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+}
+.azl {
+  flex: none; height: 28px; width: 44px; padding: 0; margin: 0; overflow: hidden;
+  font: inherit; font-size: 11px; font-weight: 700; line-height: 1; color: var(--accent);
+  background: none; border: 0; border-radius: 6px; cursor: pointer;
+}
+.azl.azskip {   /* dropped for space: off screen but still a VoiceOver and keyboard button */
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+}
+.azbub {
+  position: fixed; z-index: 4; top: 50%; right: max(calc(68px + env(safe-area-inset-right, 0px)), calc(50vw - 320px + 4px));
+  transform: translateY(-50%); width: 64px; height: 64px; border-radius: 14px;
+  display: flex; align-items: center; justify-content: center; pointer-events: none;
+  font-size: 32px; font-weight: 700; background: var(--surface); color: var(--fg);
+  border: 1px solid var(--line); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+@media (max-width: 760px) { body.has-az #main { padding-right: 44px; } }
 /* Full Now Playing screen: slides up over everything except the sheets (device picker, Up next) and the toast */
 body.npopen { overflow: hidden; }
 body.sheetopen { overflow: hidden; }   /* audit: the page stays still behind an open sheet (own class, so NP's lock is never touched) */
@@ -507,6 +629,31 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
 .shead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 18px 2px 2px; }
 .shead .sect { margin: 0; }
 .shead .linkbtn { font-size: 0.85rem; }
+/* v2.57: Edit Home (the link at the bottom of Home and its sheet) */
+.homeedit { display: flex; justify-content: center; margin: 22px 0 4px; }
+.homeedit .linkbtn { margin: 0; padding: 0 16px; min-height: 44px; min-width: 44px; }
+.hshint { display: flex; align-items: center; flex-wrap: wrap; gap: 0 8px; margin: 2px 2px 0; }
+.hshint .linkbtn { margin: 0; padding: 0 4px; min-height: 44px; font-size: inherit; }
+#homeSheet .sheet-panel { overflow: hidden; }   /* the rows scroll; title, hint and buttons stay put */
+.hslist { list-style: none; margin: 0; padding: 0; flex: 1 1 auto; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+#homeSheet .sheet-btns { flex: none; }
+.hsrow { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--line); padding: 6px 0; min-height: 56px; }
+.hsmeta { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.hsacts { display: flex; align-items: center; gap: 2px; flex: none; }
+.act.hsmove { width: 44px; height: 44px; }
+.hsswitchwrap { display: inline-grid; place-items: center; min-width: 60px; min-height: 44px; cursor: pointer; }
+.hsswitch {
+  -webkit-appearance: none; appearance: none; margin: 0; position: relative; flex: none; cursor: pointer;
+  width: 51px; height: 31px; border-radius: 16px; background: var(--chip); box-shadow: inset 0 0 0 1px var(--muted); transition: background 0.2s;
+}
+.hsswitch::before {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); transition: transform 0.2s;
+}
+.hsswitch:checked { background: var(--accent); box-shadow: none; }
+.hsswitch:checked::before { transform: translateX(20px); }
+.hsswitch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .hsswitch, .hsswitch::before { transition: none; } }
 /* v2.12: Jump back in album and podcast cards open on a tap; the round button on the cover plays */
 .cl li { position: relative; }
 .cardplay {
@@ -535,7 +682,56 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
 .coolbar .cleft { color: var(--warn); font-weight: 700; font-variant-numeric: tabular-nums; margin-left: auto; }
 /* v2.43: no internet: one quiet line in place of repeated "Load failed" toasts */
 .netbar { color: var(--muted); }
+/* v2.49: Compact player (Diagnostics → Settings, off by default): the Now Playing bar is one row (cover, title,
+   Play/Pause, Next); Up next, the heart, Shuffle, Previous and Repeat stay on the full Now Playing screen.
+   Bar height: 8 + 48 + 8 + 1 = 65px, so the body padding and the toast offset drop by the same 44px as the bar. */
+body.compact-player .pinner { display: flex; align-items: center; gap: 8px; padding-bottom: 8px; }
+body.compact-player .prow { flex: 1; min-width: 0; }
+body.compact-player #pQueue, body.compact-player #pHeart, body.compact-player #pShuffle,
+body.compact-player #pPrev, body.compact-player #pRepeat { display: none; }
+body.compact-player .pctl { flex: none; margin-top: 0; gap: 4px; }
+body.compact-player #pNext { width: 44px; height: 44px; }
+body.compact-player .pinfo .sub.idle { -webkit-line-clamp: 1; }
+body.compact-player.has-player { padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px)); }
+body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
+/* v2.53: iPhone Text Size (Dynamic Type). Only on touch screens (hover: none) in a Safari that knows -apple-system-body; the head
+   script scales the root so the default Text Size looks as before. Fixed sizes that should grow are in rem here (16px = 1rem at
+   the default); the search box stays at least 16px so Safari doesn't zoom on focus, and tap targets stay at least 44px. */
+@supports (font: -apple-system-body) {
+  @media (hover: none) {
+    html { font: -apple-system-body; font-family: var(--font); }
+    body { font-family: var(--font); font-size: 1rem; }
+    body.has-player { padding-bottom: calc(8.25rem + env(safe-area-inset-bottom, 0px)); }
+    body.has-player .toast { bottom: calc(8rem + env(safe-area-inset-bottom, 0px)); }
+    .search, .field { font-size: max(16px, 1rem); }
+    /* Top row (Library + Diagnostics + Refresh) wraps instead of scrolling sideways at big sizes; buttons stay on the right. */
+    .toprow { flex-wrap: wrap; row-gap: 6px; }
+    .topbtns { margin-left: auto; flex-wrap: wrap; justify-content: flex-end; row-gap: 12px; }   /* 12px: the buttons' 44px hit areas (6px above and below) don't overlap */
+    /* Play / Shuffle in a list header: cut off with … rather than spilling into the heart and share buttons. */
+    .dbtns .btn { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* Row buttons: 44px at the default size (as v2.29's touch targets), growing a little (to 48px) so three of them
+       still leave room for the name at 375px. */
+    .act { width: clamp(44px, 2.75rem, 48px); height: clamp(44px, 2.75rem, 48px); }
+    .act svg { width: clamp(22px, 1.375rem, 26px); height: clamp(22px, 1.375rem, 26px); }
+    .act.big { width: clamp(44px, 2.75rem, 52px); height: clamp(44px, 2.75rem, 52px); }
+    .cover { width: min(3.5rem, 72px); height: min(3.5rem, 72px); }
+    .cover.liked { font-size: 1.625rem; }
+    ul.list.compact .cover { width: min(2.75rem, 56px); height: min(2.75rem, 56px); }
+    ul.list.compact .cover.num { width: 1.75rem; }
+    .hero .cover { width: min(4rem, 80px); height: min(4rem, 80px); }
+    .cover.dcover { width: 6rem; height: 6rem; font-size: 2.5rem; }
+    .pcover { width: min(2.75rem, 56px); height: min(2.75rem, 56px); }   /* the five bar controls keep their 20px gaps so they fit at 375px */
+    .pinner { padding: 0.5rem max(16px, env(safe-area-inset-right, 0px)) 0.375rem max(16px, env(safe-area-inset-left, 0px)); }
+    .cl li { width: 7rem; }
+    .clcard .cover { width: 7rem; height: 7rem; }
+    .cardplay { top: 4.25rem; left: 4.25rem; width: 2.5rem; height: 2.5rem; }
+    .cardplay svg { width: 1.25rem; height: 1.25rem; }
+    /* Big Text Size: song and item names wrap to two lines instead of cutting off (the Now Playing bar keeps one line). */
+    html.bigtype ul.list .name { white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  }
+}
 </style>
+<script>libTextSize();   /* v2.53: first Text Size check, now that the -apple-system-body rule above is parsed */</script>
 </head>
 <body>
 <div class="wrap">
@@ -684,6 +880,18 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   </div>
 </div>
 
+<div class="sheet" id="rowmenu" role="dialog" aria-modal="true" aria-labelledby="rmTitle" hidden>
+  <div class="sheet-back" id="rmBack"></div>
+  <div class="sheet-panel">
+    <h2 id="rmTitle">More</h2>
+    <div class="rm-meta" id="rmMeta"></div>
+    <div class="rm-list" id="rmList"></div>
+    <div class="sheet-btns">
+      <button class="btn secondary" id="rmClose" type="button">Close</button>
+    </div>
+  </div>
+</div>
+
 <div class="sheet" id="perm" role="dialog" aria-modal="true" aria-labelledby="permTitle" hidden>
   <div class="sheet-back" id="permBack"></div>
   <div class="sheet-panel">
@@ -726,6 +934,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       <label class="setrow"><input type="radio" name="rewind" value="on"><span><span class="setname">On</span><span class="setnote">An episode this page played before starts a little before where you stopped: 10 s after 5 minutes away, 15 s after an hour, 30 s after a day.</span></span></label>
       <label class="setrow"><input type="radio" name="rewind" value="off"><span><span class="setname">Off</span><span class="setnote">Starts exactly where you stopped.</span></span></label>
     </fieldset>
+    <label class="setrow"><input type="checkbox" id="compactPlayer"><span><span class="setname">Compact player</span><span class="setnote">The Now Playing bar is one row: cover, title, Play/Pause and Next. Tap the title for the other controls.</span></span></label>
     <label class="setgroup" for="searchFirst"><span class="setname">Search Spotify: show first in All</span></label>
     <select class="field" id="searchFirst">
       <option value="track">Songs</option>
@@ -736,6 +945,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       <option value="episode">Episodes</option>
     </select>
     <p class="sethint">The other groups keep their usual order.</p>
+    <label class="setrow setgroup"><input type="checkbox" id="rowPlus"><span><span class="setname">Show ＋ on song and episode rows</span><span class="setnote">Turn off for more room for names. Add to queue stays in the ⋯ menu.</span></span></label>
     <div class="setgroup slgroup"><span class="setname">Saved album and podcast lists</span>
       <p class="sethint" id="slInfo">Saved lists: none</p>
       <p class="sethint">Opening a saved album or podcast sends nothing to Spotify, and neither does a saved playlist that hasn’t changed. Refresh (top right) keeps them.</p>
@@ -764,6 +974,21 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
 </div>
 
 <button class="kpjump" id="kpJump" type="button" hidden>Jump to playing</button>   <!-- v2.42 -->
+<!-- v2.57: Edit Home -->
+<div class="sheet" id="homeSheet" role="dialog" aria-modal="true" aria-labelledby="homeSheetTitle" hidden>
+  <div class="sheet-back" id="homeSheetBack"></div>
+  <div class="sheet-panel">
+    <h2 id="homeSheetTitle">Edit Home</h2>
+    <p class="sethint">Move sections with the arrows, or switch them off. Kept on this phone only.</p>
+    <ul class="hslist" id="homeSheetList"></ul>
+    <p class="vh" id="homeSheetLive" aria-live="polite"></p>
+    <div class="sheet-btns">
+      <button class="btn secondary" id="homeReset" type="button">Reset</button>
+      <button class="btn" id="homeSheetClose" type="button">Done</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast" hidden></div>
 <div class="vh" id="announce" role="status" aria-live="polite"></div>
 
@@ -811,19 +1036,25 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     searchType: 'lib-searchtype', // Search Spotify result type: 'all' (default) or one of SEARCH_TYPES
     showSort: 'lib-showsort',    // v2.7 Shows order; read only when 'lib-sort-shows' is unset (see sortMode)
     pins: 'lib-pins',            // [{kind, id, name, uri, url, img, sub[, ownerId, collaborative]}], oldest pin first; local only
+    latestPri: 'lib-latest-pri', // v2.50: {show id: 'p' | 'h'}: In Latest Priority or Hidden (Normal isn't stored), 100 at most; local only
     plCopies: 'lib-pl-copies',   // v2.24: {original id: {copyId, name, ownerName, ownerId, uri, img, snap, count, at}}, 50 at most; local only
     copyWatch: 'lib-copy-watch', // v2.24: {origId, name, at, known: [ids] | null, snap, count, ownerName, ownerId, uri, img[, no]}: set by Make a copy, 24 h
     recentSearches: 'lib-recent-searches', // [{q, at}], newest first
     queued: 'lib-queued',        // [{uri, at}]: what this page added to the queue with ＋ (last 24 h)
     queueHide: 'lib-queue-hide', // false shows the whole queue; anything else hides Spotify's own additions
     theme: 'lib-theme',          // 'light' | 'dark'; unset = match the phone
+    compactPlayer: 'lib-compact-player', // v2.49: true = one-row Now Playing bar (Diagnostics → Settings); unset = the usual two rows
     searchFirst: 'lib-search-first', // the group shown first in Search Spotify → All
+    rowPlus: 'lib-row-plus',     // v2.51: false hides ＋ on song and episode rows (Add to queue stays in the ⋯ menu); unset = shown
     lastplay: 'lib-lastplay',    // v2.10: {item, context, positionMs, deviceId, at[, shuffle, repeat, frozenAt]}: the last song or episode seen playing
     epHistory: 'lib-ep-history', // v2.11: [{uri, id, name, show:{id, name, images}, duration_ms, positionMs, played, at[, checkedAt]}], newest first
     epNotes: 'lib-ep-notes',     // v2.18: [{id, t, at[, cut]}], newest first: notes of episodes you opened or played (40, 4,000 characters each)
     epMarks: 'lib-ep-marks',     // v2.21: {uri: {played, at, pos}}: Mark as played / unplayed, this phone only (400, 180 days)
     playLog: 'lib-play-log',     // v2.30: {e: [[playedAt ms, track id], …] newest first, t: {track id: [name, artists, album, cover]}}: songs from Recently played, kept past its last 50 (1,500 plays, 90 days; names cut at 80 characters with …; covers without the i.scdn.co prefix)
     rewind: 'lib-rewind',        // v2.44: 'off' turns off the rewind when the page resumes an episode; unset = on
+    plSeen: 'lib-pl-seen',       // v2.52: {playlist id: {s: snapshot, o: opened at (0 = not yet), f: first seen at[, e: snapshot after this page's own change]}} (500)
+    byYou: 'lib-pl-byyou',       // v2.56: true: Playlists shows only playlists you own (By you)
+    homeLayout: 'lib-home-layout', // v2.57: {order: [section ids], hidden: [section ids]}: Edit Home, this phone only
     ctxLast: 'lib-ctx-last',     // v2.23: {album or playlist URI | 'liked': {uri, id, name, positionMs, durMs, at}}: the last song heard in each list (40, 30 days)
     bookmarks: 'lib-bookmarks',  // v2.32: [{uri, id, kind: 'track'|'episode', name, by, img, url, pos, at}], newest first: Bookmarks saved on Now Playing (200, 2 years); local only
     introSkip: 'lib-intro-skip', // v2.33: {show URI: {s, at}}: Skip intro per podcast, s = 15|30|45|60|90|120 seconds, at = last set or used (100 shows, 365 days)
@@ -863,6 +1094,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   var BM_MAX = 200;                           // v2.32: bookmarks kept…
   var BM_MS = 730 * 24 * 60 * 60 * 1000;      // …for at most 2 years
   var HOME_BM = 5;                            // v2.32: bookmarks shown on Home before "Show all"
+  var PLSEEN_MAX = 500;                       // v2.52: playlists whose snapshot the page remembers for "Updated"
   var MARK_MOVED_MS = 30000;                  // seen playing this far from where it was marked: played again, the mark goes
   // v2.14: no automatic resume-point checks (GET /episodes/{id}); Continue listening uses the page's own history.
   // v2.44: rewind on resume. When the page resumes an episode from its saved spot, it starts this much earlier,
@@ -873,9 +1105,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   var LASTPLAY_MS = 6 * 60 * 60 * 1000;   // the last playback stays on screen (as paused) this long after Spotify goes idle
   var HOME_RECENT_MS = 15 * 60 * 1000;    // Home: recently played is asked for at most this often (v2.13: was 10 min)
   var HOME_JUMP = 8, HOME_LATEST = 5, HOME_PLAYLISTS = 6;
+  var HOME_RECENT_N = 8;                  // v2.57: Recently saved albums / Recently liked songs show this many
   var IDLE_TEXT = 'Spotify is asleep. Press play to wake it.';
   var WAKE_FIRST = 'Press play first to wake Spotify.';
   var PINS_MAX = 30;
+  var LATEST_PRI_MAX = 100;   // v2.50: podcasts set to Priority or Hidden in Latest, at most
+  var LATEST_PRI_SLOTS = 8;   // v2.50: of the 12 shows a Latest reload asks, Priority takes at most 8 while 4+ Normal shows exist
   var RECENT_SEARCHES_MAX = 8;
   var QUEUED_MAX = 100;
   var QUEUED_MS = 24 * 60 * 60 * 1000;
@@ -998,6 +1233,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     back15: svg('<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M5.2 8.5A8 8 0 1 1 4 12"/><path fill="currentColor" d="M3.5 4v6h6z"/><text x="12.5" y="15.5" font-size="7.5" font-weight="700" text-anchor="middle" fill="currentColor" font-family="-apple-system, system-ui, sans-serif">15</text>'),
     fwd30: svg('<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M18.8 8.5A8 8 0 1 0 20 12"/><path fill="currentColor" d="M20.5 4v6h-6z"/><text x="11.5" y="15.5" font-size="7.5" font-weight="700" text-anchor="middle" fill="currentColor" font-family="-apple-system, system-ui, sans-serif">30</text>'),
     check: svg('<path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M5 12.5l4.5 4.5L19 7.5"/>'),   // v2.21
+    more: svg('<circle cx="5.5" cy="12" r="1.9" fill="currentColor"/><circle cx="12" cy="12" r="1.9" fill="currentColor"/><circle cx="18.5" cy="12" r="1.9" fill="currentColor"/>'),   // v2.51
     notes: svg('<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M6 3h9l4 4v14H6z"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M9 11h7M9 14.5h7M9 18h4"/>'),   // v2.18
     share: svg('<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 3v12M8 7l4-4 4 4M8 10H6v11h12V10h-2"/>'),   // v2.20
     volume: svg('<path fill="currentColor" d="M4 9h4l5-4v14l-5-4H4z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12"/>')
@@ -1457,6 +1693,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       $('cool').hidden = false;
       coolTimer = setTimeout(paintCool, (left % 1000 || 1000) + 30);
     } else $('cool').hidden = true;
+    slimMeasure();   // v2.49
+    azPlace();   // v2.58: the header's height may have changed
     var pt = paused.indexOf('player') !== -1 ? coolText('player') : '';
     if (pt) { if (n.textContent !== pt) n.textContent = pt; n.hidden = false; } else n.hidden = true;
     var ended = [];
@@ -1694,9 +1932,16 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     return best.url || '';
   }
   function names(list) { return (list || []).map(function (x) { return x && x.name; }).filter(Boolean).join(', '); }
+  var rowRaw = {};   // v2.51: song or episode URI -> the Spotify object its row was mapped from (references only, this visit)
+  // v2.51: a poorer copy (an album's own songs carry no album, saved lists keep artist names only) never replaces a richer one.
+  function rawScore(t) {
+    return (t.type ? 1 : 0) + (t.album && t.album.id ? 2 : 0) + ((t.artists || []).some(function (a) { return a && a.id; }) ? 2 : 0) + (t.show && t.show.id ? 1 : 0);
+  }
+  function keepRaw(t) { var old = rowRaw[t.uri]; if (!old || old === t || rawScore(t) >= rawScore(old)) rowRaw[t.uri] = t; }
   function mapTrack(t, o) {
     o = o || {};
     if (!t || !t.uri || !t.id) return null;
+    keepRaw(t);   // v2.51: album and artists for the row menu (a reference, this visit only)
     var ep = t.type === 'episode';
     var by = ep ? ((t.show && t.show.name) || 'Podcast') : names(t.artists);
     var sub = o.sub != null ? o.sub : ((ep ? 'Episode · ' : 'Song · ') + by + (!ep && t.album && t.album.name ? ' · ' + t.album.name : ''));
@@ -1800,11 +2045,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // Detail views (song and episode lists) start with 'd-'. They sort only the rows loaded so far.
   // v2.34: a sort in SORT_FLIP turns around when its chip is tapped again; the reversed choice is stored as '<option>:rev'.
   var SORTS = {
-    playlists: [['default', 'Default'], ['az', 'A–Z'], ['songs', 'Most songs']],
-    albums: [['saved', 'Recently saved'], ['az', 'A–Z'], ['artist', 'Artist A–Z'], ['released', 'Release date']],
+    // v2.56: 'recents' (Playlists, Albums, Shows): what you played most recently first, then the rest in the default order.
+    playlists: [['default', 'Default'], ['recents', 'Recents'], ['az', 'A–Z'], ['songs', 'Most songs']],
+    albums: [['saved', 'Recently saved'], ['recents', 'Recents'], ['az', 'A–Z'], ['artist', 'Artist A–Z'], ['released', 'Release date']],
     artists: [['default', 'Default'], ['az', 'A–Z']],
     all: [['default', 'Default'], ['az', 'A–Z']],
-    shows: [['updated', 'Recently updated'], ['az', 'A–Z'], ['saved', 'Recently saved']],
+    shows: [['updated', 'Recently updated'], ['recents', 'Recents'], ['az', 'A–Z'], ['saved', 'Recently saved']],
     latest: [['newest', 'Newest first'], ['oldest', 'Oldest first'], ['show', 'Show A–Z']],
     'd-album': [['track', 'Track order'], ['az', 'A–Z'], ['artist', 'Artist A–Z'], ['dur', 'Duration']],
     'd-playlist': [['default', 'Default'], ['az', 'Title A–Z'], ['artist', 'Artist A–Z'], ['added', 'Recently added'], ['dur', 'Duration'], ['album', 'Album'], ['rel', 'Release date']],
@@ -1894,11 +2140,63 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function sortList(view, list) {
     var m = sortMode(view), rev = sortRev(view);
     if (view === 'shows' && m === 'updated') return showsByNewest(list);
+    if (m === 'recents') return byRecents(view, list);   // v2.56
     var cmp = SORT_CMP[view] && SORT_CMP[view][m];
     if (!cmp) return list.slice();
     return list.map(function (x, i) { return { x: x, i: i }; })
       .sort(function (a, b) { return cmp(a.x, b.x, rev) || a.i - b.i; })
       .map(function (w) { return w.x; });
+  }
+  // v2.56: Recents. When each playlist, album or podcast was last played, from what the page already holds:
+  // the last song heard per album or playlist (lib-ctx-last, which also takes in Recently played), Home's
+  // Recently played contexts (state.recent.jump, memory only) and the podcast history (lib-ep-history).
+  // No requests. Items never seen playing keep the default order after the played ones.
+  function recentKey(view, x) {
+    if (!x || !x.id) return '';
+    if (view === 'playlists') return 'spotify:playlist:' + x.id;
+    if (view === 'albums') return 'spotify:album:' + x.id;
+    return view === 'shows' ? 'show:' + x.id : '';
+  }
+  function recentTimes(view) {
+    var out = {};
+    function put(k, at) { if (k && typeof at === 'number' && at > 0 && (!out[k] || at > out[k])) out[k] = at; }
+    if (view === 'playlists' || view === 'albums') {
+      var m = readCtxLast();
+      Object.keys(m).forEach(function (k) { put(k, m[k].at); });   // 'spotify:playlist:<id>', album URIs (and 'liked', unused)
+      ((state.recent && state.recent.jump) || []).forEach(function (j) {
+        if (!j) return;
+        if (j.playlist && j.playlist.id) put('spotify:playlist:' + j.playlist.id, j.at);
+        else if (typeof j.ctx === 'string' && /^spotify:album:[A-Za-z0-9]+$/.test(j.ctx)) put(j.ctx, j.at);   // played in the album itself
+      });
+    } else if (view === 'shows') {
+      epHistory().forEach(function (h) { if (h && h.show && h.show.id) put('show:' + h.show.id, h.at); });
+    }
+    return out;
+  }
+  // v2.56: a redraw from the podcast history (an episode heard during the player check) keeps the times of the
+  // last draw, so rows don't jump under your finger; the new order shows on the next tab switch or reload.
+  var recentsKeep = false, recentsLast = {};
+  function byRecents(view, list) {
+    var times = (recentsKeep && recentsLast[view]) || recentTimes(view);
+    recentsLast[view] = times;
+    var rest = view === 'shows' ? showsByNewest(list) : list.slice();   // the default order of each view
+    return rest.map(function (x, i) { return { x: x, i: i, at: times[recentKey(view, x)] || 0 }; })
+      .sort(function (a, b) { return (b.at - a.at) || a.i - b.i; })
+      .map(function (w) { return w.x; });
+  }
+  // v2.56: By you (Playlists): only playlists you own. Stored as true or false; shown only when the page knows who you are.
+  // If storage is full or blocked, the choice holds in memory until the page reloads.
+  var byYouMem = null;
+  function byYouKnown() { var me = state.data && state.data.me; return !!(me && me.id); }
+  function byYouOn() {
+    var v = get(K.byYou);
+    if (typeof v !== 'boolean') v = byYouMem;
+    return v === true && byYouKnown();
+  }
+  function setByYou(on) {
+    byYouMem = on;
+    set(K.byYou, on);
+    if (get(K.byYou) !== on) del(K.byYou);   // not written (full or blocked): memory decides, a stale stored value doesn't
   }
   // The chip row. rerender() repaints whatever the row sorts; focus then returns to the chip just pressed.
   function sortBar(view, rerender) {
@@ -1924,6 +2222,18 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       });
       g.appendChild(b);
     });
+    if (view === 'playlists' && byYouKnown()) {   // v2.56: a filter, after the sorts
+      var grp = el('span', { class: 'owngrp' }, [el('span', { class: 'sortsep', 'aria-hidden': 'true' })]);   // wraps as one, so the line never ends a row
+      var own = el('button', { class: 'chip ownchip', type: 'button', 'data-own': '1', 'aria-pressed': String(byYouOn()), 'aria-label': 'By you: only playlists you own', text: 'By you' });
+      own.addEventListener('click', function () {
+        setByYou(!byYouOn());
+        rerender();
+        var nb = document.querySelector('.sortbar[data-view="playlists"] [data-own]');
+        if (nb) nb.focus();
+      });
+      grp.appendChild(own);
+      g.appendChild(grp);
+    }
     return g;
   }
   // v2.34: while a Duration or Release date sort is on, each row's second line ends with that value ("· 3:45",
@@ -2049,6 +2359,199 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     });
     return b;
   }
+  // ---------- A–Z strip (v2.58) ----------
+  // On Albums, Artists, Playlists and Podcasts (Shows) sorted A–Z or Artist A–Z with more than AZ_MIN rows, and on
+  // Liked Songs once every song is loaded, a thin letter strip sits on the right, inset from the edge (Safari's
+  // edge swipe). Tap or drag a letter to jump to the first row with it. Letters come from the sort's own key and
+  // compare the way the sort does (sortText: a leading "The" is ignored; É, Ø, Ł, Æ go with E, O, L, A); digits,
+  // symbols and non-Latin names are "#". Only letters the list has are shown, in the list's order (so # sits where
+  // those rows sort). The strip is only as tall as its letters and centred; touches above, below or beside them
+  // scroll the page as usual. When letters would be under AZ_ROW_MIN px, every other one is shown (the rest stay as
+  // VoiceOver buttons); when even that doesn't fit, the strip hides. Hidden while the name filter has text or Find
+  // in list is in use. VoiceOver and keyboards get one button per letter ("Jump to M"). Nothing is asked of Spotify.
+  var AZ_MIN = 40;   // v2.58: more than 40 rows
+  var AZ_ROW_MIN = 14, AZ_ROW_MAX = 28;   // v2.58: a letter's height in px
+  var az = { nav: null, col: null, bub: null, rows: [], sig: '', want: '', on: false, drag: false, cur: '', ptrAt: 0, ptrL: '', fit: 'all' };
+  var azColl = null, azMemo = {};
+  var AZ_ABC = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+  var AZ_LATIN = /^[A-Za-zªºÀ-ÖØ-öø-ɏḀ-ỿ]$/;
+  function azLetter(s) {   // v2.58
+    var t = sortText(s);   // leading spaces sort with symbols, so they stay under #
+    var m = /^[\ud800-\udbff][\udc00-\udfff]|^[\s\S]/.exec(t);
+    var c = m ? m[0] : '';
+    if (Object.prototype.hasOwnProperty.call(azMemo, c)) return azMemo[c];
+    var L = '#';
+    if (/^[A-Za-z]$/.test(c)) L = c.toUpperCase();
+    else if (AZ_LATIN.test(c)) {
+      // Where the list's own sort puts this letter: the last of A–Z it doesn't sort before (Ø → O, Æ → A).
+      if (!azColl) { try { azColl = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true }); } catch (e) { azColl = { compare: function (a, b) { return a.localeCompare(b); } }; } }
+      for (var i = 0; i < AZ_ABC.length; i++) { if (azColl.compare(c, AZ_ABC[i]) >= 0) L = AZ_ABC[i]; else break; }
+    }
+    azMemo[c] = L;
+    return L;
+  }
+  // v2.58: the field a view's A–Z sort compares, or null when that view and sort get no strip.
+  function azField(view, mode) {
+    if (!{ albums: 1, artists: 1, playlists: 1, shows: 1, 'd-liked': 1 }[view]) return null;
+    if (mode === 'az') return 'name';
+    if (mode === 'artist' && (view === 'albums' || view === 'd-liked')) return 'artist';
+    return null;
+  }
+  // v2.58: this list gets no strip. During a drag the strip stays until the finger lifts (a redraw mid-drag, such
+  // as Shows after a Now Playing check, then doesn't cut the drag short); force: hide now (signing out).
+  function azHide(force) {
+    az.on = false; az.rows = []; az.want = '';
+    if (az.drag && !force) return;
+    az.drag = false;
+    azOff();
+  }
+  function azOff() {   // the buttons stay (hidden), so a redraw with the same letters reuses them
+    az.cur = '';
+    if (az.nav) az.nav.hidden = true;
+    if (az.bub) az.bub.hidden = true;
+    document.body.classList.remove('has-az');
+  }
+  // v2.58: pairs = [{item, li}] in list order (only the sorted rows, never the pinned ones above them).
+  function azShow(view, pairs) {
+    var field = azField(view, sortMode(view));
+    if (!field || pairs.length <= AZ_MIN) return azHide();
+    var rows = [], seen = {};
+    pairs.forEach(function (p) {
+      var L = azLetter(p.item[field]);
+      if (!seen[L]) { seen[L] = true; rows.push({ L: L, li: p.li }); }
+    });
+    if (rows.length < 2) return azHide();   // one letter: nothing to jump between
+    azBuild();
+    az.on = true;
+    az.rows = rows;   // new rows take effect at once, even mid-drag
+    az.want = rows.map(function (r) { return r.L; }).join('');
+    if (!az.drag) azPaint();   // the buttons wait for the finger to lift
+  }
+  // v2.58: draws the buttons when the letters changed, then shows and sizes the strip.
+  function azPaint() {
+    if (!az.on) return azOff();
+    if (az.want !== az.sig) {
+      az.sig = az.want;
+      az.col.textContent = '';
+      az.rows.forEach(function (r) {
+        var b = el('button', { class: 'azl', type: 'button', 'data-az': r.L, 'aria-label': r.L === '#' ? 'Jump to numbers and symbols' : 'Jump to ' + r.L, text: r.L });
+        b.addEventListener('click', function () {
+          if (Date.now() - az.ptrAt < 500) {
+            // A touch already jumped. After the same letter (a VoiceOver double-tap), still move focus there.
+            if (az.ptrL === r.L) azJump(r.L, true, true);
+            return;
+          }
+          azJump(r.L, true);
+        });
+        az.col.appendChild(b);
+      });
+    }
+    az.nav.hidden = false;
+    azPlace();
+  }
+  function azBuild() {   // v2.58: one strip for the page, made on first use
+    if (az.nav) return;
+    az.col = el('div', { class: 'azcol' });
+    az.nav = el('nav', { class: 'azstrip', id: 'azstrip', 'aria-label': 'Jump to letter', hidden: true }, [az.col]);
+    az.bub = el('div', { class: 'azbub', id: 'azbub', 'aria-hidden': 'true', hidden: true });
+    document.body.appendChild(az.nav);
+    document.body.appendChild(az.bub);
+    function shown() { return [].slice.call(az.col.querySelectorAll('.azl:not(.azskip)')); }
+    // The letter under the finger. Outside the letters: '' for a press (the page scrolls instead); during a drag,
+    // the nearest end. A dropped letter's gap goes to the shown letter it falls in.
+    function at(ev, clamp) {
+      var bs = shown();
+      if (!bs.length) return '';
+      var y = ev.clientY;
+      var first = bs[0].getBoundingClientRect(), last = bs[bs.length - 1].getBoundingClientRect();
+      if (y < first.top) return clamp ? bs[0].getAttribute('data-az') : '';
+      if (y >= last.bottom) return clamp ? bs[bs.length - 1].getAttribute('data-az') : '';
+      for (var i = 0; i < bs.length; i++) { if (y < bs[i].getBoundingClientRect().bottom) return bs[i].getAttribute('data-az'); }
+      return bs[bs.length - 1].getAttribute('data-az');
+    }
+    function move(L) {
+      if (!L || L === az.cur) return;
+      az.cur = L; az.ptrL = L;
+      azJump(L, false);
+      az.bub.textContent = L;
+      az.bub.hidden = false;
+    }
+    function end() {
+      if (!az.drag) return;
+      az.drag = false; az.cur = ''; az.ptrAt = Date.now();
+      az.bub.hidden = true;
+      azPaint();   // a redraw that came during the drag: new letters, or hidden
+    }
+    az.col.addEventListener('pointerdown', function (ev) {
+      if (ev.button > 0) return;
+      var L = at(ev, false);
+      if (!L) return;   // beside the letters: leave it to the page
+      ev.preventDefault();   // no text selection or focus ring while scrubbing
+      az.drag = true; az.cur = ''; az.ptrAt = Date.now();
+      try { az.col.setPointerCapture(ev.pointerId); } catch (e) {}
+      move(L);
+    });
+    az.col.addEventListener('pointermove', function (ev) { if (az.drag) move(at(ev, true)); });
+    az.col.addEventListener('pointerup', end);
+    az.col.addEventListener('pointercancel', end);
+    az.col.addEventListener('lostpointercapture', end);
+    window.addEventListener('resize', azPlace);
+    window.addEventListener('orientationchange', azPlace);
+    if (typeof ResizeObserver === 'function' && $('top')) { try { new ResizeObserver(function () { azPlace(); }).observe($('top')); } catch (e) {} }
+  }
+  // v2.58: the space runs from under the sticky header to above the player bar (CSS bottom); the letters share it,
+  // AZ_ROW_MIN to AZ_ROW_MAX px each, every other letter when they don't fit, none when even that doesn't.
+  // Runs again on resize, orientation change and when the header changes height (cool-off line shown or hidden).
+  function azPlace() {
+    if (!az || !az.on || !az.nav || az.drag) return;   // !az: called before this part of the script ran
+    var top = $('top');
+    var hb = top && !top.hidden ? top.getBoundingClientRect().bottom : 0;
+    az.nav.hidden = false;
+    az.nav.style.top = Math.max(0, Math.round(hb)) + 8 + 'px';
+    var avail = az.nav.getBoundingClientRect().height;
+    var bs = [].slice.call(az.col.querySelectorAll('.azl'));
+    var n = bs.length, fit = 'all', h = AZ_ROW_MAX;
+    if (avail > 0) {   // 0: no layout to measure (never on a phone); every letter is shown
+      if (avail / n >= AZ_ROW_MIN) h = Math.min(AZ_ROW_MAX, Math.floor(avail / n));
+      else if (avail / Math.ceil(n / 2) >= AZ_ROW_MIN) { fit = 'half'; h = Math.min(AZ_ROW_MAX, Math.floor(avail / Math.ceil(n / 2))); }
+      else fit = 'none';
+    }
+    az.fit = fit;
+    bs.forEach(function (b, i) {
+      var skip = fit === 'half' && i % 2 === 1;
+      b.classList.toggle('azskip', skip);
+      b.style.height = skip ? '' : h + 'px';
+    });
+    az.nav.hidden = fit === 'none';
+    document.body.classList.toggle('has-az', fit !== 'none');
+  }
+  // v2.58: scroll the first row with letter L just under the sticky header. focus: a button press (keyboard or
+  // VoiceOver) moves focus to that row's link; a drag keeps the finger's place on the strip. noScroll: focus only.
+  function azJump(L, focus, noScroll) {
+    var row = null;
+    for (var i = 0; i < az.rows.length; i++) { if (az.rows[i].L === L) { row = az.rows[i]; break; } }
+    if (!row || !row.li || !document.body.contains(row.li)) return false;
+    if (!noScroll) {
+      var top = $('top');
+      var hb = top && !top.hidden ? top.getBoundingClientRect().bottom : 0;
+      var y = (window.pageYOffset || 0) + row.li.getBoundingClientRect().top - hb - 4;
+      window.scrollTo(0, Math.max(0, Math.round(y)));   // always instant: a scrub can't wait for smooth scrolling
+    }
+    if (focus) {
+      var f = row.li.querySelector('a, button');
+      if (f) { try { f.focus({ preventScroll: true }); } catch (e) {} }
+    }
+    return true;
+  }
+  // v2.58: Liked Songs gets the strip only with every song loaded, nothing loading and Find in list empty.
+  function azDetail() {
+    var d = state.detail, ul = $('dlist');
+    if (!d || d.kind === 'artist' || !ul || d.item.kind !== 'liked') return azHide();
+    if (d.next || d.loading || d.findRun || d.error || d.restricted || d.editing || findTokens(d) || (d.find || '').trim()) return azHide();
+    var lis = ul.children, list = sortList('d-liked', d.items);
+    if (lis.length !== list.length) return azHide();   // rows and songs out of step: no guessing
+    azShow('d-liked', list.map(function (item, i) { return { item: item, li: lis[i] }; }));
+  }
   function savedEpisodesItem(d) {
     return { kind: 'episodes', name: 'Saved episodes', uri: null, url: 'https://open.spotify.com/collection/your-episodes', sub: 'Podcast · ' + d.episodesTotal + (d.episodesTotal === 1 ? ' episode' : ' episodes') };
   }
@@ -2148,6 +2651,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // showName: true uses the episode's show name (saved episodes); otherwise the release date.
   function mapEpisode(e, showName) {
     if (!e || !e.uri || !e.id) return null;
+    keepRaw(e);   // v2.51: for the row menu (Add to playlist), this visit only
     keepNotes(e);   // v2.18: Saved episodes and search answers carry the notes
     var rs = resumeOf(e);
     var dur = e.duration_ms || 0;
@@ -2419,10 +2923,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // ---------- Mark as played / unplayed (v2.21; on this phone only, see markOf) ----------
   // ep: {uri, name, sp}, sp being played as known without this phone's mark.
   function shownPlayed(ep) { var m = markOf(ep.uri); return m ? m.played : !!ep.sp; }
-  function toggleMark(ep) {
+  function toggleMark(ep, want) {   // want (v2.51, row menu): the value to set; without it the mark flips
     if (!ep || !/^spotify:episode:/.test(ep.uri || '')) return;
     var before = markOf(ep.uri);
-    var played = !shownPlayed(ep);
+    var played = typeof want === 'boolean' ? want : !shownPlayed(ep);
     var m = { played: played, at: Date.now() };
     var p = state.player;
     if (p && p.item && p.item.uri === ep.uri) m.pos = Math.round(curPos());   // on screen now: only a play away from here clears it
@@ -3446,6 +3950,27 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     function ss(list) { return list.map(function (w) { return w.s; }); }
     return { due: ss(more.concat(fresh, unknown)), rose: ss(more), slow: ss(slow), rest: ss(rest), more: more.length, at: atOf };
   }
+  // v2.50: which of the podcasts due a reload asks, in `lim` places. With more due than fit, the last places go to the
+  // ones asked longest ago (never asked first), half the places at most (the audit's rotation, as in v2.45).
+  // Priority podcasts come first but take at most 8 of 12 places (two thirds when fewer fit) while Normal ones are
+  // due, so Normal podcasts are still asked; each part rotates within its own places. With nothing set this is
+  // exactly v2.45's order. Hidden podcasts are already left out of `ask` (see loadLatest).
+  function latestPick(ask, lim, at) {
+    function pick(list, cap) {
+      if (list.length <= cap) return list.slice();
+      var rot = Math.min(Math.floor(cap / 2), list.slice(cap).some(function (s) { return !at[s.id]; }) ? LATEST_ROTATE_NEW : LATEST_ROTATE);
+      if (rot <= 0) return list.slice(0, cap);
+      var tail = list.slice(cap - rot).map(function (s, k) { return { s: s, k: k, a: at[s.id] || 0 }; })
+        .sort(function (a, b) { return (a.a - b.a) || a.k - b.k; }).slice(0, rot).map(function (w) { return w.s; });
+      return list.slice(0, cap - rot).concat(tail);
+    }
+    var pri = readLatestPri();
+    var top = ask.filter(function (s) { return pri[s.id] === 'p'; });
+    if (!top.length) return pick(ask, lim);
+    var normal = ask.filter(function (s) { return pri[s.id] !== 'p'; });
+    var nTop = Math.min(top.length, Math.max(lim - normal.length, Math.min(LATEST_PRI_SLOTS, Math.ceil(lim * 2 / 3))));
+    return pick(top, nTop).concat(pick(normal, lim - nTop));
+  }
   // Nothing to ask: the counts say nothing changed, so the list is up to date as of when they were read.
   // A podcast whose request failed in the last 12 hours still counts as failed (it's asked again after that).
   // audit (kept from loadLatest): the new `at` also dates the rows' positions, so what the page heard since the
@@ -3474,7 +3999,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var manual = mode === 'manual';
     var all = state.data && state.data.shows;
     if (L.loading || !all || !all.length || document.hidden || coolLeft('catalog')) return;
-    var plan = latestPlan(all);
+    var pri = readLatestPri();
+    var plan = latestPlan(all.filter(function (s) { return !s || pri[s.id] !== 'h'; }));   // v2.50: Hidden podcasts are never asked
     var stale = !latestFresh(L.cache);   // audit: a list cut short by leaving the page (partial) counts as stale
     // A list under 12 hours old opening on its own asks nothing (as v2.14); a Refresh, or a list over 12 hours old
     // or cut short, asks only podcasts whose count went up, never asked (or with no count), or not asked for 3 days.
@@ -3494,17 +4020,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       return;
     }
     L.held = false;
-    var lim = Math.min(LATEST_SHOWS, room), shows = ask.slice(0, lim);
-    if (ask.length > lim) {
-      // audit: when more are due than fit, the last places go to the due podcasts asked longest ago (never asked
-      // first), so none waits for good behind podcasts that publish often. Half the places at most.
-      var rot = Math.min(Math.floor(lim / 2), ask.slice(lim).some(function (s) { return !plan.at[s.id]; }) ? LATEST_ROTATE_NEW : LATEST_ROTATE);
-      if (rot > 0) {
-        var tail = ask.slice(lim - rot).map(function (s, k) { return { s: s, k: k, a: plan.at[s.id] || 0 }; })
-          .sort(function (a, b) { return (a.a - b.a) || a.k - b.k; }).slice(0, rot).map(function (w) { return w.s; });
-        shows = ask.slice(0, lim - rot).concat(tail);
-      }
-    }
+    var lim = Math.min(LATEST_SHOWS, room), shows = latestPick(ask, lim, plan.at);   // v2.50: Priority first (8 of 12 at most)
     L.loading = true; L.error = ''; L.triedAt = Date.now(); L.stoppedHidden = false;
     var seq = ++L.seq;
     var found = [], done = {}, bad = {}, failed = 0, next = 0, running = 0, stopped = false, hiddenStop = false, signedOut = false, finished = false;
@@ -3555,7 +4071,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         found.forEach(function (f) { var x = f.x; if (x.showId && x.date && (!newestByShow[x.showId] || x.date > newestByShow[x.showId])) newestByShow[x.showId] = x.date; });
         // v2.45: cache.checks (when each saved show was last answered, and its count then) replaces the audit's
         // askedAt; failed shows wait 12 hours, unsent ones keep theirs, so they come back first.
-        L.cache = { at: Date.now(), items: found.slice(0, LATEST_KEEP).map(function (f) { return f.x; }), failed: failed, newest: newestByShow, asked: shows.length,
+        // v2.50: Hidden shows' rows don't take the 50 places; each keeps only its newest row (its page and pin use it).
+        var kept = [], seenHidden = {}, nVis = 0;
+        found.forEach(function (f) {
+          var sid = f.x.showId;
+          if (pri[sid] === 'h') { if (!seenHidden[sid]) { seenHidden[sid] = true; kept.push(f.x); } }
+          else if (nVis < LATEST_KEEP) { nVis++; kept.push(f.x); }
+        });
+        L.cache = { at: Date.now(), items: kept, failed: failed, newest: newestByShow, asked: shows.length,
           checks: checksNow(), left: left };
         if (hiddenStop) L.cache.partial = true;
         set(K.latest, L.cache);
@@ -3587,6 +4110,85 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     launch();
     setTimeout(rerenderLatest, 0);   // shows "Updating…"
   }
+  // ---------- v2.50: In Latest: Priority · Normal · Hidden (per podcast, this phone only, never sent to Spotify) ----------
+  // Stored as {show id: 'p' | 'h'}; Normal is the absence of an entry. Read from storage each time, so other copies
+  // of the page agree.
+  function readLatestPri() {
+    var o = get(K.latestPri), out = {}, n = 0;
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return out;
+    Object.keys(o).forEach(function (id) { if (id && n < LATEST_PRI_MAX && (o[id] === 'p' || o[id] === 'h')) { out[id] = o[id]; n++; } });
+    return out;
+  }
+  function latestPriOf(showId) { return (showId && readLatestPri()[showId]) || 'n'; }
+  // v: 'p', 'n' or 'h'. False (with a toast) when it couldn't be stored.
+  function setLatestPri(showId, v) {
+    var o = readLatestPri(), cleared = false;
+    if ((o[showId] || 'n') === v) return true;
+    var had = !!o[showId];
+    delete o[showId];   // set again below, so the order of keys is the order they were last set
+    if (v !== 'n') {
+      if (!had && Object.keys(o).length >= LATEST_PRI_MAX) {
+        // Make room. Once this visit's library has loaded: drop settings of podcasts you no longer follow (and refuse
+        // if that frees nothing). Before that the list may be old, so the setting made longest ago goes instead.
+        var lib = state.libAt && state.data && Array.isArray(state.data.shows) && state.data.shows;   // libAt: this visit's library load
+        if (lib && lib.length) {
+          var have = {};
+          lib.forEach(function (s) { if (s && s.id) have[s.id] = true; });
+          Object.keys(o).forEach(function (id) { if (!have[id]) delete o[id]; });
+          if (Object.keys(o).length >= LATEST_PRI_MAX) { toast('You can set up to ' + LATEST_PRI_MAX + ' podcasts. Set one back to Normal first.'); return false; }
+        } else {
+          while (Object.keys(o).length >= LATEST_PRI_MAX) delete o[Object.keys(o)[0]];
+          cleared = true;
+        }
+      }
+      o[showId] = v;
+    }
+    try {
+      if (Object.keys(o).length) localStorage.setItem(K.latestPri, JSON.stringify(o));
+      else localStorage.removeItem(K.latestPri);
+    } catch (e) { toast('Couldn’t save that on this phone. Its storage is full.'); return false; }
+    return cleared ? 'cleared' : true;
+  }
+  // Latest rows as shown: Hidden podcasts left out, then Priority podcasts' unplayed episodes on top (each part keeps
+  // its order). Latest, Home's Latest episodes and Play newest use it.
+  function latestOrder(items, pri) {
+    pri = pri || readLatestPri();
+    var top = [], rest = [];
+    items.forEach(function (i) {
+      var v = pri[i.showId];
+      if (v === 'h') return;
+      (v === 'p' && !i.played ? top : rest).push(i);
+    });
+    return top.concat(rest);
+  }
+  function latestPriCounts() {
+    var o = readLatestPri(), c = { p: 0, h: 0 };
+    Object.keys(o).forEach(function (id) { c[o[id]]++; });
+    return c;
+  }
+  var LATEST_PRI_OPTS = [['p', 'Priority'], ['n', 'Normal'], ['h', 'Hidden']];
+  // Hidden and Normal apply to what Latest already has; Priority does too, but a show whose episodes Latest doesn't
+  // hold yet gets them at the next update.
+  var LATEST_PRI_SAID = { p: ' now comes first in Latest. If its newest episodes aren’t there yet, tap Refresh in Latest.',
+    n: ' shows in Latest as usual.', h: ' is hidden from Latest and Home.' };
+  // The switch in a podcast's page header. A tap repaints it in place (focus stays) and asks Spotify nothing.
+  function latestPriBox(show) {
+    var cur = latestPriOf(show.id);
+    var g = el('div', { class: 'seg lpri', role: 'group', 'aria-label': 'In Latest' });
+    LATEST_PRI_OPTS.forEach(function (o) {
+      var b = el('button', { type: 'button', 'data-lpri': o[0], 'aria-pressed': String(cur === o[0]), text: o[1] });
+      b.addEventListener('click', function () {
+        if (latestPriOf(show.id) === o[0]) return;
+        var ok = setLatestPri(show.id, o[0]);
+        if (!ok) return;
+        var bs = g.querySelectorAll('button');
+        for (var k = 0; k < bs.length; k++) bs[k].setAttribute('aria-pressed', String(bs[k].getAttribute('data-lpri') === o[0]));
+        toast('“' + (show.name || 'This podcast') + '”' + LATEST_PRI_SAID[o[0]] + (ok === 'cleared' ? ' The setting made longest ago was cleared to make room.' : ''));
+      });
+      g.appendChild(b);
+    });
+    return el('div', { class: 'lprirow', id: 'dlpri' }, [el('span', { class: 'lprilbl', 'aria-hidden': 'true', text: 'In Latest' }), g]);
+  }
   // audit: Latest rows of saved podcasts only (a heart removal takes effect at once; Undo brings them back).
   function latestVisible(items) {
     var shows = state.data && state.data.shows, ids = {};
@@ -3602,7 +4204,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var i = markItem({
       kind: 'episode', id: x.id, name: x.name, uri: x.uri, url: 'https://open.spotify.com/episode/' + x.id, img: x.img,
       sp: !!x.played, spos: x.positionMs || 0, subBase: [x.showName, relDate(x.date)],   // v2.21: this phone's mark on top
-      showName: x.showName || '', date: x.date || '', durMs: x.durMs || 0   // v2.18: for the notes sheet
+      showName: x.showName || '', date: x.date || '', durMs: x.durMs || 0,   // v2.18: for the notes sheet
+      showId: x.showId || ''   // v2.50: for In Latest
     });
     i.fresh = !i.played && !(i.positionMs > 0) && age != null && age < 7;   // released in the last 7 days, not started
     return i;
@@ -3766,7 +4369,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       var f = state.filter;
       if (f !== 'recent' && f !== 'home' && f !== 'podcasts') return;
       var y = window.pageYOffset || document.documentElement.scrollTop || 0;
-      renderList();
+      recentsKeep = true;   // v2.56: Recents keeps its order on this redraw
+      try { renderList(); } finally { recentsKeep = false; }
       window.scrollTo(0, y);
     }, 0);
   }
@@ -4043,9 +4647,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     syncLatest();
     var c = L.cache;
     var all = c ? latestVisible(c.items).map(latestItem) : [];   // audit: saved podcasts only
+    var pri = readLatestPri();
+    var visible = latestOrder(all, pri);   // v2.50: Hidden podcasts out, Priority ones' unplayed episodes first
     var flt = epFilter('latest');   // v2.40: Unplayed / In progress / All and Fits in (Unplayed is Hide played)
     var fon = flt.s !== 'all' || flt.f > 0;
-    var newest = epFiltered(all, flt).filter(function (i) { return !i.played; })[0] || null;   // v2.40: follows the filter
+    var newest = epFiltered(visible, flt).filter(function (i) { return !i.played; })[0] || null;   // v2.40: follows the filter
     // Header: Play (newest unplayed the filter shows), the filter chips, then when it was updated.
     var playA = el('a', { class: 'btn small', href: newest ? newest.url : '#', 'aria-label': newest ? 'Play newest unplayed episode: ' + newest.name : 'Play newest unplayed episode' });
     playA.innerHTML = ICON.play;
@@ -4080,17 +4686,23 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     main.appendChild(note);
     if (!c) return;
     // Play newest (above) always uses the newest-first order; the list follows the chosen sort.
-    var shown = sortIsDefault('latest') ? all : sortList('latest', latestVisible(c.items)).map(latestItem);
+    // v2.50: Priority on top in Newest first and Oldest first; Show A–Z keeps its A–Z order. Hidden is left out of all three.
+    var shown = visible;
+    if (!sortIsDefault('latest')) {
+      shown = sortList('latest', latestVisible(c.items)).map(latestItem);
+      shown = sortMode('latest') === 'show' ? shown.filter(function (i) { return pri[i.showId] !== 'h'; }) : latestOrder(shown, pri);
+    }
     var items = matches(epFiltered(shown, flt));   // v2.40
     if (!items.length) {
       main.appendChild(el('p', { class: 'empty', text: state.query.trim() ? 'Nothing matches “' + state.query + '”.'
         : !all.length ? 'No episodes yet.'
+        : !visible.length ? 'Only podcasts set to Hidden have episodes here. Change it on a podcast’s page.'   // v2.50
         : flt.s === 'unplayed' && !flt.f ? 'Everything here is played. Tap All to see it.'
-        : 'No ' + epfWords(flt) + ' among the ' + all.length + ' latest episodes.' }));
-      if (fon && all.length && !state.query.trim()) main.appendChild(epfReset('latest', renderList));
+        : 'No ' + epfWords(flt) + ' among the ' + visible.length + ' latest episodes.' }));
+      if (fon && visible.length && !state.query.trim()) main.appendChild(epfReset('latest', renderList));
       return;
     }
-    if (fon) main.appendChild(el('p', { class: 'snote', text: 'Showing ' + items.length + ' of ' + all.length + ' episodes' }));   // v2.40
+    if (fon) main.appendChild(el('p', { class: 'snote', text: 'Showing ' + items.length + ' of ' + visible.length + ' episodes' }));   // v2.40
     var ul = el('ul', { class: 'list' });
     items.forEach(function (i) { ul.appendChild(itemRow(i)); });
     main.appendChild(ul);
@@ -4171,6 +4783,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       btn.setAttribute('aria-label', 'Choose a device');
     }
     btn.hidden = false;
+    slimMeasure();   // v2.49
   }
   function likedCtx() { var me = state.data && state.data.me; return me && me.id ? 'spotify:user:' + me.id + ':collection' : null; }
   // kind 'resume' (v2.10) is the last song or episode, played again after Spotify went to sleep.
@@ -4316,6 +4929,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     ev.preventDefault();
     item = introStart(item);   // v2.33: Skip intro (a start from 0:00 begins at the show's setting instead)
     if (coolBlocked('player')) return;   // v2.13: nothing is sent while playback is paused by Spotify
+    if (item && item.kind === 'playlist' && state.data && state.data.me && state.data.me.id && !knownListable(item)) markPlOpened(item);   // v2.52: Play counts as opened for someone else's playlist
     item = stampHeard(item);   // v2.44: when it was last heard, as of this tap (not a Skip intro start: exactPos)
     var mine = ++tapSeq;
     if (deviceFresh()) { playNow(item, opts); return; }
@@ -4416,6 +5030,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     $('wakeRetry').hidden = !o.retry;
     $('wakeOpen').hidden = !o.open;
     paintIdle();   // the header is covered while Now Playing is open, so the asleep line repeats the wait message
+    if (text) setSlim(false);   // v2.49: the wake message is never scrolled out of view
   }
   function stopWake() {
     var w = state.wake;
@@ -4738,6 +5353,73 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     else ok();
   }
 
+  // ---------- v2.49: compact view (chip strip, header that hides on scroll) ----------
+  // Only the chip strip scrolls sideways (scrollLeft); the page itself never moves. The strip is position: relative,
+  // so a chip's offsetLeft is measured inside it and doesn't change as it scrolls.
+  function chipIntoView(c) {
+    var strip = c && c.parentNode;
+    if (!strip || !strip.clientWidth) return;   // not laid out yet (hidden header)
+    var pad = 16, l = c.offsetLeft, r = l + c.offsetWidth, sl = strip.scrollLeft, w = strip.clientWidth;
+    if (l - pad < sl) strip.scrollLeft = Math.max(0, l - pad);
+    else if (r + pad > sl + w) strip.scrollLeft = r + pad - w;
+  }
+  // Scrolling down hides the title row and status line (header.top.slim); scrolling up shows them again.
+  // They stay put while a text field has focus (the iPhone keyboard is up) and while Now Playing is open; they come
+  // back for the wake message, near the top of the page, and when focus moves onto one of their buttons.
+  var SLIM_MIN_Y = 120;   // closer to the top than this: always shown
+  var SLIM_STEP = 12;     // px of scrolling in one direction before the header changes (ignores small jitters)
+  var slim = { on: false, lastY: 0, acc: 0 };
+  function slimFrozen() {
+    if (document.body.classList.contains('npopen')) return true;
+    var a = document.activeElement;
+    if (!a || a === document.body) return false;
+    if (a.tagName === 'TEXTAREA' || a.tagName === 'SELECT' || a.isContentEditable) return true;
+    return a.tagName === 'INPUT' && !/^(checkbox|radio|range|button|submit|reset|color|file|image)$/i.test(a.type || '');
+  }
+  // v2.49: focus on a title-row or status button (Tab, or a sheet giving focus back to Diagnostics or the device
+  // button when it closes) doesn't freeze the header; focus moving into them shows them instead (focusin below).
+  function slimInHeader(n) { return !!(n && n.nodeType === 1 && ($('top').querySelector('.toprow').contains(n) || $('status').contains(n))); }
+  function slimHeight() {   // header top to the bottom of the status line (includes the top padding and safe area)
+    var st = $('status');
+    return Math.max(0, Math.round(st.offsetTop + st.offsetHeight));
+  }
+  function setSlim(on) {
+    if (!slim) return;   // before this block has run
+    on = !!on && !!state.started && $('wake').hidden;
+    if (slim.on === on) return;
+    var top = $('top');
+    if (on) top.style.setProperty('--slim-h', slimHeight() + 'px');
+    slim.on = on;
+    top.classList.toggle('slim', on);
+  }
+  function slimY() {
+    var de = document.documentElement;
+    var y = window.pageYOffset || de.scrollTop || 0;
+    var max = Math.max(0, (de.scrollHeight || 0) - (window.innerHeight || 0));
+    if (y < 0) y = 0;
+    if (max && y > max) y = max;   // Safari's bounce at either end isn't a change of direction
+    return y;
+  }
+  // v2.49 review: the status line changes length (device name, error text, wrapping), so --slim-h is measured again
+  // whenever it may have changed while the header is slim (showStatus, paintCool, resize, ResizeObserver).
+  function slimMeasure() {
+    if (slim && slim.on) $('top').style.setProperty('--slim-h', slimHeight() + 'px');
+  }
+  function onSlimScroll() {
+    var y = slimY();
+    var dy = y - slim.lastY;
+    slim.lastY = y;
+    // v2.49 review: near the top (or with the wake message up) it always shows, even while typing: a filter that
+    // shrinks the list moves Safari to the top, and a short list could never scroll up to bring the header back.
+    if (y <= SLIM_MIN_Y || !$('wake').hidden) { slim.acc = 0; setSlim(false); return; }
+    if (!dy) return;
+    if (slimFrozen()) { slim.acc = 0; return; }
+    if ((dy > 0) !== (slim.acc > 0)) slim.acc = 0;
+    slim.acc += dy;
+    if (slim.acc >= SLIM_STEP) setSlim(true);
+    else if (slim.acc <= -SLIM_STEP) setSlim(false);
+  }
+
   // ---------- diagnostics ----------
   var VERSION = 'v2.63 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
@@ -4769,7 +5451,21 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var rw = rewindOn() ? 'on' : 'off';   // v2.44
     document.querySelectorAll('input[name="rewind"]').forEach(function (r) { r.checked = r.value === rw; });
     $('searchFirst').value = searchFirst();
+    $('rowPlus').checked = rowPlusShown();   // v2.51
     $('slInfo').textContent = slStatsText();   // v2.15
+    $('compactPlayer').checked = compactPlayer();   // v2.49
+  }
+  // v2.49: Compact player. Stored as true, or removed when off. If this phone's storage won't take it (full, or
+  // blocked), it still applies until the page reloads, and a toast says so.
+  var compactMem = null;
+  function compactPlayer() { return compactMem !== null ? compactMem : get(K.compactPlayer) === true; }
+  function applyCompact() { document.body.classList.toggle('compact-player', compactPlayer()); }
+  function setCompact(on) {
+    var ok = true;
+    try { if (on) localStorage.setItem(K.compactPlayer, 'true'); else localStorage.removeItem(K.compactPlayer); } catch (e) { ok = false; }
+    compactMem = ok ? null : !!on;
+    applyCompact();
+    if (!ok) toast('Couldn’t save this setting on this phone. It applies until you reload the page.');
   }
   var diagReturn = null;   // audit: A11Y-5 focus goes back to the opener on close
   function openDiag() { diagReturn = document.activeElement; $('diag').hidden = false; syncSheetLock(); paintWakeModes(); paintSettings(); paintShortcutLinks(); $('diagClose').focus(); runDiag(); }
@@ -4804,9 +5500,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     line('Player: ' + (state.playerIdle ? 'idle (asleep)' : pl ? (pl.is_playing ? 'playing' : 'paused') : 'nothing') +
       ' · Last state: ' + (lp ? '“' + (lp.item.name || '?') + '” at ' + fmtTime(lp.positionMs || 0) + ', ' + ageText(Date.now() - lp.at) + ' old' : 'none'));
     var lc = state.latest.cache;
-    line('Appearance: ' + themeMode() + ' · Search shows first: ' + searchFirst());
+    line('Appearance: ' + themeMode() + ' · Search shows first: ' + searchFirst() + ' · Compact player: ' + (compactPlayer() ? 'on' : 'off') + ' · ＋ on rows: ' + (rowPlusShown() ? 'shown' : 'hidden'));   // v2.49, v2.51
+    line('Text size: ' + (window.libTextSize && libTextSize.px ? 'iPhone Text Size ' + libTextSize.sys + 'px → page ' + libTextSize.px + 'px' + (libTextSize.px >= LIB_TS_BIG ? ' (song names wrap)' : '') : 'browser default'));   // v2.53
     line('Pinned: ' + readPins().length + ' · Queued with ＋ (24 h): ' + readQueued().length + ' · Recent searches: ' + recentSearches().length);
     line('Up next “Next from”: uses song lists already loaded, no requests · Liked Songs known this visit: ' + upnLikedN);   // v2.41
+    line(plSeenDiag());   // v2.52
     line('Playlist copies linked: ' + Object.keys(readCopies()).length + (readCopyWatch() ? ' · watching for a new copy' : ''));   // v2.24
     line('Latest episodes: ' + (lc ? lc.items.length + ' cached, updated ' + ago(new Date(lc.at).toISOString()) + (lc.failed ? ', ' + lc.failed + ' show(s) failed' : '') +
       (lc.quiet ? ', no new episodes by the counts' : '') + (lc.left ? ', ' + lc.left + ' left for next time' : '') : 'not loaded') +
@@ -4819,6 +5517,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       line('Podcast episode counts: ' + known + ' of ' + shows.length + ' known' + (state.libAt ? ' (read ' + agoAt(state.libAt) + ')' : ' (from the saved library)') +
         ' · Latest would ask ' + plan.due.length + ' now (' + plan.more + ' with new episodes) · Podcasts marked new: ' + nn);
     })();
+    var lpc = latestPriCounts();   // v2.50: how many podcasts have each setting (not listening stats)
+    line('In Latest (set on this phone): ' + lpc.p + ' Priority · ' + lpc.h + ' Hidden');
     var eh = epHistory();
     line(slStatsText() + ' · albums kept until cleared, podcasts re-checked after ' + Math.round(SHOW_STALE_MS / 3600000) + ' h');   // v2.15
     line('Album songs with the library answer: ' + albumSeedText());   // v2.38
@@ -5750,6 +6450,35 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     npTick = (npShown() && !document.hidden) ? setInterval(paintProgress, 500) : null;
   }
   function stopNpTick() { clearInterval(npTick); npTick = null; }
+  // v2.55: bar swipes. Skips need more than 60px sideways with less than 30px up/down drift; opening needs more
+  // than 40px up, mostly upward. Anything else (a tap, a short or diagonal drag, a swipe down) does nothing.
+  var BAR_SKIP_PX = 60, BAR_DRIFT_PX = 30, BAR_UP_PX = 40;
+  var BAR_EDGE_PX = 24, BAR_MOVED_PX = 10;   // Safari's back swipe starts at the left edge; a tap moves less than 10px
+  function barSwipeKind(dx, dy, drift, sideways) {
+    if (drift == null) drift = Math.abs(dy);
+    if (sideways == null) sideways = Math.abs(dx);
+    if (Math.abs(dx) > BAR_SKIP_PX && drift < BAR_DRIFT_PX) return dx < 0 ? 'next' : 'prev';
+    if (-dy > BAR_UP_PX && sideways < -dy) return 'open';
+    return '';
+  }
+  function reduceMotion() {
+    try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) { return false; }
+  }
+  function slideCover(dir) {
+    var c = $('pCover');
+    c.classList.remove('pslide-l', 'pslide-r');
+    if (reduceMotion()) return;
+    void c.offsetWidth;   // restart the animation on back-to-back swipes
+    c.classList.add(dir === 'next' ? 'pslide-l' : 'pslide-r');
+    clearTimeout(slideCover.t);
+    slideCover.t = setTimeout(function () { c.classList.remove('pslide-l', 'pslide-r'); }, 300);
+  }
+  function barSwipe(kind) {
+    if (kind === 'open') return openNp();
+    if (kind !== 'next' && kind !== 'prev') return;
+    if (!state.playerIdle && !coolLeft('player')) slideCover(kind);   // no slide when nothing is sent
+    return command('POST', kind === 'next' ? '/me/player/next' : '/me/player/previous');
+  }
   function openNp() {
     var p = state.player;
     if (!p || !p.item) return;
@@ -6205,6 +6934,118 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       .map(function (p) { return lib[p.uri] || p; });
   }
 
+  // ---------- v2.52: "Updated" playlists (stored on this phone only; nothing is sent) ----------
+  // /me/playlists already carries each playlist's snapshot_id (mapPlaylist keeps it as snap). The page remembers the
+  // snapshot it saw when you last opened a playlist (someone else's: when you tapped Show songs or Play). A later
+  // library load with another snapshot marks the playlist "Updated" (Playlists list, Home's Your playlists, Pinned)
+  // until you open it. A playlist seen for the first time is only recorded. Playlists owned by "spotify" are left out.
+  // Inside your own and collaborative playlists, songs added since the open before get the New dot.
+  var plSeen = null;     // v2.52: memory copy of K.plSeen (lasts the visit even if storage refuses it)
+  var plNewSince = {};   // v2.52: playlist id -> {from, to}: songs added in between get the New dot (this visit)
+  function plSeenOk(v) {
+    return !!v && typeof v === 'object' && typeof v.s === 'string' && !!v.s && typeof v.o === 'number' && typeof v.f === 'number' &&
+      (v.e === undefined || typeof v.e === 'string');
+  }
+  function loadPlSeen() {
+    var o = get(K.plSeen), out = {};
+    if (o && typeof o === 'object' && !Array.isArray(o)) Object.keys(o).forEach(function (id) { if (plSeenOk(o[id])) out[id] = o[id]; });
+    return out;
+  }
+  function readPlSeen() { if (!plSeen) plSeen = loadPlSeen(); return plSeen; }
+  function plSeenAt(v) { return Math.max(v.o || 0, v.f || 0); }
+  // Ids to keep, best first: playlists in your library, then the most recently opened or first seen.
+  function plSeenOrder(m) {
+    var lib = {};
+    ((state.data && state.data.playlists) || []).forEach(function (p) { if (p && p.id) lib[p.id] = true; });
+    return Object.keys(m).sort(function (a, b) { return ((lib[b] ? 1 : 0) - (lib[a] ? 1 : 0)) || (plSeenAt(m[b]) - plSeenAt(m[a])); });
+  }
+  function plSeenPick(m, ids) { var out = {}; ids.forEach(function (id) { out[id] = m[id]; }); return out; }
+  // Re-reads storage (another tab's opens are kept), applies fn, keeps PLSEEN_MAX and writes. Storage full: tries
+  // again with the best half; still refused, the change lasts this visit only.
+  function changePlSeen(fn) {
+    var mem = readPlSeen(), m = loadPlSeen();
+    Object.keys(mem).forEach(function (id) { if (!m[id] || plSeenAt(mem[id]) >= plSeenAt(m[id])) m[id] = mem[id]; });
+    fn(m);
+    var ids = plSeenOrder(m).slice(0, PLSEEN_MAX);
+    plSeen = plSeenPick(m, ids);
+    try { localStorage.setItem(K.plSeen, JSON.stringify(plSeen)); return true; } catch (e) {}
+    try { localStorage.setItem(K.plSeen, JSON.stringify(plSeenPick(m, ids.slice(0, Math.ceil(ids.length / 2))))); } catch (e2) {}
+    return false;
+  }
+  function plCounts(p) { return !!(p && p.kind === 'playlist' && p.id && p.snap && p.ownerId !== 'spotify'); }
+  // After a library load: playlists seen for the first time are recorded, not marked.
+  function notePlaylists(d) {
+    var m = readPlSeen(), now = Date.now();
+    var add = ((d && d.playlists) || []).filter(function (p) { return plCounts(p) && !m[p.id]; });
+    if (!add.length) return;
+    changePlSeen(function (x) { add.forEach(function (p) { if (!x[p.id]) x[p.id] = { s: p.snap, o: 0, f: now }; }); });
+  }
+  function plUpdated(p) {
+    if (!plCounts(p)) return false;
+    var v = readPlSeen()[p.id];
+    return !!v && p.snap !== v.s && p.snap !== v.e;
+  }
+  // Opened (or Show songs / Play on someone else's): remember the snapshot now; the window since the open before
+  // gives the New dots for this visit. The library's copy holds the latest snapshot the page knows.
+  function markPlOpened(p) {
+    if (!p || p.kind !== 'playlist' || !p.id) return;
+    var lp = libraryPlaylist(p.id), snap = (lp && lp.snap) || p.snap || '';
+    if (!snap || p.ownerId === 'spotify' || (lp && lp.ownerId === 'spotify')) return;
+    var now = Date.now(), v = readPlSeen()[p.id];
+    plNewSince[p.id] = { from: v ? (v.o || v.f) : 0, to: now };
+    changePlSeen(function (m) {
+      var old = m[p.id], e = old && old.e && snap === old.s ? old.e : undefined;   // a library copy from before this page's own change
+      m[p.id] = { s: snap, o: now, f: (old && old.f) || now };
+      if (e) m[p.id].e = e;
+    });
+    clearUpdTags(p.id);
+  }
+  // A change this page made (add, move, remove): its new snapshot doesn't count as Updated, unless the playlist was
+  // already Updated (someone else's change is still unseen).
+  // The library's copy (and the saved library) takes the new snapshot, so an open before the next load stores it.
+  function plSeenEdited(id, snap) {
+    if (!snap) return;
+    var lp = libraryPlaylist(id), v = readPlSeen()[id], was = lp && lp.snap, dt = state.detail;
+    if (lp) lp.snap = snap;
+    if (isEditDetail(dt, id) && dt.item !== lp && dt.item.snap) dt.item.snap = snap;
+    if (lp && state.data && (state.data.playlists || []).indexOf(lp) !== -1) set(K.cache, state.data);
+    if (!v || !was || (was !== v.s && was !== v.e)) return;   // unknown, or already Updated by someone else's change
+    changePlSeen(function (m) { if (m[id]) m[id].e = snap; });
+  }
+  function plRowExtras(parent, it, m) {
+    var w = plNewSince[parent.id], t = it.added_at ? Date.parse(it.added_at) : NaN;
+    if (w && w.from > 0 && t > w.from && t <= w.to && (isOwn(parent) || parent.collaborative)) m.fresh = true;
+    var me = state.data && state.data.me;
+    if (parent.collaborative && me && me.id && it.added_by && it.added_by.id) m.addedBy = it.added_by.id === me.id ? 'you' : 'other';
+  }
+  function addedBySub(item) {
+    if (!item || item.kind !== 'track' || !item.addedBy) return '';
+    return item.addedBy === 'you' ? ' · Added by you' : ' · Added by someone else';
+  }
+  // The second line with an accent "Updated" first.
+  function updSub(item, sub, tag, cls) {
+    return el(tag || 'div', { class: cls || 'sub' }, [el('span', { class: 'updtag', 'data-pid': item.id, text: 'Updated' }), document.createTextNode(sub ? ' · ' + sub : '')]);
+  }
+  // Takes the label off rows and cards already drawn (Play on a Pinned card, Show songs), without a redraw.
+  function clearUpdTags(id) {
+    var tags = document.querySelectorAll('.updtag[data-pid="' + String(id).replace(/[^A-Za-z0-9]/g, '') + '"]');
+    for (var i = 0; i < tags.length; i++) {
+      var box = tags[i].parentNode;
+      box.removeChild(tags[i]);
+      box.textContent = box.textContent.replace(/^ · /, '');
+      var a = box.closest('a');
+      if (!a) continue;
+      if (a.hasAttribute('data-sub')) { a.setAttribute('data-sub', a.getAttribute('data-sub').replace(/^Updated · /, '')); paintRowLabel(a, false); }
+      else a.setAttribute('aria-label', (a.getAttribute('aria-label') || '').replace(', Updated', ''));
+    }
+  }
+  function plSeenDiag() {
+    var pls = (state.data && state.data.playlists) || [];
+    var withSnap = pls.filter(function (p) { return p && p.snap; }).length;
+    return 'Playlists with a snapshot id: ' + withSnap + ' of ' + pls.length + ' · Updated since opened: ' + pls.filter(plUpdated).length +
+      ' · Remembered on this phone: ' + Object.keys(readPlSeen()).length + ' (up to ' + PLSEEN_MAX + ')';
+  }
+
   // ---------- rendering ----------
   function heartBtn(item) {
     var b = el('button', { class: 'act heart', type: 'button', 'data-uri': item.uri, 'data-name': item.name, 'data-kind': item.kind, 'aria-pressed': 'false' });
@@ -6221,16 +7062,159 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function actionButtons(item) {
     var out = [];
     if (canSave(item)) out.push(heartBtn(item));
-    if (item.kind === 'track' || item.kind === 'episode') out.push(iconBtn(ICON.plus, 'Add “' + item.name + '” to queue', function () { addToQueue(item); }));
-    if (item.kind === 'episode' && item.id) out.push(iconBtn(ICON.notes, 'Notes for “' + item.name + '”', function (ev) {   // v2.18
-      var ep = notesEp(item), dt = state.detail && state.detail.item;
-      if (!ep.showName && dt && dt.kind === 'show') ep.showName = dt.name || '';   // a podcast's own list leaves the name off its rows
-      openNotes(ep, ev.currentTarget);
-    }));
+    var song = item.kind === 'track' || item.kind === 'episode';
+    if (song && rowPlusShown()) out.push(iconBtn(ICON.plus, 'Add “' + item.name + '” to queue', function () { addToQueue(item); }));
+    // v2.51: ⋯ holds the rest (Episode notes moved in from its own row button, so episode rows keep three buttons).
+    if (song && item.uri) {
+      var by = item.kind === 'episode' ? (item.showName || '') : (item.artist || '');
+      var mb = iconBtn(ICON.more, 'More for “' + item.name + '”' + (by ? ' by ' + by : ''), function (ev) { openRowMenu(item, ev.currentTarget); });
+      mb.className = 'act more';
+      mb.setAttribute('aria-haspopup', 'dialog');
+      out.push(mb);
+    }
     if (item.kind === 'artist' && item.id && state.filter === 'search' && !state.detail) out.push(followBtn(item, true));   // v2.25
     if (canPin(item)) out.push(pinBtn(item));
     // v2.12: no › button; the row itself opens albums, playlists, podcasts and artists.
     return out;
+  }
+  // ---------- row menu (v2.51) ----------
+  // ⋯ on song and episode rows (every list, search, Recent, Home) opens a small sheet: Add to queue, Add to
+  // playlist, Go to album, Go to artist, Episode notes, Mark as played, Share, Copy link, Open in Spotify.
+  // Opening it sends nothing. Each action reuses the page's existing path and costs what it costs there: Go to
+  // album opens the album like any album row (nothing when it's saved on the phone or kept for this visit), Go
+  // to artist is v2.19's artist page, Add to playlist is v2.26's sheet, notes and marks are v2.18 and v2.21.
+  var rowMenu = null;   // {item, raw, ret} while the row menu is open
+  // A fast double tap on ⋯ (or on a menu row) would land its second tap on the sheet, or on the list behind it once
+  // the sheet closes. Real taps within this time of the menu opening or closing are ignored (made-up clicks, such as
+  // a script's, aren't: they have no second tap).
+  var rmGuard = { at: 0, ms: 400 };
+  function rmTooSoon(ev) { return !!(ev && ev.isTrusted) && Date.now() - rmGuard.at < rmGuard.ms; }
+  function rowPlusShown() { return get(K.rowPlus) !== false; }
+  // The Spotify object a row was mapped from; rows built from the page's own records (podcast history, Latest)
+  // get a small stand-in with what Add to playlist needs.
+  function rawFor(item) {
+    var r = rowRaw[item.uri], ep = item.kind === 'episode';
+    if (r && r.type) return r;
+    var o = { type: ep ? 'episode' : 'track', id: item.id, uri: item.uri, name: item.name || 'Untitled' };
+    if (r) { for (var k in r) { if (Object.prototype.hasOwnProperty.call(r, k) && k !== 'type') o[k] = r[k]; } }
+    if (ep && !o.show) o.show = { name: item.showName || '' };
+    return o;
+  }
+  // The song's album as a row item, preferring your library's copy; null when unknown or when it's the open list.
+  function rowAlbum(item, raw) {
+    if (item.kind !== 'track') return null;
+    var m = /^spotify:album:([A-Za-z0-9]+)$/.exec(item.ctx || '');
+    var id = (raw.album && raw.album.id) || (m && m[1]) || '';
+    if (!id) return null;
+    var d = state.detail;
+    if (d && d.item && d.item.kind === 'album' && d.item.id === id) return null;   // already in it
+    var lib = (state.data && state.data.albums) || [];
+    for (var i = 0; i < lib.length; i++) { if (lib[i] && lib[i].id === id) return lib[i]; }
+    if (raw.album && raw.album.id) return mapAlbum(raw.album);
+    return { kind: 'album', id: id, name: item.albumName || 'Album', uri: 'spotify:album:' + id, url: 'https://open.spotify.com/album/' + id, img: '', sub: 'Album' };
+  }
+  function rowBy(item, raw) {
+    if (item.kind === 'episode') return (raw.show && raw.show.name) || item.showName || '';
+    return names(raw.artists) || item.artist || '';
+  }
+  function rowMenuOptions(item, raw) {
+    var ep = item.kind === 'episode', out = [{ act: 'queue', label: 'Add to queue' }];
+    if (canAddItem(raw)) out.push({ act: 'addpl', label: 'Add to playlist' });
+    if (!ep) {
+      var a = rowAlbum(item, raw);
+      if (a) out.push({ act: 'album', label: 'Go to album · ' + (a.name || 'Album'), album: a });
+      var d = state.detail, refs = artistRefs(raw.artists);
+      if (!refs.length && d && d.item && d.item.kind === 'album' && d.item.byArtists) {
+        // An album's own songs keep artist names only (saved lists, v2.15): match them to the album's artists.
+        var nm = {};
+        (raw.artists || []).forEach(function (x) { if (x && x.name) nm[x.name] = true; });
+        refs = artistRefs(d.item.byArtists.filter(function (r) { return nm[r.name]; }));
+      }
+      refs.forEach(function (r) {
+        if (!(d && d.kind === 'artist' && d.item.id === r.id)) out.push({ act: 'artist', label: 'Go to artist · ' + r.name, artist: r });
+      });
+    }
+    if (ep && item.id) {
+      out.push({ act: 'notes', label: 'Episode notes' });
+      var was = shownPlayed(notesEp(item));   // the label says what the tap does, even if the mark changes meanwhile
+      out.push({ act: 'mark', label: was ? 'Mark as unplayed' : 'Mark as played', played: !was });
+    }
+    var url = shareUrl(item);
+    if (url) {
+      out.push({ act: 'share', label: 'Share', url: url });
+      out.push({ act: 'copy', label: 'Copy link', url: url });
+      out.push({ act: 'open', label: 'Open in Spotify', url: url });
+    }
+    return out;
+  }
+  function openRowMenu(item, from) {
+    if (!item || !item.uri) return;
+    var raw = rawFor(item);
+    rowMenu = { item: item, raw: raw, ret: (from && from.nodeType === 1) ? from : document.activeElement };
+    $('rmTitle').textContent = item.name || 'Untitled';
+    $('rmMeta').textContent = rowBy(item, raw);
+    var box = $('rmList');
+    box.textContent = '';
+    rowMenuOptions(item, raw).forEach(function (o) {
+      var b = o.act === 'open'
+        ? el('a', { class: 'rmrow', href: o.url, 'data-act': o.act, text: o.label })
+        : el('button', { class: 'rmrow', type: 'button', 'data-act': o.act, text: o.label });
+      b.addEventListener('click', function (ev) { rowMenuDo(o, ev); });
+      box.appendChild(b);
+    });
+    $('rowmenu').hidden = false;
+    rmGuard.at = Date.now();
+    syncSheetLock();   // main's scroll lock for open sheets
+    $('rmClose').focus();
+  }
+  // Back to the row's ⋯; if the list was redrawn meanwhile (a mark, the player check), the same row's new ⋯.
+  function rowMenuRefocus(ret, uri) {
+    var r = ret && document.body.contains(ret) ? ret : null;
+    if (!r && uri) r = document.querySelector('li[data-puri="' + String(uri).replace(/["\\]/g, '') + '"] button.more');
+    if (r && r.focus) r.focus({ preventScroll: true });
+  }
+  function closeRowMenu(restore) {
+    if ($('rowmenu').hidden) return;
+    $('rowmenu').hidden = true;
+    rmGuard.at = Date.now();
+    syncSheetLock();
+    var r = rowMenu && rowMenu.ret, uri = rowMenu && rowMenu.item.uri;
+    rowMenu = null;   // the old rows stay until the next open: removing Open in Spotify mid-tap would cancel its link
+    if (restore !== false) rowMenuRefocus(r, uri);
+  }
+  // Runs straight from the tap (Share needs that), after closing the menu.
+  function rowMenuDo(o, ev) {
+    var v = rowMenu;
+    if (!v) return;
+    if (rmTooSoon(ev)) { ev.preventDefault(); return; }   // the second tap of a double tap on ⋯
+    var item = v.item, raw = v.raw, ret = v.ret;
+    closeRowMenu(false);
+    if (o.act === 'queue') { addToQueue(item); return rowMenuRefocus(ret, item.uri); }
+    if (o.act === 'mark') { rowMark(item, o.played); return rowMenuRefocus(ret, item.uri); }   // the mark redraws the list
+    if (o.act === 'share') { shareLink(item.name + (rowBy(item, raw) ? ' · ' + rowBy(item, raw) : ''), o.url); return rowMenuRefocus(ret, item.uri); }
+    if (o.act === 'copy') { copyLink(o.url); return rowMenuRefocus(ret, item.uri); }
+    if (o.act === 'open') return;   // the link itself opens Spotify
+    if (ev) ev.preventDefault();
+    if (o.act === 'addpl') return openPl({ mode: 'add', item: raw, q: '' }, ret);
+    if (o.act === 'notes') {
+      var ep = notesEp(item), dt = state.detail && state.detail.item;
+      if (!ep.showName && dt && dt.kind === 'show') ep.showName = dt.name || '';   // a podcast's own list leaves the name off its rows
+      return openNotes(ep, ret);
+    }
+    if (o.act === 'artist') return openArtistPage(o.artist);
+    if (o.act === 'album') {
+      openDetail(o.album, { push: !!state.detail });   // from a song list on top of it, so Back returns there
+      var bk = document.querySelector('.dhead .back');
+      if (bk) bk.focus({ preventScroll: true });
+    }
+  }
+  // Mark as played / unplayed to the value the menu showed. If this phone's storage is full the mark holds for this
+  // visit only, and the toast says so.
+  function rowMark(item, played) {
+    var ep = notesEp(item);
+    toggleMark(ep, played);
+    var st = get(K.epMarks), m = st && st[ep.uri];
+    if (played ? !(m && m.played) : (m && m.played)) toast('Marked for this visit only: this phone’s storage is full.');
   }
   function coverFor(item, extra) {
     var round = item.kind === 'artist' ? ' round' : '';
@@ -6268,12 +7252,15 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function itemRow(item) {
     markItem(item);   // v2.21: played state follows this phone's marks
     var opens = opensOnTap(item);
-    var sub = (item.sub || '') + copySub(item);   // v2.24: " · You have a copy" / " · Copy" (shown only, never stored)
+    var sub = (item.sub || '') + copySub(item) + addedBySub(item);   // v2.24: " · You have a copy" / " · Copy"; v2.52: " · Added by …" (shown only, never stored)
     if (item.nope) sub += (sub ? ' · ' : '') + item.nope;   // v2.35
+    if (lyRows) sub += likedSub(item);   // v2.54: " · Liked Mar 2021" in Liked Songs, Recently liked order
     var ex = item.kind === 'track' && item.ex;   // v2.38: "E" badge (drawn by CSS, so the row's text stays the same)
     var nn = item.kind === 'show' ? showNew(item.id) : 0;   // v2.45: "2 new" since you last opened it
     var subEl = el('div', { class: ex ? 'sub ex' : 'sub', text: sub });
     if (nn) { subEl.insertBefore(el('span', { class: 'newtag', text: newText(nn) }), subEl.firstChild); sub = newText(nn) + (sub ? ' · ' + sub : ''); }
+    var upd = plUpdated(item);   // v2.52: "Updated" since you last opened it (playlists; never with a show's "new")
+    if (upd) { subEl = updSub(item, sub, 'div', subEl.className); sub = 'Updated' + (sub ? ' · ' + sub : ''); }
     var a = el('a', { class: 'item', href: item.url, 'data-verb': (opens ? 'Open “' : 'Play “') + item.name + '”', 'data-sub': sub, 'data-new': item.fresh ? '' : null, 'data-ex': ex ? '' : null }, [
       coverFor(item),
       el('div', { class: 'meta' }, [
@@ -6453,6 +7440,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (state.detail) return;   // the song list view owns the page
     var main = $('main');
     main.textContent = '';
+    azHide();   // v2.58: shown again below when this list qualifies
     var plk = linkOf($('search').value);   // v2.36: a pasted Spotify link replaces the list
     if (plk) return renderLink(main, plk);
     if (state.filter === 'search') return renderSearch(main);
@@ -6483,7 +7471,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var savedEps = ((f === 'podcasts' || f === 'all') && d.episodesTotal != null) ? [savedEpisodesItem(d)] : [];
     var view = f === 'podcasts' ? 'shows' : f;
     var base, items;
-    if (f === 'playlists') { base = d.playlists || []; items = liked.concat(sortList(view, base)); }
+    var byYou = f === 'playlists' && byYouOn();   // v2.56
+    if (f === 'playlists') { base = d.playlists || []; items = liked.concat(sortList(view, byYou ? base.filter(isOwn) : base)); }
     else if (f === 'albums') { base = d.albums || []; items = sortList(view, base); }
     else if (f === 'artists') { base = d.artists || []; items = sortList(view, base); }
     else if (f === 'podcasts') { base = d.shows || []; items = savedEps.concat(sortList(view, base)); }
@@ -6496,6 +7485,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     // Pinned: first in its own tab and in All, in pin order, whatever the sort. The rest of the list
     // leaves them out and sorts as before.
     var pinned = pinsFor(f, d);
+    if (byYou) pinned = pinned.filter(isOwn);   // v2.56: a pinned playlist someone else owns stays pinned, just not shown
     var pinnedUris = {};
     pinned.forEach(function (p) { pinnedUris[p.uri] = true; });
     if (pinned.length) items = items.filter(function (i) { return !i.uri || !pinnedUris[i.uri]; });
@@ -6507,19 +7497,27 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       main.appendChild(pul);
       requestSaved(savableUris(pinShown));
     }
-    if (base.length > 1 || (f === 'podcasts' && base.length)) main.appendChild(sortBar(view, renderList));
+    if (base.length > 1 || (f === 'podcasts' && base.length) || byYou) main.appendChild(sortBar(view, renderList));   // v2.56: By you stays reachable while on
     items = matches(items);
     if (pinShown.length && items.length) {
       main.appendChild(el('h2', { class: 'sect', text: { playlists: 'Playlists', albums: 'Albums', artists: 'Artists', podcasts: 'Podcasts', all: 'Library' }[f] || 'Library' }));
     }
     if (!items.length) {
       if (pinShown.length && !state.query.trim()) return;   // everything here is pinned
-      main.appendChild(el('p', { class: 'empty', text: state.query.trim() ? (pinShown.length ? 'Nothing else matches “' : 'Nothing matches “') + state.query + '”.' : (f === 'artists' ? 'You don’t follow any artists yet.' : f === 'podcasts' ? 'You haven’t saved any podcasts yet.' : 'Nothing here yet.') }));
+      main.appendChild(el('p', { class: 'empty', text: state.query.trim() ? (pinShown.length ? 'Nothing else matches “' : 'Nothing matches “') + state.query + '”.' : (byYou ? 'You don’t own any playlists yet. Tap “By you” to show them all.' : f === 'artists' ? 'You don’t follow any artists yet.' : f === 'podcasts' ? 'You haven’t saved any podcasts yet.' : 'Nothing here yet.') }));
       return;
     }
     var ul = el('ul', { class: 'list' });
-    items.forEach(function (i) { ul.appendChild(itemRow(i)); });
+    var azPairs = [];   // v2.58: the sorted rows (Liked Songs and Saved episodes stay pinned first and are left out)
+    items.forEach(function (i) {
+      var li = itemRow(i);
+      ul.appendChild(li);
+      if (i.kind !== 'liked' && i.kind !== 'episodes') azPairs.push({ item: i, li: li });
+    });
     main.appendChild(ul);
+    // v2.56: By you is on but you own none of these playlists (Liked Songs is still listed above).
+    if (byYou && !state.query.trim() && !base.some(isOwn)) main.appendChild(el('p', { class: 'empty', text: 'You don’t own any playlists yet. Tap “By you” to show them all.' }));
+    if (!state.query.trim() && view !== 'all') azShow(view, azPairs);   // v2.58
   }
   // ---------- Home (v2.10): shortcuts to your own things, nothing Spotify recommends ----------
   // Built only from what the page already loads: your library, your pins, the Latest episodes cache,
@@ -6568,11 +7566,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       var opens = !!host || opensOnTap(i);
       var nn = shown.kind === 'show' ? showNew(shown.id) : 0;   // v2.45: a dot, and "2 new" on a Pinned card
       if (nn && !host) sub = newText(nn);
-      var a = el('a', { class: 'clcard', href: shown.url, 'aria-label': (opens ? 'Open “' : 'Play “') + shown.name + '”' + (nn && host ? ', ' + newText(nn) : '') + (sub ? ', ' + sub : '') }, [
+      var upd = !host && plUpdated(i);   // v2.52: Pinned and Your playlists cards
+      var a = el('a', { class: 'clcard', href: shown.url, 'aria-label': (opens ? 'Open “' : 'Play “') + shown.name + '”' + (nn && host ? ', ' + newText(nn) : '') + (upd ? ', Updated' : '') + (sub ? ', ' + sub : '') }, [
         coverFor(shown),
         nn ? el('span', { class: 'clname' }, [el('span', { class: 'newdot', 'aria-hidden': 'true' }), document.createTextNode(shown.name)])
           : el('span', { class: 'clname', text: shown.name }),
-        el('span', { class: 'sub' + (nn && !host ? ' newsub' : ''), text: sub })
+        upd ? updSub(i, sub, 'span') : el('span', { class: 'sub' + (nn && !host ? ' newsub' : ''), text: sub })
       ]);
       a.addEventListener('click', function (ev) {
         if (opens) { ev.preventDefault(); openDetail(shown); return; }
@@ -6599,54 +7598,252 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     });
     main.appendChild(ul);
   }
+  // ---------- Edit Home (v2.57) ----------
+  // Home's sections in the order you pick, each shown or hidden, kept in one localStorage key (this phone only).
+  // Two optional sections, off until you turn them on, are built only from your library: the first 8 of the
+  // Albums list (Spotify lists them newest saved first) and the first 8 of Liked Songs, but only while Liked
+  // Songs' first page is in memory from opening it this visit. Nothing ranked, nothing extra asked: 0 requests.
+  var HOME_SECTIONS = [
+    { id: 'liked', name: 'Liked Songs' },
+    { id: 'pinned', name: 'Pinned' },
+    { id: 'continue', name: 'Continue listening' },
+    { id: 'bookmarks', name: 'Bookmarks' },
+    { id: 'jump', name: 'Jump back in' },
+    { id: 'latest', name: 'Latest episodes' },
+    { id: 'playlists', name: 'Your playlists' },
+    { id: 'albums', name: 'Recently saved albums', off: true, note: 'The first 8 of your Albums list, newest saved first.' },
+    { id: 'likedRecent', name: 'Recently liked songs', off: true, note: 'Your newest 8 likes, once you’ve opened Liked Songs on this visit. Nothing extra is asked.' }
+  ];
+  var homeMem = null;         // v2.57: the layout, when storage refused it (kept until the page closes)
+  var likedFirst = null;      // v2.57: the first few songs of Liked Songs' first page, from opening it this visit
+  function homeSect(id) {
+    for (var i = 0; i < HOME_SECTIONS.length; i++) if (HOME_SECTIONS[i].id === id) return HOME_SECTIONS[i];
+    return null;
+  }
+  // {order: [ids], hidden: {id: true}}. Unknown ids are dropped; a known section the saved order doesn't have
+  // (a new one) goes back to its default place, shown or hidden as by default.
+  function readHomeLayout() {
+    var raw = homeMem || get(K.homeLayout);
+    var order = [], hidden = {}, seen = {};
+    var rawOrder = raw && typeof raw === 'object' && Array.isArray(raw.order) ? raw.order : [];
+    var rawHidden = raw && typeof raw === 'object' && Array.isArray(raw.hidden) ? raw.hidden : [];
+    rawOrder.forEach(function (id) {
+      if (typeof id === 'string' && homeSect(id) && !seen[id]) { seen[id] = true; order.push(id); }
+    });
+    rawHidden.forEach(function (id) { if (typeof id === 'string' && seen[id]) hidden[id] = true; });
+    HOME_SECTIONS.forEach(function (sc, i) {
+      if (seen[sc.id]) return;
+      order.splice(Math.min(i, order.length), 0, sc.id);
+      if (sc.off) hidden[sc.id] = true;
+    });
+    return { order: order, hidden: hidden };
+  }
+  function homeIsDefault(l) {
+    return HOME_SECTIONS.every(function (sc, i) { return l.order[i] === sc.id && !!l.hidden[sc.id] === !!sc.off; });
+  }
+  // The default layout stores nothing. False when storage refused: the layout then lasts until the page closes.
+  function writeHomeLayout(l) {
+    var v = { order: l.order.slice(), hidden: l.order.filter(function (id) { return l.hidden[id]; }) };
+    if (homeIsDefault(l)) { homeMem = null; del(K.homeLayout); return true; }
+    try { localStorage.setItem(K.homeLayout, JSON.stringify(v)); homeMem = null; return true; } catch (e) { homeMem = v; return false; }
+  }
+  function noteLikedFirst(mapped) {
+    likedFirst = mapped.filter(function (m) { return m && m.kind === 'track'; }).slice(0, HOME_RECENT_N);
+  }
+  // Recently liked songs: what Liked Songs' first page held, minus songs unliked since on this page.
+  function likedRecentItems() {
+    if (!likedFirst) return null;
+    return likedFirst.filter(function (m) { return state.saved[m.uri] !== false; });
+  }
+
+  var homeSheetReturn = null;
+  var homeSaveWarned = false;   // the couldn't-save toast shows once per opening of the sheet
+  var homeLiveTimer = null;
+  function openHomeSheet(from) {
+    homeSaveWarned = false;
+    homeSheetReturn = (from && from.nodeType === 1) ? from : document.activeElement;
+    $('homeSheet').hidden = false;
+    syncSheetLock();   // main's scroll lock for open sheets
+    $('homeSheetLive').textContent = '';
+    paintHomeSheet();
+    $('homeSheetClose').focus();
+  }
+  function closeHomeSheet(restore) {
+    if ($('homeSheet').hidden) return;
+    $('homeSheet').hidden = true;
+    syncSheetLock();
+    var r = homeSheetReturn;
+    homeSheetReturn = null;
+    if (restore !== false && r && r.focus && document.body.contains(r)) r.focus();
+    else if (restore !== false && $('homeEdit')) $('homeEdit').focus();   // Home was redrawn behind the sheet
+  }
+  // focus: [section id, 'up' | 'down' | 'show'] to put focus back on after the redraw.
+  function paintHomeSheet(focus) {
+    var l = readHomeLayout();
+    var ul = $('homeSheetList');
+    ul.textContent = '';
+    l.order.forEach(function (id, k) {
+      var sc = homeSect(id);
+      function move(dir) {
+        return function () { moveHomeSection(id, dir); };
+      }
+      var pos = ', ' + (k + 1) + ' of ' + l.order.length;   // the label carries the place, in case the announcement is dropped
+      var up = el('button', { class: 'act hsmove', type: 'button', 'data-hs': 'up', 'aria-label': 'Move “' + sc.name + '” up' + pos });
+      up.innerHTML = EDIT_ICON.up;
+      up.disabled = k === 0;
+      up.addEventListener('click', move(-1));
+      var down = el('button', { class: 'act hsmove', type: 'button', 'data-hs': 'down', 'aria-label': 'Move “' + sc.name + '” down' + pos });
+      down.innerHTML = EDIT_ICON.down;
+      down.disabled = k === l.order.length - 1;
+      down.addEventListener('click', move(1));
+      var sw = el('input', { type: 'checkbox', role: 'switch', class: 'hsswitch', 'data-hs': 'show', 'aria-label': 'Show “' + sc.name + '” on Home' });
+      sw.checked = !l.hidden[id];
+      sw.addEventListener('change', function () { showHomeSection(id, sw.checked); });
+      ul.appendChild(el('li', { class: 'hsrow', 'data-sect': id }, [
+        el('div', { class: 'hsmeta' }, [el('span', { class: 'setname', text: sc.name }), sc.note ? el('span', { class: 'setnote', text: sc.note }) : null]),
+        el('div', { class: 'hsacts' }, [up, down, el('label', { class: 'hsswitchwrap' }, [sw])])
+      ]));
+    });
+    $('homeReset').disabled = homeIsDefault(l);
+    if (focus) {
+      var row = ul.querySelector('li[data-sect="' + focus[0] + '"]');
+      var b = row && row.querySelector('[data-hs="' + focus[1] + '"]');
+      if (b && b.disabled) b = row.querySelector('[data-hs="' + (focus[1] === 'up' ? 'down' : 'up') + '"]');   // moved to an end
+      if (b && !b.disabled) b.focus({ preventScroll: true });
+    }
+  }
+  function homeChanged(l, said) {
+    var ok = writeHomeLayout(l);
+    if (!ok && !homeSaveWarned) { homeSaveWarned = true; toast('Couldn’t save on this phone. Home keeps this layout until you close the page.'); }
+    if (onHome()) renderList();
+    sayHome(said);
+  }
+  // Set after the redraw has moved focus, so VoiceOver doesn't drop the announcement for the focus change.
+  function sayHome(said) {
+    var live = $('homeSheetLive');
+    live.textContent = '';
+    clearTimeout(homeLiveTimer);
+    homeLiveTimer = setTimeout(function () { if (!$('homeSheet').hidden) live.textContent = said; }, 150);
+  }
+  function moveHomeSection(id, dir) {
+    var l = readHomeLayout();
+    var k = l.order.indexOf(id), j = k + dir;
+    if (k < 0 || j < 0 || j >= l.order.length) return;
+    l.order[k] = l.order[j]; l.order[j] = id;
+    homeChanged(l, homeSect(id).name + ': ' + (j + 1) + ' of ' + l.order.length + '.');
+    paintHomeSheet([id, dir < 0 ? 'up' : 'down']);
+  }
+  function showHomeSection(id, on) {
+    var l = readHomeLayout();
+    if (on) delete l.hidden[id]; else l.hidden[id] = true;
+    homeChanged(l, homeSect(id).name + (on ? ' shown.' : ' hidden.'));
+    paintHomeSheet([id, 'show']);
+  }
+  function resetHome() {
+    homeMem = null;
+    del(K.homeLayout);
+    if (onHome()) renderList();
+    paintHomeSheet();
+    $('homeSheetClose').focus();
+    sayHome('Home is back to the usual order.');
+  }
+
   function renderHome(main, d) {
     var q = state.query.trim();
     var shown = 0;
-    // Liked Songs: a big row at the top (a tap opens the song list; Play and Shuffle are at its top).
-    if (d.likedTotal != null) {
-      var liked = matches([likedItem(d)]);
-      if (liked.length) { main.appendChild(el('ul', { class: 'list hero' }, [itemRow(liked[0])])); shown++; }
-    }
-    // Pinned: all kinds, in the order you pinned them.
-    var pins = matches(pinsFor('all', d));
-    var pinnedUris = {};
-    pinsFor('all', d).forEach(function (p) { pinnedUris[p.uri] = true; });
-    cardStrip(main, 'hPinned', 'Pinned', pins, null, { pinPlay: true });   // v2.23: round play buttons
-    shown += pins.length;
-    // Continue listening: in-progress episodes (as on Podcasts).
-    var cl = matches(continueItems());
-    renderContinue(main);
-    shown += cl.length;
-    shown += renderBookmarks(main, q);   // v2.32
-    // Jump back in: your last few distinct albums from Recently played, and (v2.11) one card per podcast
-    // from the page's own history, newest first.
+    var layout = readHomeLayout();   // v2.57: sections in your order; hidden ones are skipped
+    // Recently played: asked whether or not Jump back in is shown (v2.23 Continue · song fills its gaps from it).
     setTimeout(maybeLoadHomeRecent, 0);   // after this render; at most once per 15 minutes
-    var jump = matches(byTime([state.recent.jump || [], jumpEpisodes()]));
-    if (!q) jump = jump.slice(0, HOME_JUMP);
-    cardStrip(main, 'hJump', 'Jump back in', jump, function () { setFilter('recent'); });
-    shown += jump.length;
-    // Latest episodes: the newest few from the Latest cache (Hide played applies; v2.40: it stays on while Latest is Unplayed or In progress).
-    if (d.shows && d.shows.length) {
-      syncLatest();   // v2.14: the cache only; Latest refreshes when you open it
-      var c = state.latest.cache;
-      var hide = hidePlayed();
-      var eps = c ? matches(latestVisible(c.items).map(latestItem).filter(function (i) { return !(hide && i.played); })) : [];
-      if (!q) eps = eps.slice(0, HOME_LATEST);
-      if (eps.length) {
+    var pinnedUris = {};
+    if (!layout.hidden.pinned) pinsFor('all', d).forEach(function (p) { pinnedUris[p.uri] = true; });
+    var draw = {
+      // Liked Songs: a big row at the top (a tap opens the song list; Play and Shuffle are at its top).
+      liked: function () {
+        if (d.likedTotal == null) return;
+        var liked = matches([likedItem(d)]);
+        if (liked.length) { main.appendChild(el('ul', { class: 'list hero' }, [itemRow(liked[0])])); shown++; }
+      },
+      // Pinned: all kinds, in the order you pinned them.
+      pinned: function () {
+        var pins = matches(pinsFor('all', d));
+        cardStrip(main, 'hPinned', 'Pinned', pins, null, { pinPlay: true });   // v2.23: round play buttons
+        shown += pins.length;
+      },
+      // Continue listening: in-progress episodes (as on Podcasts).
+      'continue': function () {
+        var cl = matches(continueItems());
+        renderContinue(main);
+        shown += cl.length;
+      },
+      bookmarks: function () { shown += renderBookmarks(main, q); },   // v2.32
+      // Jump back in: your last few distinct albums from Recently played, and (v2.11) one card per podcast
+      // from the page's own history, newest first.
+      jump: function () {
+        var jump = matches(byTime([state.recent.jump || [], jumpEpisodes()]));
+        if (!q) jump = jump.slice(0, HOME_JUMP);
+        cardStrip(main, 'hJump', 'Jump back in', jump, function () { setFilter('recent'); });
+        shown += jump.length;
+      },
+      // Latest episodes: the newest few from the Latest cache (Hide played applies; v2.40: it stays on while Latest is Unplayed or In progress).
+      latest: function () {
+        if (!(d.shows && d.shows.length)) return;
+        syncLatest();   // v2.14: the cache only; Latest refreshes when you open it
+        var c = state.latest.cache;
+        var hide = hidePlayed();
+        var eps = c ? matches(latestOrder(latestVisible(c.items).map(latestItem)).filter(function (i) { return !(hide && i.played); })) : [];   // v2.50: In Latest
+        if (!q) eps = eps.slice(0, HOME_LATEST);
+        if (!eps.length) return;
         main.appendChild(sectHead('hLatest', 'Latest episodes', function () { state.podTab = 'latest'; setFilter('podcasts'); }));
         var ul = el('ul', { class: 'list' });
         eps.forEach(function (i) { ul.appendChild(itemRow(i)); });
         main.appendChild(ul);
         requestSaved(savableUris(eps));
         shown += eps.length;
+      },
+      // Your playlists: in the Playlists tab's current order, leaving out pinned ones (they're above;
+      // v2.57: unless Pinned is hidden).
+      playlists: function () {
+        var pls = matches(sortList('playlists', (d.playlists || []).filter(function (p) { return !pinnedUris[p.uri]; })));
+        if (!q) pls = pls.slice(0, HOME_PLAYLISTS);
+        cardStrip(main, 'hPlaylists', 'Your playlists', pls, function () { setFilter('playlists'); });
+        shown += pls.length;
+      },
+      // v2.57 Recently saved albums: the first 8 of the Albums list as Spotify returns it (newest saved first).
+      albums: function () {
+        var al = matches(d.albums || []);
+        if (!q) al = al.slice(0, HOME_RECENT_N);
+        cardStrip(main, 'hAlbums', 'Recently saved albums', al, function () { setFilter('albums'); }, { pinPlay: true });
+        shown += al.length;
+      },
+      // v2.57 Recently liked songs: only from Liked Songs' first page already in memory; nothing is asked for it.
+      likedRecent: function () {
+        if (!d.likedTotal) return;
+        var openLiked = function () { openDetail(likedItem(d)); };
+        var lr = likedRecentItems();
+        if (!lr) {
+          if (q) return;
+          main.appendChild(sectHead('hLikedRecent', 'Recently liked songs', null));
+          var b = el('button', { class: 'linkbtn hsopen', type: 'button', text: 'Open Liked Songs' });
+          b.addEventListener('click', openLiked);
+          main.appendChild(el('p', { class: 'sethint hshint' }, [document.createTextNode('Shows after you open Liked Songs on this visit. '), b]));
+          shown++;
+          return;
+        }
+        lr = matches(lr);
+        cardStrip(main, 'hLikedRecent', 'Recently liked songs', lr, openLiked);
+        shown += lr.length;
       }
+    };
+    layout.order.forEach(function (id) { if (!layout.hidden[id]) draw[id](); });
+    if (!shown) {
+      var allOff = layout.order.every(function (id) { return layout.hidden[id]; });
+      main.appendChild(el('p', { class: 'empty', text: q ? 'Nothing on Home matches “' + state.query + '”. Try All for your whole library.' : allOff ? 'Every Home section is hidden.' : 'Nothing here yet.' }));
     }
-    // Your playlists: in the Playlists tab's current order, leaving out pinned ones (they're above).
-    var pls = matches(sortList('playlists', (d.playlists || []).filter(function (p) { return !pinnedUris[p.uri]; })));
-    if (!q) pls = pls.slice(0, HOME_PLAYLISTS);
-    cardStrip(main, 'hPlaylists', 'Your playlists', pls, function () { setFilter('playlists'); });
-    shown += pls.length;
-    if (!shown) main.appendChild(el('p', { class: 'empty', text: q ? 'Nothing on Home matches “' + state.query + '”. Try All for your whole library.' : 'Nothing here yet.' }));
+    if (!q) {   // v2.57
+      var eb = el('button', { class: 'linkbtn', type: 'button', id: 'homeEdit', text: 'Edit Home' });
+      eb.addEventListener('click', function () { openHomeSheet(eb); });
+      main.appendChild(el('div', { class: 'homeedit' }, [eb]));
+    }
   }
   function setFilter(f, focus) {
     clearTimeout(queryTimer); queryTimer = null;   // audit: PERF-3, this draws the view anyway
@@ -6655,6 +7852,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (changed && !state.detail) kpY[kpKey()] = kpScrollY();
     state.filter = f; set(K.filter, f);
     document.querySelectorAll('.filters .chip').forEach(function (c) { c.setAttribute('aria-pressed', String(c.dataset.filter === f)); });
+    chipIntoView(document.querySelector('.filters .chip[aria-pressed="true"]'));   // v2.49
     var box = $('search');
     $('schips').hidden = f !== 'search';
     if (f === 'search') {
@@ -6980,6 +8178,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var sub = t.type === 'episode' ? ((t.show && t.show.name) || 'Podcast') : names(t.artists) + (t.album && t.album.name ? ' · ' + t.album.name : '');
     var m = mapTrack(t, { sub: sub, ctx: parent.kind === 'liked' ? likedCtx() : parent.uri });
     if (m && it.added_at) m.added = it.added_at;   // when it was added to the playlist (or liked), for sorting
+    if (m && parent.kind === 'playlist') plRowExtras(parent, it, m);   // v2.52: New dot, Added by you / someone else
     if (m && t.album && t.album.name) m.albumName = t.album.name;   // v2.22: for Find in list
     if (m && t.album) m.released = relDay(t.album.release_date);   // v2.34: for the Release date sort
     if (m && parent.kind === 'liked' && state.saved[m.uri] === undefined) state.saved[m.uri] = true;
@@ -7017,6 +8216,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       d.returnScroll = y; d.pushed = false;
     }
     state.detail = d;
+    if (item.kind === 'playlist' && canList(item)) markPlOpened(item);   // v2.52: before the rows are mapped (New dots)
     if (!d.pushed && opts.kpEntry === 'exists') d.pushed = true;   // v2.42: its entry survived the reload, behind this one
     else if (!d.pushed && opts.kpEntry === 'replace') {   // v2.42: the reloaded entry becomes this view's again
       try { history.replaceState({ detail: true, depth: state.detailStack.length + 1 }, '', '#detail'); d.pushed = true; } catch (e) { d.pushed = false; }
@@ -7083,6 +8283,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function renderDetail() {
     var d = state.detail;
+    azHide();   // v2.58: paintDetailList / paintDetailFoot show it again for a fully loaded Liked Songs
     if (d.kind === 'artist') return renderArtist(d);
     var it = d.item;
     $('top').classList.add('detail');
@@ -7119,15 +8320,18 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       ]),
       el('div', { class: 'dbtns' }, btns),
       el('div', { class: 'dbtns', id: 'dcont', hidden: true }),   // v2.23: Continue · <song>
-      it.kind === 'show' ? introBox(it) : null   // v2.33: Skip intro
+      it.kind === 'show' ? introBox(it) : null,   // v2.33: Skip intro
+      it.kind === 'show' && it.id ? latestPriBox(it) : null   // v2.50: In Latest: Priority · Normal · Hidden
     ]));
     main.appendChild(el('p', { class: 'lnote', id: 'dnote', hidden: true }));   // v2.15: saved list / fallback note
     main.appendChild(el('div', { id: 'dedit' }));   // v2.26: Edit (your own and collaborative playlists)
+    d.lyJump = null;   // v2.54: a jump waiting on Older doesn't carry over a redraw of the whole view (Back, a new list)
     var fbox = findBox(d);   // v2.22: Find in list
     main.appendChild(fbox);
     if (fsel && !fbox.hidden) { try { $('dfind').focus({ preventScroll: true }); $('dfind').setSelectionRange(fsel[0], fsel[1]); } catch (e) {} }
     main.appendChild(el('div', { id: 'dfilt' }));   // v2.40: episode filter chips
     main.appendChild(el('div', { id: 'dsort' }));
+    main.appendChild(el('div', { id: 'dyears', hidden: true }));   // v2.54: Jump to year (Liked Songs)
     main.appendChild(el('ul', { class: 'list compact', id: 'dlist' }));
     main.appendChild(el('div', { class: 'dfoot', id: 'dfoot' }));
     main.appendChild(el('div', { class: 'dcopy', id: 'dcopy', hidden: true }));   // v2.24: Make a copy
@@ -7139,6 +8343,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // v2.19: an album's "Album · Artist, Artist" line, with each artist's name a button to the artist page.
   // Back from the artist returns to this album. Albums opened from an artist page show the year instead.
   function detailSub(it) {
+    if (plUpdated(it)) return updSub(it, it.sub || '');   // v2.52: someone else's playlist, until Show songs or Play
     var refs = it.kind === 'album' && it.byArtists;
     if (!refs || !refs.length || String(it.sub || '').indexOf('Album · ') !== 0) return el('div', { class: 'sub', text: it.sub });
     var box = el('div', { class: 'sub' }, [document.createTextNode('Album · ')]);
@@ -7190,6 +8395,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }
     list = view ? sortShown(view, sortList(view, list)) : list;
     appendDetailRows(tok ? list.slice(0, FIND_SHOW) : list, true);
+    azDetail();   // v2.58
   }
   // v2.40: the filter chips above a podcast's episodes and Saved episodes, with "Showing 3 of 50 loaded" while a
   // filter is on, and "Show all episodes" when it hides every loaded row (Load more stays below: older pages may
@@ -7274,20 +8480,131 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var ul = $('dlist');
     if (!ul) return;
     if (state.detail && state.detail.item.kind === 'liked') items = items.map(withLastPlay);   // v2.30: "Played 3 days ago"
-    var discs = discMode(state.detail);
+    var d = state.detail, discs = discMode(d), yrs = likedYearsOn(d);   // v2.54: year headers (Liked Songs) beside disc headers (albums)
     if (discs && !fresh && ul.children.length && !ul.hasAttribute('data-disc')) { paintDetailList(); return; }   // Load more brought disc 2: redraw from Disc 1
-    items.forEach(function (i) {
-      if (discs) {
-        var n = String(i.disc || 1);
-        if (ul.getAttribute('data-disc') !== n) {
-          ul.appendChild(el('li', { class: 'dischead' }, [el('h3', { text: 'Disc ' + n })]));
-          ul.setAttribute('data-disc', n);
+    if (!yrs && ul.querySelector('.yhead')) { paintDetailList(); return; }   // v2.54: a page brought a song with no date: redraw without headers
+    var hs = yrs ? ul.querySelectorAll('.yhead') : [], last = hs.length ? hs[hs.length - 1].getAttribute('data-year') : '';
+    lyRows = yrs;
+    try {
+      items.forEach(function (i) {
+        if (discs) {
+          var n = String(i.disc || 1);
+          if (ul.getAttribute('data-disc') !== n) {
+            ul.appendChild(el('li', { class: 'dischead' }, [el('h3', { text: 'Disc ' + n })]));
+            ul.setAttribute('data-disc', n);
+          }
         }
-      }
-      ul.appendChild(itemRow(i));
-    });
+        if (yrs) {   // v2.54
+          var y = likedYM(i).slice(0, 4);
+          if (y !== last) { ul.appendChild(yearHead(y)); last = y; }
+        }
+        ul.appendChild(itemRow(i));
+      });
+    } finally { lyRows = false; }
     requestSaved(savableUris(items));
     paintDetailFilter();   // v2.40: the chips and their count follow the rows
+    paintYears(d);   // v2.54
+  }
+  // ---------- v2.54: year headers and Jump to year in Liked Songs ----------
+  // Only in Liked Songs with the Recently liked order (Spotify's own: newest like first), with nothing typed in Find
+  // and every loaded song carrying a like date (added_at): if any lacks one, no headers at all, since the years
+  // could then mislead. Headers are drawn from what's loaded, so they cost no requests, and they never count songs.
+  // "Jump to year" scrolls to a year's header; "Older" loads more pages with Find in list's Search all (library
+  // group, the same caps, cool-offs and memo), then jumps to the first year that wasn't loaded before.
+  var lyRows = false;   // true while appendDetailRows draws rows that get the " · Liked Mar 2021" subtitle
+  var LY_MIN = 2008;   // Spotify opened in 2008: an earlier year (such as 1970 from a zero date) counts as missing
+  function likedYM(i) {   // 'YYYY-MM' of the like in this phone's time zone, '' when missing or unreadable
+    if (i.likedYM == null) {
+      var t = i.added ? Date.parse(i.added) : NaN, dt = new Date(t);
+      i.likedYM = isNaN(t) || dt.getFullYear() < LY_MIN ? '' : dt.getFullYear() + '-' + ('0' + (dt.getMonth() + 1)).slice(-2);
+    }
+    return i.likedYM;
+  }
+  function likedSub(i) { var ym = likedYM(i); return ym ? ' · Liked ' + fmtDate(ym) : ''; }
+  function likedYearsOn(d) {
+    if (!d || d.kind === 'artist' || !d.item || d.item.kind !== 'liked' || d.editing || d.restricted || !d.items.length) return false;
+    if (sortMode('d-liked') !== 'default' || findTokens(d)) return false;
+    for (var k = 0; k < d.items.length; k++) { if (!likedYM(d.items[k])) return false; }
+    return true;
+  }
+  function yearHead(y) {
+    return el('li', { class: 'yhead', id: 'ly-' + y, 'data-year': y, tabindex: '-1' }, [el('h3', { text: y })]);
+  }
+  function loadedYears(d) {
+    var ys = [], seen = {};
+    d.items.forEach(function (i) { var y = likedYM(i).slice(0, 4); if (y && !seen[y]) { seen[y] = true; ys.push(y); } });
+    return ys;
+  }
+  function paintYears(d) {
+    var box = $('dyears');
+    if (!box || !d || state.detail !== d) return;
+    var on = likedYearsOn(d), ys = on ? loadedYears(d) : [];
+    var hide = !on || (ys.length < 2 && !d.next);
+    if (!on) d.lyJump = null;   // another sort, Find text or a missing date: no jump
+    var p = !hide && d.next ? findPlan(d) : null;
+    var off = !p || p.disabled || d.loading || !!d.findRun;   // Older can't start now
+    var note = p && p.why === 'paused' && !d.findRun ? coolText(p.group) : '';
+    // v2.54 fix: rebuilt only when the years, Older or the note change, so a tap during a load lands on the same chip.
+    var sig = hide ? '' : ys.join(',') + '|' + !!d.next + '|' + note;
+    if (!hide && box.getAttribute('data-sig') === sig && !box.hidden) {
+      var keep = box.querySelector('[data-year="older"]');
+      if (keep) keep.disabled = off;
+      lyJumpDone(d);
+      return;
+    }
+    var a = document.activeElement, had = a && box.contains(a) ? a.getAttribute('data-year') : null;
+    box.textContent = '';
+    box.setAttribute('data-sig', sig);
+    box.hidden = hide;
+    if (hide) { lyJumpDone(d); return; }
+    var g = el('div', { class: 'sortbar yearbar', role: 'group', 'aria-label': 'Jump to year' }, [
+      el('span', { class: 'sortlbl', 'aria-hidden': 'true', text: 'Jump to' })
+    ]);
+    ys.forEach(function (y) {
+      var b = el('button', { class: 'chip', type: 'button', 'data-year': y, 'aria-label': 'Jump to ' + y, text: y });
+      b.addEventListener('click', function () { jumpYear(y); });
+      g.appendChild(b);
+    });
+    if (d.next) {
+      var ob = el('button', { class: 'chip', type: 'button', 'data-year': 'older', 'aria-label': 'Load older years', text: 'Older' });
+      if (off) ob.disabled = true;
+      ob.addEventListener('click', function () { olderYears(d); });
+      g.appendChild(ob);
+    }
+    box.appendChild(g);
+    if (note) box.appendChild(el('p', { class: 'snote', text: note }));
+    if (had) { var nb = box.querySelector('[data-year="' + had + '"]'); if (nb && !nb.disabled) nb.focus({ preventScroll: true }); }
+    lyJumpDone(d);
+  }
+  // Older finished: go to the first year that wasn't loaded before it started.
+  function lyJumpDone(d) {
+    if (d.lyJump && !d.loading && !d.findRun) { var j = d.lyJump; d.lyJump = null; afterOlder(d, j); }
+  }
+  // v2.54 fix: Now Playing or a sheet (Up next, devices, Add to playlist…) is open: a jump would pull focus out of it.
+  function lyOverlay() {
+    return document.body.classList.contains('npopen') || !!document.querySelector('.sheet:not([hidden]), [aria-modal="true"]:not([hidden])');
+  }
+  function jumpYear(y) {
+    var h = document.getElementById('ly-' + y);
+    if (!h) return;
+    var top = $('top'), off = top && !top.hidden ? top.getBoundingClientRect().height : 0;
+    var to = Math.max(0, h.getBoundingClientRect().top + (window.pageYOffset || 0) - off - 8);
+    var still = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    try { window.scrollTo({ top: to, behavior: still ? 'auto' : 'smooth' }); } catch (e) { try { window.scrollTo(0, to); } catch (e2) {} }
+    try { h.focus({ preventScroll: true }); } catch (e) {}
+  }
+  function olderYears(d) {
+    if (state.detail !== d || d.loading || d.findRun) return;
+    var j = { years: loadedYears(d), n: d.items.length };
+    searchAll(d);   // nothing happens if paused (it says so) or disabled; Find in list's own rules apply
+    if (d.findRun) d.lyJump = j;   // loading, or waiting for another load: paintYears jumps once it ends
+    else if (d.items.length > j.n) afterOlder(d, j);   // kept from an earlier Search all this visit: no requests
+  }
+  function afterOlder(d, j) {
+    if (state.detail !== d || !likedYearsOn(d)) return;
+    var ys = loadedYears(d);
+    for (var k = 0; k < ys.length; k++) { if (j.years.indexOf(ys[k]) === -1) { if (!lyOverlay()) jumpYear(ys[k]); return; } }   // skipped, not kept, under an overlay
+    if (d.items.length > j.n) toast(d.next ? 'No older year in the songs loaded so far. Tap Older again for more.' : 'No older years.');
   }
   // v2.38: the album details footer under the last song: release date at Spotify's precision, ℗/© lines, label.
   // Saved albums have them from the library answer; others (search, an artist's releases) have the date only.
@@ -7354,6 +8671,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     paintEditBar();   // v2.26
     paintDetailCopy();   // v2.24: its own box, so the steps never redraw #dfoot or reload an open player
     paintFindBox(d);   // v2.22
+    paintYears(d);   // v2.54: the Older chip follows loading and pauses
+    azDetail();   // v2.58: the last page landing (appended rows) or Find in list starting/ending
     if (d.restricted && d.embed && f.querySelector('.sembed-box')) return;   // v2.16: keep the open player (redrawing would reload it)
     dropEmbed(d);
     f.textContent = '';
@@ -7580,7 +8899,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       findBusy.waiters.push(function () {
         d.loading = false; d.findRun = null;
         if (!wait.stop && findAlive(d)) searchAll(d);
-        else if (state.detail === d) paintDetailFoot();
+        // v2.54 fix: nothing started (the last load ended in a pause, or Stop): the footer and Older come back.
+        if (!d.findRun) { if (state.detail === d) paintDetailFoot(); else d.lyJump = null; }
       });
       if (state.detail === d) paintDetailFoot();
       return;
@@ -7654,7 +8974,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // previews unless Safari is signed in to Spotify; Play and Shuffle above still play on the phone.
   function showSongsButton(d) {
     var b = el('button', { class: 'btn secondary', type: 'button', text: 'Show songs' });
-    b.addEventListener('click', function () { d.embed = true; paintDetailFoot(); });
+    b.addEventListener('click', function () { d.embed = true; markPlOpened(d.item); paintDetailFoot(); });   // v2.52: counts as opened
     return b;
   }
   function pageIsDark() {
@@ -7867,6 +9187,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       }
       var off = pageOffset(url, r.json);   // v2.26: each song's place in the playlist, for Edit
       var mapped = dropShown(d, (r.json.items || []).map(function (it, j) { var m = mapDetail(d.item, it); if (m && kind === 'playlist') m.pos = off + j; return m; }).filter(Boolean));
+      if (kind === 'liked' && first) noteLikedFirst(mapped);   // v2.57: Home's Recently liked songs (memory only)
       d.items = d.items.concat(mapped);
       if (kind === 'liked') upnNoteLiked(mapped);   // v2.41: Up next "Next from · Liked Songs" knows these
       if (isPod(d.item)) rememberEpisodes(mapped);   // for Continue listening
@@ -8148,6 +9469,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (d.snap !== undefined) d.snap = snap;   // audit: an add doesn't make old positions current (editStale); the kept pages hold its snapshot
       if (state.detail === d && $('dlist')) { paintDetailList(); paintDetailSort(); paintDetailFoot(); }
     }
+    plSeenEdited(id, snap);   // v2.52: this page's own change doesn't mark it Updated
     if (total == null) { var lp = libraryPlaylist(id); if (lp && typeof lp.count === 'number') total = lp.count + 1; }
     setPlCount(id, total);
   }
@@ -8303,6 +9625,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       return raw;
     }, 0, snap);
     d.snap = snap;
+    plSeenEdited(d.item.id, snap);   // v2.52
   }
   // Spotify removes every copy. Copies in pages not loaded yet come after the loaded ones, so the next page's
   // offset moves back by the loaded copies only.
@@ -8316,6 +9639,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (typeof d.total === 'number') d.total = Math.max(d.items.length, d.total - gone.length);
     var res = rewriteMemo(d.item.id, function (raw) { return raw.filter(function (x) { return rawUri(x) !== uri; }); }, 0, snap);
     d.snap = snap;
+    plSeenEdited(d.item.id, snap);   // v2.52
     setPlCount(d.item.id, typeof d.total === 'number' ? d.total : res ? res.total : null);
   }
   $('plBack').addEventListener('click', function () { closePl(); });
@@ -8767,7 +10091,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     del(K.plSaved);
     return false;
   }
-  function plPack(x) {
+  function plPack(x, me) {
     var t = x && (x.item || x.track);
     if (!x || x.is_local || !t || !t.id || !t.uri) return 0;   // keeps its place, so positions stay right for Edit
     var ep = t.type === 'episode', o = { i: String(t.id), n: t.name || '', d: t.duration_ms || 0 };
@@ -8783,6 +10107,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (t.explicit) o.ex = 1;   // #34: E badge
     if (t.restrictions && t.restrictions.reason) o.x = String(t.restrictions.reason).slice(0, 20);
     if (x.added_at) o.t = x.added_at;
+    if (me && x.added_by && x.added_by.id) o.b = x.added_by.id === me ? 1 : 2;   // v2.52: collaborative only: Added by you (1) / someone else (2)
     return o;
   }
   function plUnpack(o) {
@@ -8794,7 +10119,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (o.p === 0) t.is_playable = false;   // #51
     if (o.ex) t.explicit = true;   // #34
     if (o.x) t.restrictions = { reason: o.x };
-    return { added_at: o.t || null, is_local: false, track: t };
+    var r = { added_at: o.t || null, is_local: false, track: t }, me = state.data && state.data.me;
+    if ((o.b === 1 || o.b === 2) && me && me.id) r.added_by = { id: o.b === 1 ? me.id : '' + me.id + ':other' };   // v2.52
+    return r;
   }
   // The pages kept this visit become the saved copy, labelled with the snapshot known before page 1 was asked
   // (plLabel). Pages changed by an edit lose that label (rewriteMemo makes new ones), so they're never saved again
@@ -8808,8 +10135,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var map = plRead();
     var raw = [];
     pages.forEach(function (p) { raw = raw.concat(p.r.json.items); });
+    var lpc = libraryPlaylist(id), me0 = state.data && state.data.me;
+    var collabMe = lpc && lpc.collaborative && me0 && me0.id ? me0.id : '';   // v2.52: who added each song, for Added by
     var at = Date.now();
-    map[id] = { s: label, at: at, o: at, t: typeof p0.json.total === 'number' ? Math.max(p0.json.total, raw.length) : raw.length, n: raw.slice(0, PL_SAVE_SONGS).map(plPack) };
+    map[id] = { s: label, at: at, o: at, t: typeof p0.json.total === 'number' ? Math.max(p0.json.total, raw.length) : raw.length, n: raw.slice(0, PL_SAVE_SONGS).map(function (x) { return plPack(x, collabMe); }) };
     if (plWrite(map, id)) { if (on) on.plSavedAt = at; }
     else if (on) on.plSavedAt = 0;
   }
@@ -9508,8 +10837,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     releasePoller();
     paintCool();       // hides the cool-off line (state.started is false now)
     stopFind(state.detail); state.detailStack.forEach(stopFind);   // v2.22
+    azHide(true);   // v2.58
     state.detail = null; state.detailStack = [];
     $('top').classList.remove('detail');
+    setSlim(false);   // v2.49
     $('top').hidden = true;
     $('banner').hidden = true;
     paintNet();   // v2.43: hides the no-internet line (state.started is false now)
@@ -9517,8 +10848,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     closePerm();   // the permission sheet and the Add to playlist / Remove sheet belong to that sign-in too
     closePl();     // (closed in the reverse of the order they can open: the permission sheet opens from this one)
     closeQueue(false);
+    closeHomeSheet(false);   // v2.57
+    likedFirst = null;       // v2.57: that sign-in's Liked Songs
     closeNp(false);
     closePl(); closePerm();   // v2.28: Add to playlist and the permission sheet close on sign-out too
+    closeRowMenu(false); rowRaw = {};   // v2.51
     paintPlayer();
   }
   function renderSetup(errMsgText) {
@@ -9573,6 +10907,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       state.libAt = Date.now();   // v2.45: when the podcast counts were read
       syncSeen();   // v2.45: "N new" starting points
       matchCopies(d);   // v2.24: link a new copy, drop links to deleted copies (no requests)
+      notePlaylists(d);   // v2.52: records playlists seen for the first time (no requests)
       seedSaved(d, true);
       renderList();
       paintHearts();
@@ -9843,6 +11178,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       state.query = e.target.value;
       clearTimeout(queryTimer); queryTimer = null;
       var f0 = state.filter;
+      if (state.query.trim() && !state.detail) azHide();   // v2.58: the A–Z strip goes at once, not after the redraw delay
       if (!state.query || $('main').getElementsByTagName('li').length <= QUERY_DEBOUNCE_ROWS) renderList();
       else queryTimer = setTimeout(function () { queryTimer = null; if (state.filter === f0) renderList(); }, 150);
     }
@@ -9871,7 +11207,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     catMemo = {}; findMemo = {};
     plTrustFrom = Date.now();   // v2.37: saved playlists wait for the library's new snapshots
     if (!coolLeft('player')) { checkDevice(); schedulePoll(0, true); }
-    if (!coolLeft('library')) refresh();
+    if (!coolLeft('library')) { likedFirst = null; refresh(); }   // v2.57: Recently liked songs waits for Liked Songs to open again
     toast('Refreshing…');
   });
   $('bannerBtn').addEventListener('click', login);
@@ -9889,14 +11225,59 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
     if (!$('sheet').hidden) closeSheet();
+    else if (!$('rowmenu').hidden) closeRowMenu();   // v2.51
     else if (!$('perm').hidden) closePerm();   // v2.25
     else if (!$('plsheet').hidden) closePl();   // v2.26
     else if (!$('notes').hidden) closeNotes();   // v2.18
     else if (!$('queue').hidden) closeQueue();
     else if (!$('diag').hidden) closeDiag();
+    else if (!$('homeSheet').hidden) closeHomeSheet();   // v2.57
     else closeNp();
   });
   $('pInfo').addEventListener('click', openNp);
+  // v2.55: swipes on the bar's main row. Left = Next, right = Previous (the same command as the buttons, so asleep,
+  // no device, 429 and a paused player group behave exactly as a button tap: 1 player request per skip at most);
+  // up = open the full Now Playing screen (no request of its own). Starts only on one finger inside .prow and not on
+  // its buttons (Up next, heart); the cover/title button counts as the row. A tap still opens Now Playing.
+  (function () {
+    var row = document.querySelector('#player .prow'), g = null, guard = false, guardT = null;
+    function unguard() { guard = false; clearTimeout(guardT); guardT = null; }
+    row.addEventListener('touchstart', function (e) {
+      g = null;
+      unguard();
+      if (e.touches.length !== 1 || $('player').hidden || $('player').hasAttribute('inert')) return;
+      if (e.target.closest && e.target.closest('.act')) return;
+      var t = e.touches[0];
+      if (t.clientX < BAR_EDGE_PX) return;   // leave edge swipes to Safari's back gesture (taps there still click)
+      g = { x: t.clientX, y: t.clientY, drift: 0, sideways: 0 };
+    }, { passive: true });
+    row.addEventListener('touchmove', function (e) {
+      if (!g) return;
+      if (e.touches.length !== 1) { g = null; return; }
+      var t = e.touches[0];
+      g.drift = Math.max(g.drift, Math.abs(t.clientY - g.y));
+      g.sideways = Math.max(g.sideways, Math.abs(t.clientX - g.x));
+    }, { passive: true });
+    row.addEventListener('touchcancel', function () { g = null; }, { passive: true });
+    row.addEventListener('touchend', function (e) {
+      if (!g) return;
+      var t = e.changedTouches[0], s = g;
+      g = null;
+      var dx = t.clientX - s.x, dy = t.clientY - s.y;
+      var drift = Math.max(s.drift, Math.abs(dy)), sideways = Math.max(s.sideways, Math.abs(dx));
+      // A moved touch mustn't also count as a tap on the cover/title. iOS usually sends no click then, so the guard
+      // lasts only until the next touch or 250 ms (iOS sends its click right after touchend), whichever comes first.
+      if (Math.max(drift, sideways) > BAR_MOVED_PX) { guard = true; clearTimeout(guardT); guardT = setTimeout(unguard, 250); }
+      var kind = barSwipeKind(dx, dy, drift, sideways);
+      if (kind) barSwipe(kind);
+    }, { passive: true });
+    // A swipe that ends over the cover/title button mustn't also count as a tap on it.
+    row.addEventListener('click', function (e) {
+      if (!guard || !(e.target.closest && e.target.closest('#pInfo'))) return;
+      unguard();
+      e.preventDefault(); e.stopPropagation();
+    }, true);
+  })();
   $('npClose').addEventListener('click', function () { closeNp(); });
   $('npDev').addEventListener('click', function () { openSheet($('npDev')); });
   $('pQueue').addEventListener('click', function () { openQueue($('pQueue')); });
@@ -9905,12 +11286,48 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   $('queueBack').addEventListener('click', function () { closeQueue(); });
   $('queueRefresh').addEventListener('click', loadQueue);
   $('notesClose').addEventListener('click', function () { closeNotes(); });   // v2.18
+  $('homeSheetClose').addEventListener('click', function () { closeHomeSheet(); });   // v2.57
+  $('homeSheetBack').addEventListener('click', function () { closeHomeSheet(); });
+  $('homeReset').addEventListener('click', resetHome);
   $('notesBack').addEventListener('click', function () { closeNotes(); });
   $('permGo').addEventListener('click', permGo);   // v2.25
+  $('rmClose').addEventListener('click', function (ev) { if (!rmTooSoon(ev)) closeRowMenu(); });   // v2.51
+  $('rmBack').addEventListener('click', function (ev) { if (!rmTooSoon(ev)) closeRowMenu(); });
+  // v2.51: right after the menu closes, a real tap on the page behind (the double tap's second half) does nothing.
+  document.addEventListener('click', function (ev) {
+    if (!$('rowmenu').hidden || !rmTooSoon(ev)) return;
+    if (ev.target && ev.target.closest && ev.target.closest('.sheet')) return;
+    ev.preventDefault(); ev.stopPropagation();
+  }, true);
+  $('rowPlus').addEventListener('change', function () {   // v2.51
+    var want = $('rowPlus').checked;
+    if (want) del(K.rowPlus); else if (!set(K.rowPlus, false)) toast('Couldn’t save that setting: this phone’s storage is full.');
+    $('rowPlus').checked = rowPlusShown();   // a full store keeps the +, and the box shows it
+    if (!state.started) return;
+    var d = state.detail, y = window.pageYOffset || document.documentElement.scrollTop || 0;
+    if (!d) renderList();
+    else if (d.kind === 'artist') renderArtist(d);
+    else if ($('dlist')) paintDetailList();   // an open song list redraws its rows in place
+    window.scrollTo(0, y);
+  });
   $('permClose').addEventListener('click', function () { closePerm(); });
   $('permBack').addEventListener('click', function () { closePerm(); });
   $('notesMark').addEventListener('click', function () { if (notesView) toggleMark(notesView.ep); });   // v2.21
   $('qHide').addEventListener('change', function () { set(K.queueHide, $('qHide').checked); renderQueue(); });
+  $('compactPlayer').addEventListener('change', function () { setCompact($('compactPlayer').checked); });   // v2.49
+  applyCompact();
+  window.addEventListener('scroll', onSlimScroll, { passive: true });   // v2.49
+  var slimW = window.innerWidth;
+  window.addEventListener('resize', function () {   // v2.49: rotating the phone changes the strip's width
+    // Safari's toolbar collapsing or expanding fires resize too (height only): that keeps a sideways swipe of the chips.
+    if (window.innerWidth !== slimW) { slimW = window.innerWidth; chipIntoView(document.querySelector('.filters .chip[aria-pressed="true"]')); }
+    slimMeasure();
+  });
+  document.addEventListener('focusin', function (e) { if (slimInHeader(e.target)) { slim.acc = 0; setSlim(false); } });   // v2.49
+  document.addEventListener('focusout', function () {   // v2.49 review: the keyboard closed near the top: show it again
+    setTimeout(function () { if (!slimFrozen() && slimY() <= SLIM_MIN_Y) { slim.acc = 0; setSlim(false); } }, 0);
+  });
+  if (window.ResizeObserver) { try { new ResizeObserver(slimMeasure).observe($('status')); } catch (e) {} }   // v2.49 review
   document.querySelectorAll('input[name="theme"]').forEach(function (r) {
     r.addEventListener('change', function () {
       if (!r.checked) return;
@@ -10019,6 +11436,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // Back (button or swipe) closes one view per history entry: an album opened from an artist, then the artist,
   // then the list. Entries are {detail, depth}; older ones without depth count as 1.
   window.addEventListener('popstate', function () {
+    closeRowMenu(false);   // v2.51: Back (or the back swipe) closes the row menu with the view under it
     var cur = state.detail ? state.detailStack.length + 1 : 0;
     var want = location.hash === '#detail' ? Math.max(1, (history.state && history.state.depth) || 1) : 0;
     if (want >= cur) {
@@ -10075,6 +11493,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   window.addEventListener('pagehide', function () { kpSave(); releasePoller(); });   // v2.42: kpSave
   // v2.13: other copies of the page (same storage) share the cool-off and the player answer.
   window.addEventListener('storage', function (e) {
+    if (e.key === K.compactPlayer) {   // v2.49: changed in another tab (applies before sign-in too)
+      compactMem = null; applyCompact();
+      if (!$('diag').hidden) $('compactPlayer').checked = compactPlayer();
+      return;
+    }
     if (!state.started) return;
     if (e.key === K.cool) paintCool();
     else if (e.key === K.playerCache && !document.hidden) applyPlayerCache(get(K.playerCache));
