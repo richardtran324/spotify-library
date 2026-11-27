@@ -1532,7 +1532,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   var EPF_FITS = [0, 20, 45];                          // minutes left; 0 = any length
   var epfMem = null;                                   // v2.38: the stored filters (memory only, if storage is blocked)
   var hideMem = null;                                  // v2.38: Hide played, if storage is blocked
+  var epfStale = false, hideStale = false;             // v2.38: the last write failed (quota/blocked): memory wins over storage
+  // set() that says whether the write went through.
+  function setOk(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } }
   function epfRead() {
+    if (epfStale && epfMem) return epfMem;
     var o = get(K.epFilters);
     if (o && typeof o === 'object' && !Array.isArray(o)) epfMem = o;
     else if (!epfMem) epfMem = {};
@@ -1561,8 +1565,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       shows.slice(EPF_MAX).forEach(function (k) { delete o[k]; });
     }
     epfMem = o;
-    set(K.epFilters, o);
-    if (key === 'latest') { hideMem = s !== 'all'; set(K.hidePlayed, hideMem); }
+    epfStale = !setOk(K.epFilters, o);
+    if (key === 'latest') { hideMem = s !== 'all'; hideStale = !setOk(K.hidePlayed, hideMem); }
   }
   function epfKey(it) { return !it ? '' : it.kind === 'show' ? (it.id ? 'show:' + it.id : '') : it.kind === 'episodes' ? 'episodes' : ''; }
   // Time left in ms, or -1 when the length isn't known. Call on a marked row (markItem).
@@ -2524,7 +2528,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function onLatestView() { return state.started && !state.detail && state.filter === 'podcasts' && state.podTab === 'latest'; }
   function onHome() { return state.started && !state.detail && state.filter === 'home'; }
   function latestFresh(c) { return !!c && typeof c.at === 'number' && Date.now() - c.at < LATEST_MS && c.at < Date.now() + 60000; }
-  function hidePlayed() { var v = get(K.hidePlayed); return v == null && hideMem != null ? hideMem : v === true; }   // v2.38: memory if storage is blocked
+  function hidePlayed() { if (hideStale && hideMem != null) return hideMem; var v = get(K.hidePlayed); return v == null && hideMem != null ? hideMem : v === true; }   // v2.38: memory if storage is blocked or full
   function rerenderLatest() {
     var onShows = state.started && !state.detail && state.filter === 'podcasts' && state.podTab === 'shows';
     if (onLatestView() || onShows || onHome()) renderList();
@@ -5314,7 +5318,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function paintFindFoot(d, f, noun) {
     var hits = d.findHits || 0, q = (d.find || '').trim();
-    if (!hits) f.appendChild(el('p', { class: 'empty', text: 'No ' + noun + ' match “' + q + '”' + (d.next ? ' in the ' + fmtCount(d.items.length) + ' loaded.' : '.') }));
+    var ek = epfKey(d.item), fon = !!ek && epfActive(ek);   // v2.38: the episode filter also hides rows
+    if (!hits) f.appendChild(el('p', { class: 'empty', text: 'No ' + noun + ' match “' + q + '”' + (fon ? ' with the current filter' : '') + (d.next ? ' in the ' + fmtCount(d.items.length) + ' loaded.' : '.') }));
+    if (!hits && fon) f.appendChild(epfReset(ek, function () { paintDetailList(); paintDetailFoot(); }));
     else if (hits > FIND_SHOW) f.appendChild(el('p', { class: 'snote', text: 'Showing the first ' + FIND_SHOW + ' of ' + fmtCount(hits) + ' matches. Type more to narrow it.' }));
     if (!d.next) return;
     var p = findPlan(d);
@@ -5329,6 +5335,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var capped = p.group !== 'catalog' && !p.memo && p.more > p.reqs * FIND_PAGE;
     var label = capped ? 'Search ' + fmtCount(p.reqs * FIND_PAGE) + ' more' : 'Search all ' + fmtCount(p.total) + ' ' + noun;
     if (p.group === 'catalog' && p.reqs) label += ' (' + p.reqs + (p.reqs === 1 ? ' request)' : ' requests)');
+    if (fon) label += ' with the current filter';   // v2.38: what it finds still goes through the chips
     var b = el('button', { class: 'btn secondary', type: 'button', id: 'dfindAll', text: label });
     if (p.disabled) b.disabled = true;
     b.addEventListener('click', function () { searchAll(d); });
