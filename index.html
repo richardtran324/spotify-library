@@ -210,6 +210,10 @@ ul.list.compact .cover.num { width: 28px; }
 .dbtns { display: flex; gap: 10px; align-items: center; }
 .dbtns .btn { flex: 1; min-width: 0; }
 .btn.cont { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }   /* v2.23: Continue · <song> */
+.introrow { display: flex; align-items: center; gap: 10px; }   /* v2.33: Skip intro */
+.introlab { font-size: 0.95rem; white-space: nowrap; }
+.introsel.field { width: auto; flex: 1; min-width: 0; min-height: 44px; }
+.introhint { font-size: 0.85rem; color: var(--muted); margin: 6px 2px 0; }
 .dfoot { padding: 12px 0; display: flex; flex-direction: column; gap: 10px; }
 /* v2.16: Spotify's own player for playlists the page can't list (tall enough to scroll the songs at phone width) */
 .sembed, .sembed-box iframe { display: block; width: 100%; max-width: 100%; height: 480px; border: 0; border-radius: 12px; background: var(--chip); }
@@ -739,6 +743,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     playLog: 'lib-play-log',     // v2.30: {e: [[playedAt ms, track id], …] newest first, t: {track id: [name, artists, album, cover]}}: songs from Recently played, kept past its last 50 (1,500 plays, 90 days; names cut at 80 characters with …; covers without the i.scdn.co prefix)
     ctxLast: 'lib-ctx-last',     // v2.23: {album or playlist URI | 'liked': {uri, id, name, positionMs, durMs, at}}: the last song heard in each list (40, 30 days)
     bookmarks: 'lib-bookmarks',  // v2.32: [{uri, id, kind: 'track'|'episode', name, by, img, url, pos, at}], newest first: Bookmarks saved on Now Playing (200, 2 years); local only
+    introSkip: 'lib-intro-skip', // v2.33: {show URI: {s, at}}: Skip intro per podcast, s = 15|30|45|60|90|120 seconds, at = last set or used (100 shows, 365 days)
     // v2.13 rate limits. Shared by every copy of the page that shares this storage (Safari tabs on one origin).
     cool: 'lib-cooloff',         // v2.14: {group: {until, reason, strikes, quotaAt, retryAfter, last429:{at, reason, retryAfter, what}}}
     poller: 'lib-poller',        // {id, at, every}: the one visible copy that runs the player check
@@ -1713,7 +1718,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       img: img(e.images && e.images.length ? e.images : (e.show && e.show.images)),
       sp: rs.played, spos: rs.pos, subBase: ['Episode', by],   // v2.21: sub, positionMs and played come from markItem
       date: e.release_date || '',   // for sorting
-      durMs: dur, showName: (e.show && e.show.name) || ''   // for the total length and Continue listening
+      durMs: dur, showName: (e.show && e.show.name) || '',   // for the total length and Continue listening
+      showId: (e.show && e.show.id) || ''   // v2.33: for Skip intro
     });
   }
   // ---------- episode notes (v2.18) ----------
@@ -2606,6 +2612,90 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       g.appendChild(b);
     });
     return g;
+  // ---------- Skip intro per podcast (v2.33) ----------
+  // A setting on a podcast's page: an episode of that show that the page starts from the very beginning (a row,
+  // the podcast's Play, Play newest, a Home card) starts at N seconds instead. The start is position_ms in the
+  // same play request, so it costs no request. Never for a resume (a saved position above 0), a timestamp in the
+  // episode notes, an episode played inside a list (Show songs), or an episode no longer than the skip or of
+  // unknown length. Kept on this phone per show URI: 100 shows at most, dropped a year after it was last set or used.
+  // No "skip outro": iPhone stops a page's scripts in the background, so nothing could watch for an episode's end.
+  var INTRO_STEPS = [15, 30, 45, 60, 90, 120];
+  var INTRO_MAX = 100, INTRO_MS = 365 * 24 * 60 * 60 * 1000, INTRO_TOUCH_MS = 24 * 60 * 60 * 1000;
+  var introMap = null;   // memory copy, used when storage can't be read
+  function introOk(k, e, now) {
+    return /^spotify:show:[A-Za-z0-9]+$/.test(k) && !!e && typeof e === 'object' && INTRO_STEPS.indexOf(e.s) !== -1 &&
+      typeof e.at === 'number' && now - e.at < INTRO_MS && e.at < now + 60000;
+  }
+  // Keeps the 100 most recently set or used valid entries.
+  function introPrune(m) {
+    var now = Date.now(), keys = Object.keys(m || {}).filter(function (k) { return introOk(k, m[k], now); });
+    keys.sort(function (a, b) { return m[b].at - m[a].at; });
+    var out = {};
+    keys.slice(0, INTRO_MAX).forEach(function (k) { out[k] = { s: m[k].s, at: m[k].at }; });
+    return out;
+  }
+  // Storage first (another copy of the page may have changed it), memory if storage can't be read.
+  function readIntro() {
+    var st = get(K.introSkip);
+    introMap = introPrune(st && typeof st === 'object' && !Array.isArray(st) ? st : (introMap || {}));
+    return introMap;
+  }
+  function saveIntro(m) { introMap = introPrune(m); set(K.introSkip, introMap); }
+  function showKey(id) { return id ? 'spotify:show:' + id : ''; }
+  function introSecs(key) { var e = key ? readIntro()[key] : null; return e ? e.s : 0; }
+  function setIntro(key, s) {
+    if (!key) return;
+    var m = readIntro();
+    if (INTRO_STEPS.indexOf(s) !== -1) m[key] = { s: s, at: Date.now() };
+    else delete m[key];
+    saveIntro(m);
+  }
+  // An episode's show and length, from the item or what the page already holds (no request).
+  function introFacts(item) {
+    var show = showKey(item.showId), dur = item.durMs || 0;
+    var d = state.detail;
+    if (d && d.item && d.item.kind === 'show' && Array.isArray(d.items)) {
+      var r = d.items.filter(function (x) { return x && x.uri === item.uri; })[0];
+      if (r) { show = show || showKey(d.item.id); dur = dur || r.durMs || 0; }
+    }
+    var h = histByUri()[item.uri];
+    if (h) { show = show || showKey(h.show && h.show.id); dur = dur || h.duration_ms || 0; }
+    var c = state.latest.cache, x = c && Array.isArray(c.items) ? c.items.filter(function (y) { return y && y.uri === item.uri; })[0] : null;
+    if (x) { show = show || showKey(x.showId); dur = dur || x.durMs || 0; }
+    var s = epSeen[item.uri] && epSeen[item.uri].x;
+    if (s) { show = show || showKey(s.showId); dur = dur || s.durMs || 0; }
+    return { show: show, dur: dur };
+  }
+  // The item to play: unchanged, or a copy that starts at the show's skip (exactPos keeps it through a wake).
+  function introStart(item) {
+    if (!item || item.kind !== 'episode' || item.ctx || item.exactPos || item.positionMs > 0) return item;
+    var f = introFacts(item), s = introSecs(f.show);
+    if (!s || !(f.dur > s * 1000)) return item;
+    var m = readIntro();
+    if (m[f.show] && Date.now() - m[f.show].at > INTRO_TOUCH_MS) { m[f.show].at = Date.now(); saveIntro(m); }   // in use: keep it
+    return Object.assign({}, item, { positionMs: s * 1000, exactPos: true, introSecs: s });
+  }
+  function introHint(s) { return 'Episodes you start from the beginning start at ' + fmtTime(s * 1000) + '. Only on this phone.'; }
+  // The podcast page's "Skip intro" picker and its hint (shown only when on).
+  function introBox(it) {
+    var key = showKey(it.id), s = introSecs(key);
+    var sel = el('select', { class: 'field introsel', id: 'dintro', 'aria-describedby': 'dintroHint' });
+    [0].concat(INTRO_STEPS).forEach(function (n) {
+      sel.appendChild(el('option', { value: String(n), text: n ? 'Start at ' + fmtTime(n * 1000) : 'Off' }));
+    });
+    sel.value = String(s);
+    var hint = el('p', { class: 'introhint', id: 'dintroHint', text: s ? introHint(s) : '', hidden: s ? null : '' });
+    sel.addEventListener('change', function () {
+      var n = +sel.value;
+      setIntro(key, n);
+      hint.textContent = n ? introHint(n) : '';
+      hint.hidden = !n;
+      toast(n ? 'Skip intro: episodes of “' + it.name + '” start at ' + fmtTime(n * 1000) : 'Skip intro is off for “' + it.name + '”');
+    });
+    return el('div', { class: 'introbox' }, [
+      el('div', { class: 'introrow' }, [el('label', { class: 'introlab', for: 'dintro', text: 'Skip intro' }), sel]),
+      hint
+    ]);
   }
 
   // ---------- Continue in an album, playlist or Liked Songs (v2.23) ----------
@@ -3402,7 +3492,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }
     var pre = opts.shuffle ? shuffle().then(function (r) { shuffleOk = r.ok; }, function () { shuffleOk = false; }) : Promise.resolve();
     function done(sent) {
-      toast((opts.shuffle ? 'Shuffling “' : 'Playing “') + item.name + '” on ' + d.name);
+      toast((opts.shuffle ? 'Shuffling “' : 'Playing “') + item.name + '” on ' + d.name + (item.introSecs ? ' from ' + fmtTime(item.introSecs * 1000) : ''));   // v2.33
       // Shuffle on a device that wasn't active yet can fail; try again now that it plays.
       if (opts.shuffle && !shuffleOk) shuffle().catch(function () {});
       noteStarted(item);   // v2.11: an episode goes into the podcast history right away
@@ -3456,6 +3546,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     // Not sure: check first, as before, and if nothing is open offer a button that wakes Spotify.
     // In 'wait' mode nothing opens at all: the page waits for you to press play in Control Center.
     ev.preventDefault();
+    item = introStart(item);   // v2.33: Skip intro (a start from 0:00 begins at the show's setting instead)
     if (coolBlocked('player')) return;   // v2.13: nothing is sent while playback is paused by Spotify
     var mine = ++tapSeq;
     if (deviceFresh()) { playNow(item, opts); return; }
@@ -3504,7 +3595,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function savePending(item, opts, mode) {
     var p = {
-      item: { kind: item.kind, id: item.id, name: item.name, uri: item.uri, url: item.url, ctx: item.ctx, positionMs: item.positionMs, exactPos: !!item.exactPos },   // v2.18: exactPos keeps a "0:00" timestamp at 0
+      item: { kind: item.kind, id: item.id, name: item.name, uri: item.uri, url: item.url, ctx: item.ctx, positionMs: item.positionMs, exactPos: !!item.exactPos, introSecs: item.introSecs || 0 },   // v2.18: exactPos keeps a "0:00" timestamp at 0; v2.33: introSecs for the toast
       opts: { shuffle: !!(opts && opts.shuffle) },
       at: Date.now(),
       mode: mode || 'link'
@@ -3693,7 +3784,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.32 (2026-11-27)';
+  var VERSION = 'v2.33 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -5509,7 +5600,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         el('div', { class: 'meta' }, [el('h2', { class: 'dname', text: it.name }), detailSub(it), el('div', { class: 'dsum', id: 'dsum' })])
       ]),
       el('div', { class: 'dbtns' }, btns),
-      el('div', { class: 'dbtns', id: 'dcont', hidden: true })   // v2.23: Continue · <song>
+      el('div', { class: 'dbtns', id: 'dcont', hidden: true }),   // v2.23: Continue · <song>
+      it.kind === 'show' ? introBox(it) : null   // v2.33: Skip intro
     ]));
     main.appendChild(el('p', { class: 'lnote', id: 'dnote', hidden: true }));   // v2.15: saved list / fallback note
     main.appendChild(el('div', { id: 'dedit' }));   // v2.26: Edit (your own and collaborative playlists)
@@ -5621,7 +5713,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }));
     if (!t) return null;
     var pos = t.played ? 0 : (t.positionMs || 0);
-    return { kind: 'episode', id: t.id, name: t.name || 'Untitled', uri: t.uri, url: 'https://open.spotify.com/episode/' + t.id, positionMs: pos, played: !!t.played };
+    return { kind: 'episode', id: t.id, name: t.name || 'Untitled', uri: t.uri, url: 'https://open.spotify.com/episode/' + t.id, positionMs: pos, played: !!t.played,
+      showId: showId, durMs: t.durMs || 0 };   // v2.33: for Skip intro
   }
   function appendDetailRows(items) {
     var ul = $('dlist');
