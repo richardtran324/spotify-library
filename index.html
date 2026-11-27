@@ -552,6 +552,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     <img class="npf-cover" id="npCover" alt="">
     <div class="npf-row">
       <div class="meta"><div class="npf-title" id="npName"></div><div class="sub" id="npBy"></div><div class="idleline" id="npIdle" role="status" hidden></div><div class="idleline" id="npCool" hidden></div></div>
+      <button class="act" id="npBm" type="button" aria-label="Bookmark this spot"></button>
       <button class="act heart" id="npHeart" type="button" data-uri="" data-name="" data-kind="track" aria-pressed="false" aria-label="Like this song"></button>
     </div>
     <div class="slider" id="npSeek" role="slider" tabindex="0" aria-label="Position" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"><div class="strack"><div class="sfill"></div><div class="sthumb"></div></div></div>
@@ -737,6 +738,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     epMarks: 'lib-ep-marks',     // v2.21: {uri: {played, at, pos}}: Mark as played / unplayed, this phone only (400, 180 days)
     playLog: 'lib-play-log',     // v2.30: {e: [[playedAt ms, track id], …] newest first, t: {track id: [name, artists, album, cover]}}: songs from Recently played, kept past its last 50 (1,500 plays, 90 days; names cut at 80 characters with …; covers without the i.scdn.co prefix)
     ctxLast: 'lib-ctx-last',     // v2.23: {album or playlist URI | 'liked': {uri, id, name, positionMs, durMs, at}}: the last song heard in each list (40, 30 days)
+    bookmarks: 'lib-bookmarks',  // v2.32: [{uri, id, kind: 'track'|'episode', name, by, img, url, pos, at}], newest first: Bookmarks saved on Now Playing (200, 2 years); local only
     // v2.13 rate limits. Shared by every copy of the page that shares this storage (Safari tabs on one origin).
     cool: 'lib-cooloff',         // v2.14: {group: {until, reason, strikes, quotaAt, retryAfter, last429:{at, reason, retryAfter, what}}}
     poller: 'lib-poller',        // {id, at, every}: the one visible copy that runs the player check
@@ -765,6 +767,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   var EP_PLAYED_TAIL_MS = 60000;             // within the last minute counts as played
   var MARKS_MAX = 400;                        // v2.21: played marks kept…
   var MARKS_MS = 180 * 24 * 60 * 60 * 1000;   // …for at most 180 days
+  var BM_MAX = 200;                           // v2.32: bookmarks kept…
+  var BM_MS = 730 * 24 * 60 * 60 * 1000;      // …for at most 2 years
+  var HOME_BM = 5;                            // v2.32: bookmarks shown on Home before "Show all"
   var MARK_MOVED_MS = 30000;                  // seen playing this far from where it was marked: played again, the mark goes
   // v2.14: no automatic resume-point checks (GET /episodes/{id}); Continue listening uses the page's own history.
   var LASTPLAY_MS = 6 * 60 * 60 * 1000;   // the last playback stays on screen (as paused) this long after Spotify goes idle
@@ -873,6 +878,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     pause: svg('<path fill="currentColor" d="M6 5h4v14H6zM14 5h4v14h-4z"/>'),
     shuffle: svg('<path fill="currentColor" d="M10.6 9.2L5.4 4 4 5.4l5.2 5.2 1.4-1.4zM14.5 4l2 2L4 18.6 5.4 20 18 7.5l2 2V4h-5.5zm.3 9.4l-1.4 1.4 3.1 3.1-2 2.1H20v-5.5l-2 2-3.2-3.1z"/>'),
     bookmark: svg('<path fill="currentColor" d="M6 3h12v18l-6-4.5L6 21z"/>'),
+    bmAdd: svg('<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M6 3h12v18l-6-4.5L6 21z"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M12 7.5v6M9 10.5h6"/>'),   // v2.32
+    cross: svg('<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M7 7l10 10M17 7L7 17"/>'),   // v2.32
     repeat: svg('<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M17 2l3 3-3 3M4 11V9a4 4 0 0 1 4-4h12M7 22l-3-3 3-3M20 13v2a4 4 0 0 1-4 4H4"/>'),
     repeatOne: svg('<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M17 2l3 3-3 3M4 11V9a4 4 0 0 1 4-4h12M7 22l-3-3 3-3M20 13v2a4 4 0 0 1-4 4H4"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M10.8 10.4L12.4 9v6"/>'),
     queue: svg('<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M3 6h13M3 11h13M3 16h8"/><path fill="currentColor" d="M15 14v7l6-3.5z"/>'),
@@ -3071,6 +3078,144 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     });
     main.appendChild(ul);
   }
+  // ---------- Bookmarks (v2.32) ----------
+  // The bookmark button on Now Playing saves the song or episode and the spot it's at (the page's own estimate,
+  // as the progress bar shows it), on this phone only; saving sends nothing to Spotify. Home lists them newest
+  // first; a tap plays that item from that spot with one play request (uris + position_ms), through the usual
+  // device, wait and wake handling. Several bookmarks per item are fine. Kept: 200 at most, for up to 2 years.
+  var bmAll = false;   // Home shows every bookmark instead of the newest few (Show all); this visit only
+  var BM_URI = /^spotify:(track|episode):[A-Za-z0-9]+$/;
+  // Songs and episodes with a Spotify link; ads, local files and anything else have no bookmark button.
+  function bmOk(it) {
+    return !!(it && (it.type === 'track' || it.type === 'episode') && it.id && !it.is_local && BM_URI.test(it.uri || '') && it.uri.split(':')[1] === it.type);
+  }
+  function readBookmarks() {
+    var a = get(K.bookmarks);
+    if (!Array.isArray(a)) return [];
+    var now = Date.now();
+    return a.filter(function (b) {
+      return b && typeof b.uri === 'string' && BM_URI.test(b.uri) && typeof b.name === 'string' && typeof b.pos === 'number' && b.pos >= 0 &&
+        typeof b.at === 'number' && now - b.at < BM_MS && b.at < now + 60000;
+    }).sort(function (x, y) { return y.at - x.at; }).slice(0, BM_MAX);
+  }
+  function writeBookmarks(a) {
+    a.sort(function (x, y) { return y.at - x.at; });
+    set(K.bookmarks, a.slice(0, BM_MAX));
+  }
+  function addBookmark() {
+    var p = state.player, it = p && p.item;
+    if (!bmOk(it)) return;
+    var ep = it.type === 'episode';
+    var a = readBookmarks();
+    var at = Date.now();
+    if (a.length && a[0].at >= at) at = a[0].at + 1;   // each bookmark has its own time; Remove finds it by that
+    var b = {
+      uri: it.uri, id: it.id, kind: it.type, name: it.name || 'Untitled',
+      by: ep ? ((it.show && it.show.name) || 'Podcast') : names(it.artists),
+      img: img(ep ? (it.images || (it.show && it.show.images)) : (it.album && it.album.images)),
+      url: spotifyUrl(it), pos: bmPos(it), at: at
+    };
+    a.unshift(b);
+    writeBookmarks(a);
+    toast('Bookmarked “' + b.name + '” at ' + fmtTime(b.pos));
+    bmChanged();
+  }
+  // The spot to save: where the progress bar is, but at least 5 s before the end (a spot at the very end would just
+  // start the next song), or 0:00 for anything shorter.
+  function bmPos(it) {
+    var pos = Math.round(curPos()), dur = it.duration_ms || 0;
+    return dur ? Math.min(pos, Math.max(0, dur - 5000)) : pos;
+  }
+  // Removals since the Undo toast appeared: one Undo brings them all back.
+  var bmRemoved = [], bmToastMsg = null;
+  function removeBookmark(b) {
+    writeBookmarks(readBookmarks().filter(function (x) { return !(x.at === b.at && x.uri === b.uri); }));
+    var t = $('toast');
+    if (t.hidden || !bmToastMsg || t.firstChild !== bmToastMsg) bmRemoved = [];   // a new toast: a new Undo list
+    bmRemoved.push(b);
+    var gone = bmRemoved.slice();
+    toast(gone.length > 1 ? gone.length + ' bookmarks removed' : 'Bookmark removed', null, { text: 'Undo', fn: function () {
+      bmRemoved = []; bmToastMsg = null;
+      var a = readBookmarks();
+      gone.forEach(function (g) { if (!a.some(function (x) { return x.at === g.at && x.uri === g.uri; })) a.push(g); });
+      writeBookmarks(a);
+      bmChanged();
+      // Focus the × of the newest bookmark brought back (Show all if it's past the first few).
+      var top = gone.slice().sort(function (x, y) { return y.at - x.at; })[0];
+      function find() { return document.querySelector('[data-bmat="' + top.at + '"]'); }
+      if (!find() && !bmAll && $('bmMore')) { bmAll = true; bmChanged(); }
+      var nb = find() || document.querySelector('.filters .chip[aria-pressed="true"]');
+      if (nb) nb.focus({ preventScroll: true });
+    } });
+    bmToastMsg = t.firstChild;
+  }
+  // A bookmark as a row item: kind 'track' or 'episode' plays just that item (uris) from positionMs.
+  function bmItem(b) {
+    return {
+      kind: b.kind === 'episode' ? 'episode' : 'track', id: b.id, name: b.name, uri: b.uri,
+      url: b.url || ('https://open.spotify.com/' + b.uri.split(':')[1] + '/' + b.uri.split(':')[2]), img: b.img || '',
+      positionMs: b.pos, exactPos: true, bm: b, sub: (b.by ? b.by + ' · ' : '') + 'at ' + fmtTime(b.pos)
+    };
+  }
+  // Redraw only Home's Bookmarks section (if Home is on screen), so nothing else on Home reloads.
+  function bmChanged() {
+    var box = $('bmSect'), main = $('main');
+    if (!state.started || state.detail || state.filter !== 'home' || !box) return;
+    var n = paintBookmarks(box, state.query.trim());
+    var lone = !n && main.children.length === 1;
+    if (lone || main.querySelector(':scope > p.empty')) {   // Home's "nothing here" line needs a full redraw
+      var y = window.pageYOffset || document.documentElement.scrollTop || 0;
+      renderList();
+      window.scrollTo(0, y);
+    }
+  }
+  // Home: the newest 5 (all of them with Show all, or while the name box filters). Returns how many match.
+  function renderBookmarks(main, q) {
+    var box = el('div', { id: 'bmSect' });
+    main.appendChild(box);
+    return paintBookmarks(box, q);
+  }
+  function paintBookmarks(main, q) {
+    main.textContent = '';
+    var all = matches(readBookmarks().map(bmItem));
+    if (!all.length) return 0;
+    var rows = (q || bmAll) ? all : all.slice(0, HOME_BM);
+    main.appendChild(sectHead('hBm', 'Bookmarks', null));
+    var ul = el('ul', { class: 'list', 'aria-labelledby': 'hBm' });
+    var cur = playingUri();
+    rows.forEach(function (i, n) {
+      var a = el('a', { class: 'item', href: i.url, 'data-verb': 'Play “' + i.name + '”', 'data-sub': i.sub }, [   // the sub line says where
+        coverFor(i),
+        el('div', { class: 'meta' }, [el('div', { class: 'name', text: i.name }), el('div', { class: 'sub', text: i.sub })])
+      ]);
+      paintRowLabel(a, false);
+      a.addEventListener('click', function (ev) { onItemClick(i, ev); });
+      var rm = iconBtn(ICON.cross, 'Remove bookmark “' + i.name + '” at ' + fmtTime(i.positionMs), function () {
+        removeBookmark(i.bm);
+        bmChanged();
+        var nb = document.querySelector('[data-bmrm="' + n + '"]') || document.querySelector('[data-bmrm="' + (n - 1) + '"]') ||
+          document.querySelector('.filters .chip[aria-pressed="true"]');
+        if (nb) nb.focus({ preventScroll: true });
+      });
+      rm.setAttribute('data-bmrm', String(n));
+      rm.setAttribute('data-bmat', String(i.bm.at));
+      var li = el('li', { class: 'row', 'data-puri': i.uri }, [a, el('div', { class: 'acts' }, [rm])]);
+      if (cur && cur === i.uri) markPlaying(li, true);
+      ul.appendChild(li);
+    });
+    main.appendChild(ul);
+    if (!q && all.length > HOME_BM) {
+      var more = el('button', { class: 'linkbtn seeall', type: 'button', id: 'bmMore', 'aria-expanded': String(bmAll), text: bmAll ? 'Show fewer' : 'Show all ' + all.length });
+      more.addEventListener('click', function () {
+        bmAll = !bmAll;
+        bmChanged();
+        var nb = $('bmMore');
+        if (nb) nb.focus({ preventScroll: true });
+      });
+      main.appendChild(more);
+    }
+    return all.length;
+  }
   function podSeg() {
     var g = el('div', { class: 'seg', role: 'group', 'aria-label': 'Podcasts view' });
     [['latest', 'Latest'], ['shows', 'Shows']].forEach(function (t) {
@@ -3549,7 +3694,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.31 (2026-11-27)';
+  var VERSION = 'v2.32 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -4504,6 +4649,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     h.setAttribute('data-kind', ep ? 'episode' : 'track');
     h.hidden = !it.uri;
     paintHeart(h);
+    $('npBm').hidden = !bmOk(it);   // v2.32: songs and episodes with a Spotify link (not ads or local files)
     var pb = $('npPlay');
     var lab = p.is_playing ? 'Pause' : 'Play';
     if (pb.getAttribute('aria-label') !== lab || !pb.firstChild) { pb.setAttribute('aria-label', lab); pb.innerHTML = p.is_playing ? ICON.pause : ICON.play; }
@@ -5149,6 +5295,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var cl = matches(continueItems());
     renderContinue(main);
     shown += cl.length;
+    shown += renderBookmarks(main, q);   // v2.32
     // Jump back in: your last few distinct albums from Recently played, and (v2.11) one card per podcast
     // from the page's own history, newest first.
     setTimeout(maybeLoadHomeRecent, 0);   // after this render; at most once per 15 minutes
@@ -7690,6 +7837,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   $('npFwd30').innerHTML = ICON.fwd30;
   $('npVolIcon').innerHTML = ICON.volume;
   $('npBack15').addEventListener('click', function () { seekBy(-15000); });
+  $('npBm').innerHTML = ICON.bmAdd;   // v2.32
+  $('npBm').addEventListener('click', addBookmark);
   $('npFwd30').addEventListener('click', function () { seekBy(30000); });
   // Back (button or swipe) closes one view per history entry: an album opened from an artist, then the artist,
   // then the list. Entries are {detail, depth}; older ones without depth count as 1.
