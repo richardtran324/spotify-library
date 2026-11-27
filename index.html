@@ -3132,7 +3132,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
             del(K.pending);
             toast('Spotify still isn’t showing up. Start something in Spotify, then tap again.');
           } else {
-            p.manual = true; set(K.pending, p);
+            var cur = readPending();   // v2.42: update only the flag on the stored tap, so a drag during the wait is kept
+            if (cur && cur.at === p.at) { cur.manual = true; set(K.pending, cur); }
             toast('Spotify didn’t show up yet.', null, { text: 'Try again', fn: function () { resumePending(true); } });
           }
           return;
@@ -3191,7 +3192,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
             del(K.pending);
             toast('Spotify still didn’t wake up. Start something in Spotify, then tap again.');
           } else {
-            p.manual = true; set(K.pending, p);
+            var cur = readPending();   // v2.42: update only the flag on the stored tap, so a drag during the wait is kept
+            if (cur && cur.at === p.at) { cur.manual = true; set(K.pending, cur); }
             showWaitTimeout();
           }
           return;
