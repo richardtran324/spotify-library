@@ -74,7 +74,9 @@ function click(tab, node) { node.dispatchEvent(new tab.w.MouseEvent('click', { b
 function clUris(tab) { return qa(tab, 'ul.cl li[data-puri]').map(function (li) { return li.getAttribute('data-puri'); }); }
 function listRow(tab, id) { return q(tab, 'ul.list li[data-puri="spotify:episode:' + id + '"]'); }
 function rowSub(tab, id) { var r = listRow(tab, id); return r ? r.querySelector('.sub').textContent : null; }
-function notesBtn(tab, id) { return q(tab, 'ul.list li[data-puri="spotify:episode:' + id + '"] button[aria-label^="Notes for"]'); }
+// v2.45: Episode notes moved from its own row button into the row's ⋯ menu: open the menu, return its Notes row.
+function menuNotes(tab, more) { if (!more) return null; click(tab, more); return q(tab, '#rmList [data-act="notes"]'); }
+function notesBtn(tab, id) { return menuNotes(tab, q(tab, 'ul.list li[data-puri="spotify:episode:' + id + '"] button.more')); }
 function markBtn(tab) { return q(tab, '#notesMark'); }
 function marks(store) { try { return JSON.parse(store.getItem('lib-ep-marks') || 'null'); } catch (e) { return 'bad'; } }
 function playNewest(tab) { return qa(tab, '.lbar a.btn')[0]; }
@@ -361,7 +363,7 @@ tests.push(function () {
       var gets = tab.calls.filter(function (c) { return c.path === '/shows/s2/episodes'; });
       check('13 podcast list asked once on open', gets.length === 1, tab.calls);
       tab.calls.length = 0;
-      var nb = q(tab, '#dlist li[data-puri="spotify:episode:d1"] button[aria-label^="Notes for"]');
+      var nb = menuNotes(tab, q(tab, '#dlist li[data-puri="spotify:episode:d1"] button.more'));
       click(tab, nb);
       click(tab, markBtn(tab));
       return H.wait(50);

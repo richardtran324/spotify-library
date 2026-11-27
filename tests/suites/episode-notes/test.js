@@ -54,6 +54,9 @@ function stamps(tab) { return [].slice.call(d(tab).querySelectorAll('#notesBody 
 function bodyText(tab) { return d(tab).getElementById('notesBody').textContent; }
 function reqs(tab, method, path) { return tab.calls.filter(function (c) { return c.method === method && (path instanceof RegExp ? path.test(c.path) : c.path === path); }); }
 function click(tab, node) { node.dispatchEvent(new tab.w.MouseEvent('click', { bubbles: true, cancelable: true })); }
+// v2.45: Episode notes moved from its own row button into the row's ⋯ menu: open the menu, return its Notes row.
+function moreBtn(tab, id) { return d(tab).querySelector('li[data-puri="spotify:episode:' + id + '"] button.more'); }
+function menuNotes(tab, id) { var m = moreBtn(tab, id); if (!m) return null; click(tab, m); return d(tab).querySelector('#rmList [data-act="notes"]'); }
 
 var tests = [];
 
@@ -116,10 +119,11 @@ tests.push(function () {
       check('3 not parsed until asked', !!t.epNotesRaw.e1 && !Object.prototype.hasOwnProperty.call(t.epNotes, 'e1'));
       check('3 notes kept in memory', t.notesFor('e1') && /Forecasting/.test(t.notesFor('e1').t));
       check('3 nothing written to the notes cache yet', store.getItem('lib-ep-notes') === null, store.getItem('lib-ep-notes'));
-      var btn = d(tab).querySelector('li[data-puri="spotify:episode:e1"] button[aria-label^="Notes for"]');
-      check('3 row has a Notes button', !!btn);
       tab.calls.length = 0;
-      click(tab, btn);
+      var btn = moreBtn(tab, 'e1');
+      var nb = menuNotes(tab, 'e1');
+      check('3 row menu has Episode notes', !!nb);
+      click(tab, nb);
       check('3 sheet open', sheetOpen(tab));
       check('3 title and meta', d(tab).getElementById('notesTitle').textContent === 'Episode e1' && /Money Show · .* · 1 hr 5 min/.test(d(tab).getElementById('notesMeta').textContent), d(tab).getElementById('notesMeta').textContent);
       check('3 three timestamp buttons', stamps(tab).map(function (b) { return b.textContent; }).join(',') === '00:00,12:34,1:02:03', stamps(tab).map(function (b) { return b.textContent; }));
@@ -130,9 +134,8 @@ tests.push(function () {
       check('3 focus on Close', d(tab).activeElement && d(tab).activeElement.id === 'notesClose');
       d(tab).dispatchEvent(new tab.w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       check('3 Escape closes', !sheetOpen(tab));
-      check('3 focus back on the row button', d(tab).activeElement === btn);
-      var btn2 = d(tab).querySelector('li[data-puri="spotify:episode:e2"] button[aria-label^="Notes for"]');
-      click(tab, btn2);
+      check('3 focus back on the row\'s ⋯ button', d(tab).activeElement === btn);
+      click(tab, menuNotes(tab, 'e2'));
       check('3 empty notes say so', /This episode has no notes\./.test(bodyText(tab)) && !d(tab).querySelector('#notesBody .btn'), bodyText(tab));
       click(tab, d(tab).getElementById('notesBack'));
       check('3 backdrop closes', !sheetOpen(tab));
@@ -312,20 +315,19 @@ tests.push(function () {
     t.openDetail({ kind: 'episodes', name: 'Saved episodes', uri: null, url: 'https://open.spotify.com/collection/your-episodes' });
     return H.wait(500).then(function () {
       check('11 Saved episodes notes in memory', t.notesFor('e11') && t.notesFor('e11').t === '(01:00) Saved one', t.notesFor('e11'));
-      var btn = d(tab).querySelector('li[data-puri="spotify:episode:e11"] button[aria-label^="Notes for"]');
-      check('11 Saved episodes rows have Notes', !!btn);
+      check('11 Saved episodes rows have Notes (in the ⋯ menu)', !!menuNotes(tab, 'e11'));
     });
   });
 });
 
-// 12. Songs get no Notes button; the row's heart and + are still there for episodes.
+// 12. Songs get no Notes; episode rows keep three buttons: heart, +, and ⋯ (which holds Notes since v2.45).
 tests.push(function () {
   return setup(H.seedStore()).then(function (tab) {
     var t = tab.t();
     var song = t.itemRow({ kind: 'track', id: 't1', uri: 'spotify:track:t1', name: 'Song', url: 'https://open.spotify.com/track/t1', sub: 'x' });
     var ep = t.itemRow({ kind: 'episode', id: 'e1', uri: 'spotify:episode:e1', name: 'Ep', url: 'https://open.spotify.com/episode/e1', sub: 'x' });
     check('12 no Notes on songs', !song.querySelector('button[aria-label^="Notes for"]'));
-    check('12 episode row: heart, +, Notes', ep.querySelectorAll('.acts button').length === 3 && !!ep.querySelector('button[aria-label^="Notes for"]'), ep.querySelectorAll('.acts button').length);
+    check('12 episode row: heart, +, ⋯', ep.querySelectorAll('.acts button').length === 3 && !!ep.querySelector('button.more') && !ep.querySelector('button[aria-label^="Notes for"]'), ep.querySelectorAll('.acts button').length);
   });
 });
 
