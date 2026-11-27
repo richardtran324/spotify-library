@@ -436,6 +436,7 @@ body.sheetopen { overflow: hidden; }   /* audit: the page stays still behind an 
 /* Up next (queue) sheet */
 .qitem { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; padding: 8px 2px; }
 .qnote { font-size: 0.85rem; color: var(--muted); margin: 0; }
+.qsum { font-size: 0.85rem; color: var(--muted); margin: 6px 0 0; font-variant-numeric: tabular-nums; }   /* v2.41 */
 /* Podcasts: Continue listening (a short horizontal strip) */
 .cl { display: flex; gap: 12px; overflow-x: auto; margin: 6px -16px 0; padding: 4px 16px 6px; scroll-padding: 0 16px; list-style: none; scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; }
 .cl li { flex: none; width: 112px; scroll-snap-align: start; }
@@ -584,7 +585,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       <button class="act heart" id="npHeart" type="button" data-uri="" data-name="" data-kind="track" aria-pressed="false" aria-label="Like this song"></button>
     </div>
     <div class="slider" id="npSeek" role="slider" tabindex="0" aria-label="Position" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"><div class="strack"><div class="sfill"></div><div class="sthumb"></div></div></div>
-    <div class="times" aria-hidden="true"><span id="npElapsed">0:00</span><span id="npRemain">-0:00</span></div>
+    <div class="times" aria-hidden="true"><span id="npElapsed">0:00</span><span><span class="npends" id="npEnds" hidden></span><span id="npRemain">-0:00</span></span></div>
     <div class="npf-ctl">
       <button class="act" id="npShuffle" type="button" aria-label="Shuffle" aria-pressed="false"></button>
       <button class="act" id="npPrev" type="button" aria-label="Previous"></button>
@@ -2729,6 +2730,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       g.appendChild(b);
     });
     return g;
+  }
+
   // ---------- Skip intro per podcast (v2.33) ----------
   // A setting on a podcast's page: an episode of that show that the page starts from the very beginning (a row,
   // the podcast's Play, Play newest, a Home card) starts at N seconds instead. The start is position_ms in the
@@ -4081,7 +4084,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.39 (2026-11-27)';
+  var VERSION = 'v2.41 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -4144,6 +4147,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var lc = state.latest.cache;
     line('Appearance: ' + themeMode() + ' · Search shows first: ' + searchFirst());
     line('Pinned: ' + readPins().length + ' · Queued with ＋ (24 h): ' + readQueued().length + ' · Recent searches: ' + recentSearches().length);
+    line('Up next “Next from”: uses song lists already loaded, no requests · Liked Songs known this visit: ' + upnLikedN);   // v2.41
     line('Playlist copies linked: ' + Object.keys(readCopies()).length + (readCopyWatch() ? ' · watching for a new copy' : ''));   // v2.24
     line('Latest episodes: ' + (lc ? lc.items.length + ' cached, updated ' + ago(new Date(lc.at).toISOString()) + (lc.failed ? ', ' + lc.failed + ' show(s) failed' : '') : 'not loaded') +
       ' · Latest: refreshes only when you open it (up to ' + LATEST_SHOWS + ' shows, cache ' + Math.round(LATEST_MS / 3600000) + ' h)');
@@ -5108,6 +5112,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var dur = npDuration();
     $('npElapsed').textContent = fmtTime(pos);
     $('npRemain').textContent = '-' + fmtTime(Math.max(0, dur - pos));
+    // v2.41: "Ends 9:41 PM" (local clock) beside the time left, only while it's playing.
+    var p = state.player, e = $('npEnds'), on = !!(p && p.item && p.is_playing && !state.playerIdle && dur);
+    e.hidden = !on;
+    e.textContent = on ? 'Ends ' + clock(Date.now() + Math.max(0, dur - pos)) + ' · ' : '';
   }
   function paintProgress() {
     var p = state.player;
@@ -5210,6 +5218,118 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (a[i].uri === uri) { a.splice(i, 1); set(K.queued, a); return; }
     }
   }
+  // v2.41: with the hide switch on, the songs that follow in the album, playlist or Liked Songs being played show
+  // as "Next from · <name>", chosen by membership in song lists the page already has: saved album copies
+  // (lib-cache-album), album and playlist pages kept for this visit (catMemo), Liked Songs pages loaded this visit
+  // (upnLiked, memory only), Search all's answers (findMemo), lists open now, and saved podcast copies; also album
+  // songs that came with the library answer (albumSeed, v2.38) and saved playlist copies (K.plSaved, v2.37). After the
+  // songs you added with ＋, queue items are taken in order while each is in that list; the first one that isn't
+  // ends the section (Spotify's picks start there, or the page doesn't know the list). Works with shuffle, since it
+  // tests membership, not order. Spotify's own picks stay hidden. Nothing here sends a request.
+  var UPN_LIKED_MAX = 10000;          // v2.41: cap on Liked Songs remembered for this visit
+  var QUEUE_FULL = 20;                // v2.41: the queue answer seems to hold about 20 items (UNVERIFIED): a list that long may go on
+  var upnLiked = {}, upnLikedN = 0;   // v2.41: Liked Songs URIs loaded this visit (memory only, never stored)
+  function upnNoteLiked(items) {
+    (items || []).forEach(function (m) {
+      if (m && m.uri && !upnLiked[m.uri] && upnLikedN < UPN_LIKED_MAX) { upnLiked[m.uri] = true; upnLikedN++; }
+    });
+  }
+  function upnViews() {
+    var a = state.detailStack.slice();
+    if (state.detail) a.push(state.detail);
+    return a.filter(function (d) { return d && d.kind !== 'artist' && d.item && Array.isArray(d.items); });
+  }
+  // Spotify answers kept for this visit whose path is `path`: each answer's items and total.
+  function upnMemo(path, each) {
+    var total = null;
+    Object.keys(catMemo).forEach(function (k) {
+      var r = catMemo[k];
+      if (k.replace(API, '').split('?')[0] !== path || !r || !r.json || !Array.isArray(r.json.items)) return;
+      r.json.items.forEach(each);
+      if (typeof r.json.total === 'number') total = r.json.total;
+    });
+    return total;
+  }
+  function upnFind(list, id) {
+    for (var i = 0; i < (list || []).length; i++) { if (list[i] && list[i].id === id) return list[i]; }
+    return null;
+  }
+  // What the page knows of the playing list: {set (uri -> true), n, complete, name}, or null when it knows nothing.
+  // cur: the queue answer's current item (its album or show names the list when nothing else does).
+  function upnKnown(ctx, cur) {
+    if (!ctx || !ctx.uri) return null;
+    var set = {}, n = 0, total = null, name = '', m, id;
+    function add(uri) { if (uri && !set[uri]) { set[uri] = true; n++; } }
+    function addItem(i) { add(i && i.uri); }
+    function num(v) { if (typeof v === 'number') total = v; }
+    var key = ctxKey(ctx), views = upnViews(), data = state.data || {};
+    if (key === 'liked') {
+      name = 'Liked Songs';
+      Object.keys(upnLiked).forEach(add);
+      var me = data.me, ls = likedSeen;   // v2.41: Liked Songs rows mapped this visit for the artist page (v2.31); read only
+      if (ls.me === ((me && me.id) || '')) Object.keys(ls.by).forEach(add);
+      if (findMemo['liked:']) findMemo['liked:'].items.forEach(addItem);
+      views.forEach(function (d) { if (d.item.kind === 'liked') d.items.forEach(addItem); });
+      num(data.likedTotal);
+    } else if (key && (m = /^spotify:album:([A-Za-z0-9]+)$/.exec(key))) {
+      id = m[1];
+      var c = slGet(SL_ALBUM, id);
+      if (c) { c.items.forEach(addItem); num(c.total); }
+      var sd = albumSeed[id];   // v2.41: songs that came with this visit's library answer (v2.38)
+      if (sd) { sd.items.forEach(addItem); num(sd.total); }
+      num(upnMemo('/albums/' + id + '/tracks', addItem));
+      views.forEach(function (d) { if (d.item.kind === 'album' && d.item.id === id) { d.items.forEach(addItem); (d.raw || []).forEach(addItem); num(d.total); if (!name) name = d.item.name || ''; } });
+      var la = upnFind(data.albums, id);
+      name = name || (la && la.name) || (cur && cur.album && cur.album.id === id && cur.album.name) || 'this album';
+    } else if (key && (m = /^spotify:playlist:([A-Za-z0-9]+)$/.exec(key))) {
+      id = m[1];
+      var pc = plRead()[id];   // v2.41: the copy saved on the phone (v2.37); this visit's pages follow and win on total
+      if (pc) { pc.n.forEach(function (o) { add(rawUri(plUnpack(o))); }); num(pc.t); }
+      num(upnMemo(plItemsPath(id), function (x) { add(rawUri(x)); }));
+      if (findMemo['playlist:' + id]) findMemo['playlist:' + id].items.forEach(addItem);
+      views.forEach(function (d) { if (d.item.kind === 'playlist' && d.item.id === id) { d.items.forEach(addItem); num(d.total); if (!name) name = d.item.name || ''; } });
+      var lp = libraryPlaylist(id);
+      name = name || (lp && lp.name) || 'this playlist';
+    } else if ((m = /^spotify:show:([A-Za-z0-9]+)$/.exec(ctx.uri))) {
+      id = m[1];
+      var sc = slGet(SL_SHOW, id);
+      if (sc) { sc.items.forEach(addItem); num(sc.total); }
+      views.forEach(function (d) { if (d.item.kind === 'show' && d.item.id === id) { d.items.forEach(addItem); num(d.total); if (!name) name = d.item.name || ''; } });
+      var ls = upnFind(data.shows, id);
+      name = name || (ls && ls.name) || (cur && cur.show && cur.show.id === id && cur.show.name) || 'this podcast';
+    } else return null;
+    if (!n) return null;
+    return { set: set, n: n, complete: total != null && n >= total, name: name };
+  }
+  // The playing list: from the latest playback answer, but only when it is about the same item as the queue answer
+  // (the playback check can be up to 20 s older); the last one kept is used only while Spotify is asleep.
+  function upnCtx(cur) {
+    var p = state.player;
+    if (state.playerIdle || !p || !p.item) {
+      if (p && p.item && p.context) return p.context;
+      var lp = readLastPlay();
+      return (lp && lp.context) || null;
+    }
+    return cur && cur.uri && cur.uri === p.item.uri ? (p.context || null) : null;
+  }
+  // "6 songs · 23 min · ends about 9:42 PM": the rows shown; the end time adds what's left of the current item and
+  // every queue item up to the last shown one (ahead), hidden ones included, since they play first.
+  // cut: the shown rows reach the end of a full-length queue answer, so there may be more ("at least", "ends after").
+  function upnSummary(shown, cut, cur, ahead) {
+    var n = shown.length;
+    if (!n) return '';
+    var ms = shown.reduce(function (s, t) { return s + (t.duration_ms || 0); }, 0);
+    var eps = shown.filter(function (t) { return t.type === 'episode'; }).length;
+    var noun = !eps ? (n === 1 ? 'song' : 'songs') : eps === n ? (n === 1 ? 'episode' : 'episodes') : (n === 1 ? 'item' : 'items');
+    var txt = n + (cut ? '+ ' : ' ') + noun + (ms > 0 ? ' · ' + (cut ? 'at least ' : '') + fmtDur(ms) : '');
+    var p = state.player, live = p && p.item && !state.playerIdle;
+    if (live && p.is_playing && cur && cur.uri === p.item.uri && ms > 0) {
+      var rest = Math.max(0, (p.item.duration_ms || 0) - curPos());
+      var upto = (ahead || shown).reduce(function (s, t) { return s + (t.duration_ms || 0); }, 0);
+      txt += ' · ends ' + (cut ? 'after ' : 'about ') + clock(Date.now() + rest + upto);
+    } else if (!live || !p.is_playing) txt += ' · paused';
+    return txt;
+  }
   // from: the button that opened it (iPhone Safari doesn't focus a tapped button, so activeElement can't say).
   function openQueue(from) {
     queueReturn = (from && from.nodeType === 1) ? from : document.activeElement;
@@ -5281,16 +5401,38 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         body.appendChild(el('ul', { class: 'list compact' }, [row]));
       }
     }
-    var list = q.data.queue.filter(Boolean);
+    var all = q.data.queue.filter(Boolean), list = all, from = [], info = null, lastIdx = all.length - 1;
     if (hide) {
-      var left = {};
+      var left = {}, rest = [];
       readQueued().forEach(function (x) { left[x.uri] = (left[x.uri] || 0) + 1; });
-      list = list.filter(function (t) { if (t.uri && left[t.uri] > 0) { left[t.uri]--; return true; } return false; });
+      list = [];
+      lastIdx = -1;
+      all.forEach(function (t, i) { if (t.uri && left[t.uri] > 0) { left[t.uri]--; list.push(t); lastIdx = i; } else rest.push({ t: t, i: i }); });
+      info = upnKnown(upnCtx(q.data.current), q.data.current);   // v2.41
+      if (info) {
+        for (var j = 0; j < rest.length; j++) {
+          if (!rest[j].t.uri || !info.set[rest[j].t.uri]) break;
+          from.push(rest[j].t);
+          lastIdx = Math.max(lastIdx, rest[j].i);
+        }
+      }
     }
-    body.appendChild(el('h3', { class: 'sheet-sub', text: hide ? 'Added by you' : 'Next in queue' }));
+    var shown = list.concat(from);
+    var cut = all.length >= QUEUE_FULL && shown.length > 0 && lastIdx === all.length - 1;
+    var sum = upnSummary(shown, cut, q.data.current, all.slice(0, lastIdx + 1));   // v2.41
+    if (sum) body.appendChild(el('p', { class: 'qsum', text: sum }));
     var rows = list.map(queueRow).filter(Boolean);
-    if (rows.length) body.appendChild(el('ul', { class: 'list compact' }, rows));
-    else body.appendChild(el('p', { class: 'empty', text: hide ? 'Nothing you added with ＋ is waiting.' : 'The queue is empty.' }));
+    var fromRows = from.map(queueRow).filter(Boolean);
+    if (rows.length || !fromRows.length) {
+      body.appendChild(el('h3', { class: 'sheet-sub', text: hide ? 'Added by you' : 'Next in queue' }));
+      if (rows.length) body.appendChild(el('ul', { class: 'list compact' }, rows));
+      else body.appendChild(el('p', { class: 'empty', text: hide ? 'Nothing you added with ＋ is waiting.' : 'The queue is empty.' }));
+    }
+    if (fromRows.length) {   // v2.41
+      body.appendChild(el('h3', { class: 'sheet-sub', id: 'qFrom', text: 'Next from · ' + info.name }));
+      body.appendChild(el('ul', { class: 'list compact', 'aria-labelledby': 'qFrom' }, fromRows));
+      if (!info.complete) body.appendChild(el('p', { class: 'qnote', text: 'Showing the songs this page knows from this list.' }));
+    }
     body.appendChild(el('p', { class: 'qnote', text: hide
       ? 'Spotify may add its own picks after these; they’re hidden.'
       : 'Later songs may be Spotify’s own picks; Spotify doesn’t mark which.' }));
@@ -6712,6 +6854,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       var off = pageOffset(url, r.json);   // v2.26: each song's place in the playlist, for Edit
       var mapped = dropShown(d, (r.json.items || []).map(function (it, j) { var m = mapDetail(d.item, it); if (m && kind === 'playlist') m.pos = off + j; return m; }).filter(Boolean));
       d.items = d.items.concat(mapped);
+      if (kind === 'liked') upnNoteLiked(mapped);   // v2.41: Up next "Next from · Liked Songs" knows these
       if (isPod(d.item)) rememberEpisodes(mapped);   // for Continue listening
       if (kind === 'playlist') { if (plLabel && catMemo[url]) catMemo[url].plLabel = plLabel; plSave(d.item.id); }   // v2.37
       if (!cur) return;
