@@ -270,7 +270,7 @@ tests.push(function () {
   return setup(store).then(function (tab) {
     var labels = qa(tab, '.sortbar[data-view="playlists"] button.chip').map(function (b) { return b.textContent; });
     group('5 playlist sort options, Default pressed');
-    check('5 playlist sort options', JSON.stringify(labels) === JSON.stringify(['Default', 'A–Z', 'Most songs']), labels);
+    check('5 playlist sort options', JSON.stringify(labels) === JSON.stringify(['Default', 'Recents', 'A–Z', 'Most songs', 'By you']), labels);   // v2.58: Recents, and the By you filter after the sorts
     check('5 Default is pressed at first', chip(tab, 'playlists', 'Default').getAttribute('aria-pressed') === 'true');
     click(tab, chip(tab, 'playlists', 'A–Z'));
     group('5 A–Z ignores The, orders numbers, is stored and pressed');
