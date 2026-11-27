@@ -458,6 +458,15 @@ li.playing .clname { color: var(--accent); }
 }
 .sethint { font-size: 0.85rem; color: var(--muted); margin: 0; }
 .slgroup { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 4px; }   /* v2.15 */
+/* v2.39: Diagnostics → Shortcut links */
+.sclgroup { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.scllist { list-style: none; margin: 0; padding: 0; }
+.sclrow { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); }
+.scltext { flex: 1; min-width: 0; }
+.sclurl { display: block; font-size: 0.75rem; color: var(--muted); overflow-wrap: anywhere; }
+.sclcopy { flex: none; min-height: 44px; min-width: 44px; padding: 8px 12px; font-size: 0.9rem; }
+.sclsteps { margin: 0; padding-left: 20px; font-size: 0.85rem; color: var(--muted); }
+.sclsteps li { margin: 2px 0; }
 select.field { appearance: auto; -webkit-appearance: menulist; }
 .dsum { font-size: 0.85rem; color: var(--muted); margin-top: 4px; }
 /* Spotify asleep (v2.10): the last song stays on screen as paused, with a muted line in the bar and on the Now Playing screen */
@@ -689,6 +698,18 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       <p class="sethint">Opening a saved album or podcast sends nothing to Spotify, and neither does a saved playlist that hasn’t changed. Refresh (top right) keeps them.</p>
       <button class="btn secondary" id="slClear" type="button">Clear saved lists</button>
     </div>
+    <div class="setgroup sclgroup" id="sclGroup"><span class="setname">Shortcut links</span>
+      <p class="sethint">A link plays one of your things when an iPhone shortcut opens it. Only your library, pins and the names below play on their own; other links ask first.</p>
+      <label class="setrow"><input type="checkbox" id="sclShuffle"><span><span class="setname">Shuffle</span><span class="setnote">Adds shuffle to playlist, album, artist and Liked Songs links.</span></span></label>
+      <ul class="scllist" id="sclList"></ul>
+      <ol class="sclsteps">
+        <li>Tap Copy link next to what you want.</li>
+        <li>In the Shortcuts app, tap +, add the action Open URLs and paste the link. Name the shortcut; that’s what you say to Siri. (A Spotify Share link also works after play=, as it is.)</li>
+        <li>Home Screen: in Shortcuts, tap ⋯ on the shortcut, tap ⓘ (Details), then Add to Home Screen.</li>
+        <li>Back Tap: Settings → Accessibility → Touch → Back Tap, pick Double Tap or Triple Tap, then the shortcut.</li>
+        <li>The link opens in Safari, where you’re signed in. If Spotify is asleep, the page waits as set above (When Spotify isn’t running).</li>
+      </ol>
+    </div>
     <h3 class="sheet-sub">Report</h3>
     <pre class="diagpre" id="diagOut">Checking…</pre>
     <div class="sheet-btns">
@@ -765,7 +786,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     cool: 'lib-cooloff',         // v2.14: {group: {until, reason, strikes, quotaAt, retryAfter, last429:{at, reason, retryAfter, what}}}
     poller: 'lib-poller',        // {id, at, every}: the one visible copy that runs the player check
     playerCache: 'lib-player-cache', // {at, by, json}: the last /me/player answer, for the other copies
-    meter: 'lib-reqmeter'        // {minute index: requests}, last 60 minutes, all copies
+    meter: 'lib-reqmeter',       // {minute index: requests}, last 60 minutes, all copies
+    linkShuffle: 'lib-link-shuffle' // v2.39: true adds &shuffle=1 to copied shortcut links (Diagnostics)
   };
   // v2.13 rate limits. Spotify counts an app's requests in a rolling 30-second window (and Development Mode apps
   // have a separate, unpublished quota); either one answers 429. v2.14: the quota is counted per kind of request
@@ -947,26 +969,38 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     clearTimeout(toastTimer); toastTimer = null;
     t.hidden = true;
     if (a) toastGiveBack(a);
+    var n = toastHold && toastHold.next;   // v2.39: the newest toast that waited behind a held one shows now
+    toastHold = null;
+    if (n) toast(n[0], n[1], n[2]);
   }
   function toastTimeout() {
     clearTimeout(toastTimer); toastTimer = null;
     if (!toastFocused()) toastTimer = setTimeout(hideToast, toastMs);
   }
+  // v2.39: a toast whose action has `hold` (ms) stays up that long: other toasts meanwhile wait and the newest
+  // shows when it times out (pressing its button drops them; the button's own action says what happened).
+  var toastHold = null;   // {until, next: [msg, link, action] | null}
   function toast(msg, link, action) {
-    var t = $('toast'), inside = toastFocused();
+    var t = $('toast');
+    if (toastHold && !(action && action.hold)) {
+      if (Date.now() < toastHold.until && !t.hidden) { toastHold.next = [msg, link, action]; return; }
+      toastHold = null;
+    }
+    var inside = toastFocused();
     if (!inside) toastReturn = document.activeElement;
     t.textContent = '';
     t.appendChild(el('span', { text: msg }));
     if (link) t.appendChild(el('a', { href: link.href, text: link.text }));
     if (action) {
       var b = el('button', { class: 'toastbtn', type: 'button', text: action.text });
-      b.addEventListener('click', function () { hideToast(); action.fn(); });
+      b.addEventListener('click', function () { if (action.hold) toastHold = null; hideToast(); action.fn(); });
       t.appendChild(b);
     }
     t.hidden = false;
     // A new toast over one you were on: stay in it (its link or button), else back to where you were.
     if (inside && !toastFocused()) { var nb = t.querySelector('a, button'); if (nb) nb.focus(); else toastGiveBack(null); }
-    toastMs = (link || action) ? 8000 : 3000;
+    toastMs = action && action.hold ? action.hold : (link || action) ? 8000 : 3000;
+    if (action && action.hold) toastHold = { until: Date.now() + action.hold, next: null };   // v2.39
     toastTimeout();
     announce(msg + (link ? ' ' + link.text : '') + (action ? ' ' + action.text : ''));   // as the old region read it
   }
@@ -3633,7 +3667,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (coolBlocked('player')) return;   // v2.13: nothing is sent while playback is paused by Spotify
     var mine = ++tapSeq;
     if (deviceFresh()) { playNow(item, opts); return; }
-    if (noDeviceKnown()) { wakeSpotify(item, opts); return; }
+    if (noDeviceKnown()) {
+      // v2.39: a shortcut link has no tap of its own, so opening Spotify waits for the button's tap.
+      if (ev.noTap && wakeMode() !== 'wait') { offerWake(item, opts); return; }
+      wakeSpotify(item, opts); return;
+    }
     checkDevice().then(function () {
       if (mine !== tapSeq) return;   // audit: a newer tap came during the check; it plays instead
       if (!state.started) return;
@@ -3646,10 +3684,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       // Waiting needs no tap of its own (nothing opens), so start right away.
       if (wakeMode() === 'wait') { waitForPlay(item, opts); return; }
       // The network wait used up the tap, so the button gives a fresh one to wake Spotify from.
-      toast('Spotify isn’t open on any device.', null, {
-        text: wakeMode() === 'shortcut' ? 'Wake Spotify' : 'Open in Spotify',
-        fn: function () { wakeSpotify(item, opts); }
-      });
+      offerWake(item, opts);
+    });
+  }
+  function offerWake(item, opts) {
+    toast('Spotify isn’t open on any device.', null, {
+      text: wakeMode() === 'shortcut' ? 'Wake Spotify' : 'Open in Spotify',
+      fn: function () { wakeSpotify(item, opts); }
     });
   }
 
@@ -3866,8 +3907,181 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }, Math.max(0, p.at + WAKE_MAX_MS - Date.now()) + 500);
   }
 
+  // ---------- v2.39: shortcut links (?play=…) ----------
+  // An iPhone shortcut (one "Open URLs" action) opens the page with ?play=<what>[&shuffle=1]; the page plays it
+  // through the usual tap path, so the wake modes and the pending tap work as for a tap. What it plays:
+  // spotify:playlist|album|show|artist|track|episode:<id> (an open.spotify.com link works too), or the names
+  // liked, newest (newest unplayed in Latest, as Play newest), continue (first Continue listening episode) and
+  // resume (the last playback, as the asleep Play). Only things in your library, pins and the names play on
+  // their own; anything else asks first with one tap. Nothing is looked up: 1 play request (+1 for shuffle).
+  var LINK_KINDS = { playlist: 'playlist', album: 'album', show: 'show', podcast: 'show', artist: 'artist', track: 'track', episode: 'episode' };   // v2.39
+  var LINK_NAMES = { liked: 1, newest: 1, 'continue': 1, resume: 1 };   // v2.39
+  var LINK_WAIT_MS = 20000;   // v2.39: how long a link waits for the library (first visit) or the first player answer
+  var linkReq = null;         // v2.39: {name} or {kind, id, uri}, plus shuffle and at; played once, then null
+  var linkTimer = null;
+  // v2.39: own keys only, so ?play=constructor or __proto__ never matches something built in.
+  function linkKind(k) { return Object.prototype.hasOwnProperty.call(LINK_KINDS, k) ? LINK_KINDS[k] : ''; }
+  function linkName(k) { return Object.prototype.hasOwnProperty.call(LINK_NAMES, k) ? k : ''; }
+  var linkNote = '';          // v2.39: what happened to this visit's link, for Diagnostics
+  // v2.39: the play= value as {name} or {kind, id, uri}; null when it isn't one of the forms above.
+  function parsePlayLink(v) {
+    v = String(v || '').trim();
+    if (!v || v.length > 200) return null;
+    var low = v.toLowerCase();
+    if (linkName(low)) return { name: low };
+    if (/^spotify:user:[^:]+:collection$/i.test(v) || low === 'spotify:collection:tracks' ||
+      /^https:\/\/open\.spotify\.com\/(?:intl-[a-z-]+\/)?collection\/tracks\/?(?:[?#].*)?$/i.test(v)) return { name: 'liked' };
+    var m = /^spotify:([a-z]+):([A-Za-z0-9]{1,40})$/i.exec(v) ||
+      /^https:\/\/open\.spotify\.com\/(?:intl-[a-z-]+\/)?([a-z]+)\/([A-Za-z0-9]{1,40})\/?(?:[?#].*)?$/i.exec(v);
+    if (!m) return null;
+    var kind = linkKind(m[1].toLowerCase());
+    if (!kind) return null;
+    return { kind: kind, id: m[2], uri: 'spotify:' + kind + ':' + m[2] };
+  }
+  // v2.39: the shortcut link for a list or a name ('' when it can't have one).
+  function linkFor(what, shuffle) {
+    var v = typeof what === 'string' ? what : (what && what.kind === 'liked' ? 'liked' : (what && what.uri && linkKind(what.kind) ? what.uri : ''));
+    if (!v) return '';
+    var canShuffle = v === 'liked' || /^spotify:(playlist|album|artist):/.test(v);
+    return location.origin + location.pathname + '?play=' + v + (shuffle && canShuffle ? '&shuffle=1' : '');
+  }
+  // v2.39: something in the library or pinned, as the page shows it (null when it isn't).
+  function libItemFor(uri) {
+    var d = state.data || {};
+    var all = [].concat(d.playlists || [], d.albums || [], d.artists || [], d.shows || []);
+    for (var i = 0; i < all.length; i++) if (all[i] && all[i].uri === uri) return all[i];
+    var pins = readPins();
+    for (var j = 0; j < pins.length; j++) if (pins[j].uri === uri) return pins[j];
+    return null;
+  }
+  // v2.39: a song or episode the page already knows as yours: hearted (as far as the page knows this visit),
+  // in Latest (your saved podcasts), the podcast history or Continue listening. Nothing is asked.
+  function knownTrack(r) {
+    if (state.saved[r.uri] === true) return { name: '' };
+    if (r.kind !== 'episode') return null;
+    var c = state.latest.cache, i;
+    if (c && Array.isArray(c.items)) for (i = 0; i < c.items.length; i++) if (c.items[i] && c.items[i].uri === r.uri) return latestItem(c.items[i]);
+    var h = histByUri()[r.uri];
+    if (h) return { name: h.name || '', positionMs: h.played ? 0 : (h.positionMs || 0) };
+    return null;
+  }
+  // v2.39: what a link plays. Returns {item, auto} (auto: plays without asking), {wait: true} (the library or the
+  // first player answer isn't here yet), or {msg[, link]} (nothing to play; says why).
+  function resolveLink(r) {
+    var d = state.data;
+    if (r.name === 'liked') {
+      if (!d || !d.me || !d.me.id) return { wait: true };
+      return { item: d.likedTotal != null ? likedItem(d) : { kind: 'liked', name: 'Liked Songs', uri: null, url: 'https://open.spotify.com/collection/tracks' }, auto: true };
+    }
+    if (r.name === 'newest') {
+      syncLatest();
+      var c = state.latest.cache;
+      var newest = c && Array.isArray(c.items) ? c.items.map(latestItem).filter(function (i) { return !i.played; })[0] : null;
+      if (newest) return { item: newest, auto: true };
+      return { msg: c ? 'No unplayed episodes in Latest.' : 'Latest episodes haven’t loaded yet. Open Podcasts → Latest once.' };
+    }
+    if (r.name === 'continue') {
+      var cl = continueItems()[0];
+      return cl ? { item: cl, auto: true } : { msg: 'Nothing in Continue listening.' };
+    }
+    if (r.name === 'resume') {
+      if (!state.playerAt) return { wait: true };
+      var p = state.player;
+      if (p && p.item && p.is_playing && !state.playerIdle) return { msg: 'Already playing “' + (p.item.name || 'Untitled') + '”.' };
+      var it = resumeItem();
+      if (!it) { var keep = state.player; state.player = idleFrom(readLastPlay()); it = resumeItem(); state.player = keep; }
+      return it ? { item: it, auto: true } : { msg: 'Nothing to resume yet.' };
+    }
+    var url = 'https://open.spotify.com/' + r.kind + '/' + r.id;
+    if (r.kind === 'track' || r.kind === 'episode') {
+      var k = knownTrack(r);
+      var ti = { kind: r.kind, id: r.id, uri: r.uri, url: url, name: (k && k.name) || (r.kind === 'track' ? 'this song' : 'this episode') };
+      if (k && k.positionMs > 0) ti.positionMs = k.positionMs;   // an episode resumes where you left off
+      return { item: ti, auto: !!k };
+    }
+    if (!d && !readPins().some(function (x) { return x.uri === r.uri; })) return { wait: true };
+    var li = libItemFor(r.uri);
+    if (r.kind === 'show') {
+      // A podcast plays the episode the page already holds (as Pinned's play button); nothing is fetched.
+      if (!li) return { msg: 'That podcast isn’t in your library.', link: { href: url, text: 'Open in Spotify' } };
+      var ep = heldShowEpisode(r.id);
+      if (!ep) return { msg: 'No episode of “' + li.name + '” is on this phone yet. Open the podcast once.' };
+      return { item: ep, auto: true };
+    }
+    if (li) return { item: li, auto: true };
+    return { item: { kind: r.kind, id: r.id, uri: r.uri, url: url, name: 'this ' + (r.kind === 'artist' ? 'artist' : r.kind) }, auto: false };
+  }
+  function opts0(r, res) { var k = res.item.kind; return !!r.shuffle && (k === 'playlist' || k === 'album' || k === 'artist' || k === 'liked'); }
+  // v2.39: reads ?play= once (on load, before the address is cleaned) and plays it when it can.
+  function runLinkPlay() {
+    clearTimeout(linkTimer); linkTimer = null;
+    var r = linkReq;
+    if (!r || !state.started) return;
+    if (coolLeft('player')) { linkReq = null; linkNote += ' → playback paused by Spotify'; coolToast('player'); return; }   // nothing is sent
+    var res = resolveLink(r);
+    if (res.wait) {
+      if (Date.now() - r.at < LINK_WAIT_MS) { linkTimer = setTimeout(runLinkPlay, 300); return; }
+      linkReq = null;
+      if (r.kind) res = { item: { kind: r.kind, id: r.id, uri: r.uri, url: 'https://open.spotify.com/' + r.kind + '/' + r.id, name: 'this ' + r.kind }, auto: false };   // can't tell if it's yours: ask
+      else { linkNote += ' → timed out'; toast(r.name === 'resume' ? 'Couldn’t check what was playing. Try again in a moment.' : 'Your library hasn’t loaded yet, so the shortcut didn’t play.'); return; }
+    }
+    linkReq = null;
+    if (!res.item) { linkNote += ' → ' + res.msg; toast(res.msg, res.link || null); return; }
+    linkNote += res.auto ? ' → played “' + res.item.name + '”' + (opts0(r, res) ? ' (shuffle)' : '') : ' → asked first';
+    var opts = { shuffle: opts0(r, res) };
+    if (res.auto) { onItemClick(res.item, { preventDefault: function () {}, noTap: true }, opts); return; }
+    // Not in your library: one tap to play (the tap also lets the page open Spotify if it's asleep).
+    toast('A shortcut link wants to play ' + res.item.name + ', which isn’t in your library. Play it?', null, {
+      text: 'Play', hold: 30000, fn: function () { onItemClick(res.item, { preventDefault: function () {} }, opts); }
+    });
+  }
+  // v2.39: Diagnostics → Shortcut links: Copy link for the open list, Liked Songs, the names and the pins.
+  function paintShortcutLinks() {
+    var ul = $('sclList');
+    if (!ul) return;
+    ul.textContent = '';
+    var shuffle = !!get(K.linkShuffle);
+    $('sclShuffle').checked = shuffle;
+    var rows = [], seen = {};
+    function add(label, sub, what) {
+      var url = linkFor(what, shuffle);
+      if (!url || seen[url]) return;
+      seen[url] = true;
+      rows.push({ label: label, sub: sub, url: url });
+    }
+    var open = state.detail && state.detail.item;
+    if (open && (open.kind === 'liked' || linkKind(open.kind))) {
+      var mine = open.kind === 'liked' || !!libItemFor(open.uri);   // others ask first when the link runs
+      add(open.name || 'Open list', mine ? 'Open now' : 'Open now · not in your library, so the link asks first', open);
+    }
+    add('Liked Songs', 'Your liked songs', 'liked');
+    add('Newest episode', 'Newest unplayed in Latest', 'newest');
+    add('Continue listening', 'First episode there', 'continue');
+    add('Resume', 'What played last', 'resume');
+    readPins().forEach(function (p) { add(p.name || 'Pinned', 'Pinned · ' + (p.kind === 'show' ? 'podcast' : p.kind), p); });
+    rows.forEach(function (row) {
+      var b = el('button', { class: 'btn secondary sclcopy', type: 'button', text: 'Copy link', 'aria-label': 'Copy shortcut link for ' + row.label });
+      b.addEventListener('click', function () { copyShortcut(row.url, b); });
+      ul.appendChild(el('li', { class: 'sclrow' }, [
+        el('span', { class: 'scltext' }, [
+          el('span', { class: 'setname', text: row.label }),
+          el('span', { class: 'setnote', text: row.sub }),
+          el('span', { class: 'sclurl', text: row.url })
+        ]), b
+      ]));
+    });
+  }
+  function copyShortcut(url, b) {
+    var c = navigator.clipboard, p;
+    function ok() { b.textContent = 'Copied'; setTimeout(function () { b.textContent = 'Copy link'; }, 2000); }
+    if (!c || !c.writeText) return copyLink(url);
+    try { p = c.writeText(url); } catch (e) { return copyLink(url); }
+    if (p && typeof p.then === 'function') p.then(ok, function () { copyLink(url); });
+    else ok();
+  }
+
   // ---------- diagnostics ----------
-  var VERSION = 'v2.38 (2026-11-27)';
+  var VERSION = 'v2.39 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -3897,7 +4111,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     $('slInfo').textContent = slStatsText();   // v2.15
   }
   var diagReturn = null;   // audit: A11Y-5 focus goes back to the opener on close
-  function openDiag() { diagReturn = document.activeElement; $('diag').hidden = false; syncSheetLock(); paintWakeModes(); paintSettings(); $('diagClose').focus(); runDiag(); }
+  function openDiag() { diagReturn = document.activeElement; $('diag').hidden = false; syncSheetLock(); paintWakeModes(); paintSettings(); paintShortcutLinks(); $('diagClose').focus(); runDiag(); }
   function closeDiag() {
     var had = $('diag').contains(document.activeElement);
     $('diag').hidden = true;
@@ -3921,6 +4135,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     line('Permissions missing: ' + (miss.length ? miss.join(', ') : 'none'));
     line('Device picked: ' + (state.device ? state.device.name + ' (' + state.device.type + ')' : 'none') + (state.deviceError ? ' · error: ' + state.deviceError : ''));
     line('Wake mode: ' + wakeMode() + (isStandalone() ? ' (Home Screen icon)' : ''));   // audit: IPHONE-1
+    line('Shortcut link this visit: ' + (linkNote || 'none') + (linkReq ? ' (waiting for the library)' : ''));   // v2.39
     var pend = readPending();
     line('Pending: ' + (pend ? pend.item.name + ' (' + (pend.mode || 'link') + ', ' + Math.round((Date.now() - pend.at) / 1000) + 's ago' + (pend.manual ? ', waiting for Try again' : '') + (pend.item.kind === 'resume' ? ', resume at ' + fmtTime(pend.item.positionMs || 0) : '') + ')' : 'none'));
     var pl = state.player, lp = readLastPlay();
@@ -8507,6 +8722,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       applyTheme();
     });
   });
+  $('sclShuffle').addEventListener('change', function () {   // v2.39
+    if ($('sclShuffle').checked) set(K.linkShuffle, true); else del(K.linkShuffle);
+    paintShortcutLinks();
+  });
   $('slClear').addEventListener('click', function () {   // v2.15
     clearSavedLists();
     $('slInfo').textContent = slStatsText();
@@ -8660,6 +8879,21 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var qs = params.toString();
     try { history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '')); } catch (e) {}
   }
+  // v2.39: a shortcut link (?play=…[&shuffle=1]) is read once and taken out of the address, so a reload
+  // or a restored tab doesn't play it again.
+  var playLink = null;
+  if (params.has('play')) {
+    playLink = parsePlayLink(params.get('play'));
+    if (playLink) { playLink.shuffle = params.get('shuffle') === '1' || params.get('shuffle') === 'true'; playLink.at = Date.now(); }
+    linkNote = playLink ? 'read “' + params.get('play') + '”' : 'not understood: “' + String(params.get('play')).slice(0, 60) + '”';
+    // Everything else goes too: an unencoded Spotify link leaves its own parts (si=, pt=…) as extra parameters.
+    // A sign-in answer (code/state/error) is kept for the callback below.
+    var keep = new URLSearchParams();
+    ['code', 'state', 'error'].forEach(function (k) { if (params.has(k)) keep.set(k, params.get(k)); });
+    params = keep;
+    var qs2 = params.toString();
+    try { history.replaceState(null, '', location.pathname + (qs2 ? '?' + qs2 : '')); } catch (e) {}
+  }
   if (params.has('code') || params.has('error')) {
     handleCallback(params).then(function (ok) { if (ok) startApp(); });
   } else if (!get(K.client)) {
@@ -8668,6 +8902,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     renderSignIn();
   } else {
     startApp();
+    if (playLink) { linkReq = playLink; runLinkPlay(); }   // v2.39
+    else if (linkNote) toast('That shortcut link isn’t one this page knows.');
   }
 })();
 </script>
