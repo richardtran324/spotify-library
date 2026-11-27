@@ -135,8 +135,10 @@ tests.push(function () {
     }).then(function () {
       var pl = reqs(tab, 'PUT', '/me/player/play');
       check('5 plays the tapped item once after the wake', pl.length === 1 && pl[0].body.uris[0] === 'spotify:track:t5', pl);
-      var checks = tab.calls.filter(function (c) { return c.method === 'GET' && /^\/me\/player(\/devices)?$/.test(c.path); });
-      check('5 at most 4 player checks in that time (one every 3 s)', checks.length <= 4, checks.length);
+      // Only the wait's own checks, before the play: since v2.29 (audit #37) the page also checks once right after a play.
+      var playAt = tab.calls.findIndex(function (c) { return c.method === 'PUT' && /^\/me\/player\/play/.test(c.path); });
+      var checks = tab.calls.slice(0, playAt < 0 ? tab.calls.length : playAt).filter(function (c) { return c.method === 'GET' && /^\/me\/player(\/devices)?$/.test(c.path); });
+      check('5 at most 4 player checks before the play (one every 3 s)', checks.length <= 4, checks.length);
       check('5 line hidden after playing', $(tab, 'wake').hidden);
       done(tab);
     });
