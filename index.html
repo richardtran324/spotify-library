@@ -545,6 +545,8 @@ body.sheetopen { overflow: hidden; }   /* audit: the page stays still behind an 
 }
 @keyframes npUp { from { transform: translateY(100%); } to { transform: none; } }
 @media (prefers-reduced-motion: reduce) { .npfull { animation: none; } }
+/* smooth: Next/Previous dim the title until Spotify's answer (setSkipping) */
+#player.skipping .meta, #np.skipping #npName, #np.skipping #npBy { opacity: 0.45; transition: opacity 0.15s; }
 .npf {
   max-width: 480px; margin: 0 auto; min-height: 100%;
   padding: calc(6px + env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) calc(20px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
@@ -5554,12 +5556,28 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   function schedulePoll(ms, force) {
     clearTimeout(state.pollTimer);
     state.pollTimer = null;
+    endCheckFor = '';   // smooth: any new schedule replaces a planned end-of-song check
     if (force) state.pollForce = true;
     if (!state.started || document.hidden) return;
     state.pollTimer = setTimeout(pollPlayer, ms);
   }
   // v2.13 cadence: every 20 s; every 10 s while the full Now Playing screen is open; every 60 s once nothing
   // has played for 10 minutes (Spotify asleep or idle); nothing while the page is hidden.
+  // smooth: the regular check, or 1.5 s after the playing item should end if that's sooner, so the bar shows the
+  // next song when it starts instead of up to 20 s later (Now Playing closed). One early check per item: the guard
+  // (npEndChecked, shared with paintProgress) is used up when that check actually runs, so a check replaced by a
+  // command (pause, seek) doesn't use it, and an answer that still shows the old song can't start a loop.
+  // Only the copy that polls gets here; nothing changes while paused, asleep or idle.
+  var endCheckFor = '';
+  function scheduleNextPoll() {
+    var every = pollEvery(), p = state.player, early = 0;
+    if (p && p.item && p.is_playing && !state.playerIdle && !state.offline && p.item.duration_ms && npEndChecked !== p.item.uri) {
+      var left = p.item.duration_ms - curPos() + 1500;
+      if (left < every) early = Math.max(1000, left);
+    }
+    schedulePoll(early || every);
+    if (early) endCheckFor = p.item.uri;
+  }
   function pollEvery() {
     if (state.offline) return IDLE_POLL_MS;   // v2.43: no internet: one quiet try a minute until an answer comes
     if (Date.now() - state.lastActiveAt > IDLE_AFTER_MS) return IDLE_POLL_MS;
@@ -5601,6 +5619,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   }
   function pollPlayer() {
     state.pollTimer = null;
+    if (endCheckFor) { npEndChecked = endCheckFor; endCheckFor = ''; }   // smooth: the early check runs now
     if (!state.started || document.hidden) return;
     var force = state.pollForce;
     state.pollForce = false;
@@ -5633,7 +5652,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       state.pollFailed = true;
     }).then(function (how) {
       // A command made this answer stale and scheduled its own check; don't override it.
-      if (how !== 'stale' && how !== 'stop' && how !== 'retry') schedulePoll(pollEvery());
+      if (how !== 'stale' && how !== 'stop' && how !== 'retry') scheduleNextPoll();   // smooth: may check at the song's end
     });
   }
   // ---------- Spotify asleep: keep the last playback on screen, paused (v2.10) ----------
@@ -5703,6 +5722,8 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   function goIdle(pos) {
     var p = state.player;
     state.device = null; state.deviceAt = 0; state.devicesAt = 0; state.active = null;
+    if (typeof pos !== 'number' && skipFrom) pos = preSkipPos();   // smooth: a Next/Previous Spotify never did keeps the spot from before the tap
+    setSkipping(false);
     if (p && p.item) {
       if (typeof pos !== 'number') pos = curPos();
       if (!readLastPlay()) saveLastPlay(p, pos);
@@ -5764,6 +5785,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   // o (v2.13): {fromCache, at} when the answer came from another copy of the page (at: when it was asked).
   function setPlayer(p, o) {
     o = o || {};
+    if (!o.fromCache) setSkipping(false);   // smooth: Spotify answered; the dim from Next/Previous ends
     var prevUri = state.player && state.player.item && state.player.item.uri;
     if (p && p.is_playing) state.lastActiveAt = Math.max(state.lastActiveAt, o.at || Date.now());
     if (p && p.item) {
@@ -5844,7 +5866,35 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     if (path === '/me/player/next') return function (x) { return x.item.uri !== uri; };
     if (path === '/me/player/previous') return function (x) { return x.item.uri !== uri || (x.progress_ms || 0) < pos; };   // Previous may restart the same song
     if (path === '/me/player/play') return function (x) { return !!x.is_playing; };
+    // smooth: after a seek, a check that still shows the old spot asks again (same 2-retry chain) instead of
+    // jumping the time back. Shown = another item, or near the new spot (2 s before to 3 s past, plus time since).
+    var sm = /^\/me\/player\/seek\?position_ms=(\d+)/.exec(path);
+    if (sm) { var to = +sm[1], at = Date.now(); return function (x) { var q = x.progress_ms || 0; return x.item.uri !== uri || (q >= to - 2000 && q <= to + (Date.now() - at) + 3000); }; }
     return null;
+  }
+  // smooth: Next/Previous show at once: the time goes to 0:00 and the title dims until Spotify's answer (setPlayer)
+  // or 4 s. The next title isn't guessed (the queue isn't loaded and shuffle makes it unknown). When Spotify says
+  // skipping isn't allowed (v2.33 greys the button but still sends the tap) nothing changes on screen, so a refused
+  // skip doesn't show 0:00 and then jump back.
+  var skipTimer = null, skipFrom = null;   // skipFrom: where it was at the tap, for goIdle
+  function preSkipPos() {
+    var p = state.player, dur = (p && p.item && p.item.duration_ms) || 0;
+    var pos = skipFrom.pos + (skipFrom.playing ? Date.now() - skipFrom.at : 0);
+    return Math.max(0, dur ? Math.min(pos, dur) : pos);
+  }
+  function setSkipping(on) {
+    clearTimeout(skipTimer); skipTimer = null;
+    if (!on) skipFrom = null;
+    $('player').classList.toggle('skipping', on); $('np').classList.toggle('skipping', on);
+    if (on) skipTimer = setTimeout(function () { setSkipping(false); }, 4000);
+  }
+  function skipCmd(dir) {
+    var path = '/me/player/' + dir;
+    if (state.playerIdle || notAllowed(dir === 'next' ? 'skipping_next' : 'skipping_prev')) return command('POST', path);
+    return command('POST', path, function (x) {
+      if (!skipFrom) skipFrom = { pos: curPos(), at: Date.now(), playing: !!x.is_playing };   // a second tap keeps the first spot
+      x.progress_ms = 0; state.playerAt = Date.now(); setSkipping(true);
+    });
   }
   function command(method, path, optimistic) {
     // Asleep: Spotify has no device to send this to (it would answer 404), so nothing is sent.
@@ -5999,12 +6049,18 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
         d.id === cur ? el('span', { class: 'sub', text: 'Selected' }) : null
       ]);
       if (d.is_restricted || !d.id) b.disabled = true;
-      b.addEventListener('click', function () { transferTo(d); });
+      if (transferring && transferring === d.id) b.setAttribute('aria-busy', 'true');   // smooth: a re-render keeps the busy look
+      b.addEventListener('click', function () { transferTo(d, b); });
       ul.appendChild(el('li', null, [b]));
     });
   }
-  function transferTo(d) {
+  // smooth: one switch at a time; the tapped row shows busy (dimmed) until Spotify answers.
+  var transferring = null;
+  function transferTo(d, row) {
+    if (transferring) return;
     if (coolBlocked('player')) return;   // v2.13
+    transferring = d.id;
+    if (row) row.setAttribute('aria-busy', 'true');
     var wasPlaying = !!(state.player && state.player.is_playing);
     state.pollSeq++;
     api('/me/player', { method: 'PUT', body: { device_ids: [d.id], play: wasPlaying } }).then(function (r) {
@@ -6014,7 +6070,12 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       recomputeDevice();
       closeSheet();
       toast('Now using ' + d.name);
-    }).catch(onFail('Couldn’t switch to ' + d.name, function () { transferTo(d); })).then(function () { schedulePoll(600, true); });
+    }).catch(onFail('Couldn’t switch to ' + d.name, function () { transferTo(d); })).then(function () {
+      transferring = null;
+      if (row) row.removeAttribute('aria-busy');
+      Array.prototype.forEach.call(document.querySelectorAll('#devList .devrow[aria-busy]'), function (n) { n.removeAttribute('aria-busy'); });
+      schedulePoll(600, true);
+    });
   }
 
   // ---------- Now playing options: from what plays to the album, playlist, Liked Songs or show ----------
@@ -11340,8 +11401,8 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     $(pre + 'Play').innerHTML = ICON.pause;
     $(pre + 'Repeat').innerHTML = ICON.repeat;
     $(pre + 'Queue').innerHTML = ICON.queue;
-    $(pre + 'Prev').addEventListener('click', function () { command('POST', '/me/player/previous'); });
-    $(pre + 'Next').addEventListener('click', function () { command('POST', '/me/player/next'); });
+    $(pre + 'Prev').addEventListener('click', function () { skipCmd('previous'); });   // smooth: 0:00 and dim at once
+    $(pre + 'Next').addEventListener('click', function () { skipCmd('next'); });
     $(pre + 'Play').addEventListener('click', togglePlay);
     $(pre + 'Shuffle').addEventListener('click', toggleShuffle);
     $(pre + 'Repeat').addEventListener('click', cycleRepeat);
