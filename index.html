@@ -658,7 +658,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     <p class="sethint">The other groups keep their usual order.</p>
     <div class="setgroup slgroup"><span class="setname">Saved album and podcast lists</span>
       <p class="sethint" id="slInfo">Saved lists: none</p>
-      <p class="sethint">Opening a saved album or podcast sends nothing to Spotify. Refresh (top right) keeps them.</p>
+      <p class="sethint">Opening a saved album or podcast sends nothing to Spotify, and neither does a saved playlist that hasn’t changed. Refresh (top right) keeps them.</p>
       <button class="btn secondary" id="slClear" type="button">Clear saved lists</button>
     </div>
     <h3 class="sheet-sub">Report</h3>
@@ -728,6 +728,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     epNotes: 'lib-ep-notes',     // v2.18: [{id, t, at[, cut]}], newest first: notes of episodes you opened or played (40, 4,000 characters each)
     epMarks: 'lib-ep-marks',     // v2.21: {uri: {played, at, pos}}: Mark as played / unplayed, this phone only (400, 180 days)
     ctxLast: 'lib-ctx-last',     // v2.23: {album or playlist URI | 'liked': {uri, id, name, positionMs, durMs, at}}: the last song heard in each list (40, 30 days)
+    plSaved: 'lib-pl-saved',     // v2.34: {playlist id: {s: snapshot_id, at, o: last opened, t: total, n: [{i, n, a, l, r, d, c, t[, e, u]} | 0 (local file)]}}: songs loaded in your own and collaborative playlists (25 playlists, 1,000 songs each, ≈ 500,000 characters in all, 90 days unopened; least recently opened go first)
     // v2.13 rate limits. Shared by every copy of the page that shares this storage (Safari tabs on one origin).
     cool: 'lib-cooloff',         // v2.14: {group: {until, reason, strikes, quotaAt, retryAfter, last429:{at, reason, retryAfter, what}}}
     poller: 'lib-poller',        // {id, at, every}: the one visible copy that runs the player check
@@ -3170,7 +3171,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.27 (2026-11-27)';
+  var VERSION = 'v2.34 (2026-11-27)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -5265,6 +5266,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (findBusy === busy) findBusy = null;
       busy.waiters.splice(0).forEach(function (fn) { setTimeout(fn, 0); });
       if (d.item.kind === 'album') { if (done) saveAlbumList(d); }   // v2.15: the saved copy stays whole
+      else if (d.item.kind === 'playlist' && cat && done) plSave(d.item.id);   // v2.34
       paintNew(mapped, true);   // the last rows (an album redraws from its saved copy)
       if (d.item.kind !== 'album' && !cat && !d.next && done === urls.length) findMemo[findMemoKey(d)] = { total: d.total, head: findHead(d.items), items: d.items.slice(), next: null };
       if (failed) {
@@ -5471,6 +5473,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     d.loading = true; d.error = '';
     paintDetailFoot();
     var kind = d.item.kind, first = /[?&]offset=0(&|$)/.test(url);
+    var plLabel = kind === 'playlist' && first && !catMemo[url] ? plTrustedSnap(d.item.id) : '';   // v2.34: the snapshot known before asking
     // The answer is kept even if another view is on top by then (v2.12: Back can return to this one);
     // it's drawn only while this view is the one on screen. v2.14: catalog answers are kept for this visit (apiCached).
     apiCached(url).then(function (r) {
@@ -5505,6 +5508,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       var mapped = (r.json.items || []).map(function (it, j) { var m = mapDetail(d.item, it); if (m && kind === 'playlist') m.pos = off + j; return m; }).filter(Boolean);
       d.items = d.items.concat(mapped);
       if (isPod(d.item)) rememberEpisodes(mapped);   // for Continue listening
+      if (kind === 'playlist') { if (plLabel && catMemo[url]) catMemo[url].plLabel = plLabel; plSave(d.item.id); }   // v2.34
       if (!cur) return;
       // In the default order new rows go at the end; a chosen sort re-sorts everything loaded so far.
       if (sortIsDefault(detailView(d.item)) && !d.editing && !findTokens(d)) appendDetailRows(mapped);   // v2.26 Edit / v2.22 Find redraw the list
@@ -5572,7 +5576,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // its `next` points at the first song not kept. Returns {total} or null when nothing is kept.
   function rewriteMemo(id, fn, extra, snap) {
     var pages = memoPages(id);
-    if (!pages.length) return null;
+    if (!pages.length) { plEdited(id, extra, snap); return null; }   // v2.34: the copy saved on the phone
     var raw = [];
     pages.forEach(function (p) { raw = raw.concat(p.r.json.items); });
     var before = raw.length;
@@ -5588,6 +5592,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         : p.off + items.length < total ? API + plItemsPath(id) + '?offset=' + (p.off + items.length) + '&limit=' + lim : null;
       catMemo[p.key] = { ok: true, status: p.r.status || 200, json: Object.assign({}, p.r.json, { items: items, total: total, offset: p.off, next: next }), snap: snap || null };
     });
+    plSave(id, true);   // v2.34: the saved copy follows the change (or goes, without a new snapshot)
     return { total: total };
   }
   // The snapshot the loaded positions belong to: the last change's answer, or none (Spotify then uses the
@@ -5975,7 +5980,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     return false;
   }
   function slStats() {
-    var n = { albums: 0, shows: 0, chars: 0 };
+    var n = { albums: 0, shows: 0, chars: 0, playlists: Object.keys(plRead()).length };   // v2.34: playlists too
+    try { n.chars += n.playlists ? K.plSaved.length + (localStorage.getItem(K.plSaved) || '').length : 0; } catch (e) {}
     [[SL_ALBUM, 'albums'], [SL_SHOW, 'shows']].forEach(function (p) {
       slKeys(p[0]).forEach(function (k) {
         n[p[1]]++;
@@ -5986,12 +5992,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function slStatsText() {
     var n = slStats();
-    return 'Saved lists: ' + n.albums + (n.albums === 1 ? ' album, ' : ' albums, ') + n.shows + (n.shows === 1 ? ' show' : ' shows') + ' (≈ ' + Math.max(n.chars ? 1 : 0, Math.round(n.chars / 1024)) + ' KB)';
+    return 'Saved lists: ' + n.albums + (n.albums === 1 ? ' album, ' : ' albums, ') + n.shows + (n.shows === 1 ? ' show, ' : ' shows, ') + n.playlists + (n.playlists === 1 ? ' playlist' : ' playlists') + ' (≈ ' + Math.max(n.chars ? 1 : 0, Math.round(n.chars / 1024)) + ' KB)';
   }
   function clearSavedLists() {
     slKeys(SL_ALBUM).concat(slKeys(SL_SHOW)).forEach(del);
+    del(K.plSaved);   // v2.34
     var d = state.detail;
-    if (d && d.kind !== 'artist') { d.savedAt = 0; if (d.src === 'cache') d.src = 'api'; paintDetailNote(); }
+    if (d && d.kind !== 'artist') { d.savedAt = 0; d.plSavedAt = 0; if (d.src === 'cache') d.src = 'api'; paintDetailNote(); }
   }
   // Minimal Spotify objects: what mapDetail and the rows need.
   function slTrack(t) {
@@ -6064,6 +6071,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     } else if (it.kind === 'show' && it.id) {
       var s = slGet(SL_SHOW, it.id) || seedShowFromLatest(it);
       if (s && s.items.length) { useShowCache(d, s); return; }
+    } else if (it.kind === 'playlist' && it.id) {
+      var pc = plSavedFor(it.id);   // v2.34: unchanged since it was saved (same snapshot): no request
+      if (pc) { usePlCache(d, pc); return; }
     }
     loadDetail(detailUrl(it));   // a paused catalog goes to detailFallback from there
   }
@@ -6230,12 +6240,152 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
           else link('Check for new episodes', function (dd) { checkNewEpisodes(dd, false); });
         }
       }
-    } else if (kind === 'playlist') copyNoteParts(d, parts, link);   // v2.24
+    } else if (kind === 'playlist') {
+      if (d.plSavedAt) {   // v2.34
+        parts.push(el('span', { text: 'Saved on this phone' }));
+        if (!d.loading) link('Reload from Spotify', reloadPl);
+      }
+      copyNoteParts(d, parts, link);   // v2.24
+    }
     parts.forEach(function (p, i) {
       if (i && p.tagName === 'BUTTON') n.appendChild(el('span', { 'aria-hidden': 'true', text: '·' }));
       n.appendChild(p);
     });
     n.hidden = !parts.length;
+  }
+
+  // ---------- saved playlists (v2.34) ----------
+  // The songs loaded in your own and collaborative playlists are saved on the phone (K.plSaved) with the playlist's
+  // snapshot_id from GET /me/playlists, which the library already loads. Opening the playlist again draws the
+  // saved songs (pages of 50 put into catMemo, so Load more, Find in list and Edit work as usual) and asks Spotify
+  // for nothing while the library's snapshot is the same; a changed snapshot loads it again. Only a snapshot from
+  // the library loaded this visit (and after the last Refresh) counts, and a copy is labelled only with a snapshot
+  // known before its first page was asked, so the label is never newer than the songs. Edit and Add to playlist
+  // update the saved copy with Spotify's new snapshot, or drop it. Compact songs: what the rows, sorting, Find in
+  // list and Play need. Refresh keeps the copies; Diagnostics → Clear saved lists removes them.
+  var PL_SAVE_MAX = 25, PL_SAVE_SONGS = 1000, PL_SAVE_CHARS = 500000, PL_SAVE_MS = 90 * 24 * 60 * 60 * 1000;
+  var PL_IMG = 'https://i.scdn.co/image/';
+  var plTrustFrom = Date.now();   // the library must be loaded after this (page start, then each Refresh)
+  function plLibFresh() { var d = state.data; return !!(d && typeof d.at === 'number' && d.at >= plTrustFrom && Array.isArray(d.playlists)); }
+  // The playlist's snapshot from this visit's library, for one you own or collaborate on; '' otherwise.
+  function plTrustedSnap(id) {
+    var lp = plLibFresh() && !noList[id] ? inLibraryPlaylist(id) : null;
+    return lp && lp.snap && knownListable(lp) ? String(lp.snap) : '';
+  }
+  function plValid(c) { return !!(c && typeof c === 'object' && typeof c.s === 'string' && c.s && typeof c.at === 'number' && typeof c.o === 'number' && typeof c.t === 'number' && Array.isArray(c.n)); }
+  function plRead() {
+    var m = get(K.plSaved), out = {};
+    if (!m || typeof m !== 'object' || Array.isArray(m)) return out;
+    Object.keys(m).forEach(function (id) { if (plValid(m[id])) out[id] = m[id]; });
+    return out;
+  }
+  // Prunes (90 days unopened, not in this visit's library, then the least recently opened past 25 playlists or
+  // the size cap) and writes. If storage is full, drops the least recently opened others a third at a time, then
+  // `keep` itself, then the whole key. True when `keep` was saved.
+  function plWrite(map, keep) {
+    var now = Date.now(), lib = null;
+    if (plLibFresh()) { lib = {}; state.data.playlists.forEach(function (p) { if (p && p.id && knownListable(p)) lib[p.id] = true; }); }
+    var list = Object.keys(map).filter(function (id) {
+      var c = map[id];
+      return plValid(c) && (id === keep || now - c.o < PL_SAVE_MS) && (!lib || lib[id]);
+    }).sort(function (a, b) { return (b === keep) - (a === keep) || map[b].o - map[a].o; });
+    var out = {}, ids = [], size = 2;
+    for (var i = 0; i < list.length && ids.length < PL_SAVE_MAX; i++) {
+      var n = list[i].length + 4 + JSON.stringify(map[list[i]]).length;
+      if (size + n > PL_SAVE_CHARS) break;
+      out[list[i]] = map[list[i]]; ids.push(list[i]); size += n;
+    }
+    for (var tries = 0; tries < 8; tries++) {
+      if (!ids.length) { del(K.plSaved); return false; }
+      try { localStorage.setItem(K.plSaved, JSON.stringify(out)); return !!keep && !!out[keep]; } catch (e) {}
+      var others = ids.filter(function (id) { return id !== keep; });
+      var drop = others.length ? others.slice(-Math.max(1, Math.ceil(others.length / 3))) : [keep];
+      drop.forEach(function (id) { delete out[id]; });
+      ids = ids.filter(function (id) { return drop.indexOf(id) === -1; });
+    }
+    del(K.plSaved);
+    return false;
+  }
+  function plPack(x) {
+    var t = x && (x.item || x.track);
+    if (!x || x.is_local || !t || !t.id || !t.uri) return 0;   // keeps its place, so positions stay right for Edit
+    var ep = t.type === 'episode', o = { i: String(t.id), n: t.name || '', d: t.duration_ms || 0 };
+    if (t.uri !== 'spotify:' + (ep ? 'episode:' : 'track:') + t.id) o.u = t.uri;
+    if (ep) { o.e = 1; o.l = (t.show && t.show.name) || ''; }
+    else {
+      o.a = (t.artists || []).map(function (a) { return (a && a.name) || ''; });
+      o.l = (t.album && t.album.name) || ''; o.r = (t.album && t.album.release_date) || '';
+    }
+    var im = img(ep ? (t.images && t.images.length ? t.images : t.show && t.show.images) : (t.album && t.album.images));
+    if (im) o.c = im.indexOf(PL_IMG) === 0 ? im.slice(PL_IMG.length) : im;
+    if (x.added_at) o.t = x.added_at;
+    return o;
+  }
+  function plUnpack(o) {
+    if (!o || typeof o !== 'object' || !o.i) return { is_local: true, track: null };
+    var ep = !!o.e, im = o.c ? [{ url: /^https?:/.test(o.c) ? o.c : PL_IMG + o.c }] : [];
+    var t = { type: ep ? 'episode' : 'track', id: o.i, uri: o.u || ('spotify:' + (ep ? 'episode:' : 'track:') + o.i), name: o.n || '', duration_ms: o.d || 0 };
+    if (ep) { t.show = { name: o.l || '' }; t.images = im; }
+    else { t.artists = (Array.isArray(o.a) ? o.a : []).map(function (n) { return { name: n }; }); t.album = { name: o.l || '', release_date: o.r || '', images: im }; }
+    return { added_at: o.t || null, is_local: false, track: t };
+  }
+  // The pages kept this visit (as loaded, or after an edit) become the saved copy. Without a label, a load leaves
+  // the old copy alone (its own snapshot keeps it honest) and an edit drops it.
+  function plSave(id, edited) {
+    var pages = memoPages(id);
+    if (!pages.length) return;
+    var p0 = pages[0].r, label = p0.snap || p0.plLabel || '', d = state.detail, on = isEditDetail(d, id) ? d : null;
+    var map = plRead();
+    if (!label) {
+      if (edited && map[id]) { delete map[id]; plWrite(map, null); }
+      if (edited && on) on.plSavedAt = 0;
+      return;
+    }
+    if (edited) plLibSnap(id, label);
+    var raw = [];
+    pages.forEach(function (p) { raw = raw.concat(p.r.json.items); });
+    var at = Date.now();
+    map[id] = { s: label, at: at, o: at, t: typeof p0.json.total === 'number' ? Math.max(p0.json.total, raw.length) : raw.length, n: raw.slice(0, PL_SAVE_SONGS).map(plPack) };
+    if (plWrite(map, id)) { if (on) on.plSavedAt = at; }
+    else if (on) on.plSavedAt = 0;
+  }
+  // The library keeps Spotify's snapshot after a change made here, so the saved copy still matches this visit.
+  function plLibSnap(id, snap) { var lp = plLibFresh() ? inLibraryPlaylist(id) : null; if (lp && snap) lp.snap = snap; }
+  // A change to a playlist with no pages kept this visit (Add to playlist, or after Refresh): a song added at the
+  // end only raises the saved copy's count (Load more brings it in), if the copy matched the library; else it goes.
+  function plEdited(id, extra, snap) {
+    var map = plRead(), c = map[id];
+    if (!c) return;
+    if (extra > 0 && snap && c.s === plTrustedSnap(id)) { c.t += extra; c.s = snap; c.at = Date.now(); plLibSnap(id, snap); }
+    else delete map[id];
+    plWrite(map, map[id] ? id : null);
+  }
+  // The saved copy to open, when the library loaded this visit has the same snapshot and nothing is kept this visit.
+  function plSavedFor(id) {
+    var snap = plTrustedSnap(id);
+    if (!snap || memoPages(id).length) return null;
+    var c = plRead()[id];
+    return c && c.s === snap && c.n.length ? c : null;
+  }
+  // Puts the saved songs into catMemo as pages of 50 and opens the first one from there (no request).
+  function usePlCache(d, c) {
+    var path = plItemsPath(d.item.id), raw = c.n.map(plUnpack), total = Math.max(c.t, raw.length);
+    for (var off = 0; off < raw.length; off += 50) {
+      var items = raw.slice(off, off + 50), end = off + items.length;
+      catMemo[path + '?limit=50&offset=' + off] = { ok: true, status: 200, snap: c.s, plLabel: c.s,
+        json: { items: items, total: total, offset: off, limit: 50, next: end < total ? path + '?limit=50&offset=' + end : null } };
+    }
+    d.plSavedAt = c.at;
+    loadDetail(path + '?limit=50&offset=0');
+  }
+  // Reload from Spotify: forgets this visit's pages and loads page 1 again, which replaces the saved copy.
+  function reloadPl(d) {
+    if (!d || d.loading || state.detail !== d || coolBlocked('catalog')) return;
+    var path = plItemsPath(d.item.id);
+    Object.keys(catMemo).forEach(function (k) { if (k.replace(API, '').split('?')[0] === path) delete catMemo[k]; });
+    d.items = []; d.next = null; d.error = ''; d.plSavedAt = 0; d.editing = false; delete d.snap;
+    paintDetailList(); paintDetailSort();
+    loadDetail(path + '?limit=50&offset=0');
   }
 
   // ---------- Make a copy (v2.24) ----------
@@ -6836,6 +6986,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     // v2.14: refreshes what isn't paused; album and podcast pages kept for this visit are asked again when opened.
     if (coolLeft('player') && coolLeft('library')) { coolToast('library'); return; }
     catMemo = {}; findMemo = {};
+    plTrustFrom = Date.now();   // v2.34: saved playlists wait for the library's new snapshots
     if (!coolLeft('player')) { checkDevice(); schedulePoll(0, true); }
     if (!coolLeft('library')) refresh();
     toast('Refreshing…');
