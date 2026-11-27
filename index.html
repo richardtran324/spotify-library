@@ -6021,6 +6021,33 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   var plMemo = {};    // playlist id -> promise of a mapped playlist (GET /playlists/{id}), this session
   var plKnown = {};   // playlist id -> mapped playlist, once that request answered
   var npReturn = null;
+  // NAV-2: Now Playing has its own history entry, so Back (the button or the edge swipe) closes it, not the list
+  // under it. The entry is {np: 1, depth: n} at the same address as the view under it (n = open views), so the
+  // popstate depth logic closes no list for it. Closing it any other way hides it at once and then steps back off
+  // the entry. While that Back is on its way (until popstate, at most 300 ms), a tap that would add a history entry
+  // waits for it, because a Back still pending can undo an entry added meanwhile.
+  var npNav = null;   // {timer, held: [function]}: a Back this page issued that popstate hasn't answered yet
+  function onNpEntry() { return !!(history.state && history.state.np); }
+  function openDepth() { return state.detail ? state.detailStack.length + 1 : 0; }
+  function navBack(n) {
+    if (npNav) clearTimeout(npNav.timer); else npNav = { held: [] };
+    npNav.timer = setTimeout(navSettled, 300);
+    try { if (n > 1) history.go(-n); else history.back(); } catch (e) { navSettled(); }
+  }
+  function navTake() {
+    var w = npNav;
+    npNav = null;
+    if (!w) return [];
+    clearTimeout(w.timer);
+    return w.held;
+  }
+  function navRun(fns) {
+    fns.forEach(function (f) {
+      try { f(); } catch (e) { logError('Back', 'held tap', e && e.message ? e.message : String(e)); }
+    });
+  }
+  function navSettled() { navRun(navTake()); }
+  function navHold(f) { if (!npNav) return false; npNav.held.push(f); return true; }
   // v2.23: only the playlists in your library (the library cache), never one fetched by id.
   function inLibraryPlaylist(id) {
     var list = (state.data && state.data.playlists) || [];
@@ -6404,9 +6431,13 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     if (!state.playerIdle && !coolLeft('player')) slideCover(kind);   // no slide when nothing is sent
     return command('POST', kind === 'next' ? '/me/player/next' : '/me/player/previous');
   }
-  function openNp() {
+  // opts.npEntry 'exists' (NAV-2): Forward came back to its history entry, so none is added.
+  function openNp(opts) {
     var p = state.player;
     if (!p || !p.item) return;
+    var fromHist = !!(opts && opts.npEntry === 'exists');
+    if (!fromHist && navHold(function () { openNp(); })) return;   // NAV-2: a Back is still on its way
+    var was = npShown();
     npReturn = $('pInfo');   // closing always returns to the bar
     npKey = '';
     $('np').hidden = false;
@@ -6423,13 +6454,21 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       toast('Couldn’t open Now Playing (' + (err && err.message ? err.message : 'error') + ').');
       return;
     }
+    // NAV-2: its own entry (opened by your tap, so Safari doesn't skip it). One left over from "Open in Spotify"
+    // is used again.
+    if (!was && !fromHist && !onNpEntry()) {
+      var dep = openDepth();
+      try { history.pushState({ np: 1, depth: dep }, '', dep ? '#detail' : location.pathname + location.search); } catch (e) {}
+    }
     $('npClose').focus({ preventScroll: true });
     startNpTick();
     // Checks every 10 s from here (v2.13; 60 s once nothing has played for 10 minutes): the first one an
     // interval after the last check. During a cool-off pollPlayer sends nothing.
     schedulePoll(Math.max(0, pollEvery() - (Date.now() - (state.lastPollAt || 0))));
   }
-  function closeNp(restore, why) {
+  // hist (NAV-2): 'keep' leaves Now Playing's history entry (the caller deals with it); otherwise, when it's the
+  // current entry, the screen hides at once and then one Back steps off it (popstate then finds nothing to do).
+  function closeNp(restore, why, hist) {
     if ($('np').hidden) return;
     state.npClosedWhy = (why || (restore === false ? 'app' : 'you')) + ' at ' + new Date().toLocaleTimeString();
     $('np').hidden = true;
@@ -6439,6 +6478,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     var r = npReturn;
     npReturn = null;
     if (restore !== false && r && r.focus && document.body.contains(r)) r.focus();
+    if (hist !== 'keep' && onNpEntry()) navBack(1);
   }
   function paintTimes(pos) {
     var dur = npDuration();
@@ -6520,7 +6560,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       sb.addEventListener('click', function () { shareLink(title, url); });
       box.appendChild(sb);
       var a = el('a', { class: 'btn small secondary', href: url, text: 'Open in Spotify' });
-      a.addEventListener('click', function () { closeNp(false); });
+      a.addEventListener('click', function () { closeNp(false, null, 'keep'); });   // NAV-2: a Back now would race the link; onReturn steps off the entry
       box.appendChild(a);
     }
   }
@@ -6771,9 +6811,13 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       : 'Later songs may be Spotify’s own picks; Spotify doesn’t mark which.' }));
   }
   function npOpenDetail(item) {
-    closeNp(false);
     // From a song list the new list replaces it; from an artist view it goes on top, so Back returns to the artist.
-    openDetail(item, { push: !!(state.detail && state.detail.kind === 'artist') });
+    var opts = { push: !!(state.detail && state.detail.kind === 'artist') };
+    // NAV-2: when the list needs an entry of its own, Now Playing's entry becomes it (no Back plus a new entry in
+    // the same moment). When it replaces the open list, the usual Back steps off Now Playing's entry instead.
+    if (onNpEntry() && detailWouldPush(opts)) { closeNp(false, null, 'keep'); opts.kpEntry = 'replace'; }
+    else closeNp(false);
+    openDetail(item, opts);
     var back = document.querySelector('.dhead .back');
     if (back) back.focus({ preventScroll: true });
   }
@@ -6784,7 +6828,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       var cur = state.detail;
       if (cur && cur.kind === 'artist' && cur.item.id === o.artist.id) { closeNp(false); return; }
       var under = state.detailStack[state.detailStack.length - 1];   // a list opened from this artist: go back to it
-      if (cur && under && under.kind === 'artist' && under.item.id === o.artist.id) { closeNp(false); goBack(); return; }
+      if (cur && under && under.kind === 'artist' && under.item.id === o.artist.id) { closeNp(false, null, 'keep'); goBack(); return; }   // NAV-2: goBack skips both entries at once
       npOpenDetail(artistItem(o.artist));
       return;
     }
@@ -7830,7 +7874,9 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     if (ps.has('code') || ps.has('error')) why = 'sign-in return';
     else if (ps.has('wake')) why = 'opened by the Wake Spotify shortcut';
     else if (ps.has('play')) why = 'opened by a shortcut link';
-    return { nav: nav, hash: location.hash, depth: (history.state && history.state.depth) || 0, why: why, done: false };
+    // np (NAV-2): reloaded on Now Playing's history entry; its views' entries are behind it, and boot steps back off it.
+    return { nav: nav, hash: location.hash, depth: (history.state && history.state.depth) || 0, why: why, done: false,
+      np: !!(history.state && history.state.np), npBack: true };
   })();
   function kpScrollY() { return window.pageYOffset || document.documentElement.scrollTop || 0; }
   function kpMaxY() {
@@ -7962,10 +8008,14 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     if (!views.length) { kpListScroll(listY); return; }
     var n = views.length, held = 0;
     var reuse = kpBoot.hash === '#detail' && kpBoot.depth === n;   // the history entries for these views are still there
+    // NAV-2: on Now Playing's entry, every view's entry is still there behind it ('exists'; boot then steps back
+    // once). If they don't match, the first view takes over that entry, as an ordinary reload does.
+    if (kpBoot.np && !reuse) kpBoot.npBack = false;
     views.forEach(function (v, i) {
       var hold = kpNeedsCatalog(v.item);
       if (hold) held++;
-      openDetail(v.item, { push: i > 0, kpHold: hold, kpNoAuto: true, kpEntry: reuse ? (i === n - 1 ? 'replace' : 'exists') : null });
+      var entry = reuse ? (i === n - 1 && !kpBoot.np ? 'replace' : 'exists') : (kpBoot.np && i === 0 ? 'replace' : null);
+      openDetail(v.item, { push: i > 0, kpHold: hold, kpNoAuto: true, kpEntry: entry });
       var d = state.detail;
       d.returnScroll = i === 0 ? listY : views[i - 1].y;
       d.kpY = v.y || null;
@@ -8113,8 +8163,14 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   // opts.push (v2.12): open on top of the current view (a release from an artist view), so Back returns to it.
   // Without it, opening a list from inside one (the Now playing screen) replaces it, so Back still returns
   // to where you started, at the same scroll position. Each level has its own history entry ({detail, depth}).
+  // NAV-2: true when openDetail(item, opts) would add a history entry.
+  function detailWouldPush(opts) {
+    var old = state.detail;
+    return !opts.kpEntry && !(old && !opts.push && old.pushed);
+  }
   function openDetail(item, opts) {
     opts = opts || {};
+    if (detailWouldPush(opts) && navHold(function () { openDetail(item, opts); })) return;   // NAV-2: a Back is on its way
     var y = window.pageYOffset || document.documentElement.scrollTop || 0;
     var old = state.detail;
     // audit: A11Y-2 — the focused row or card is removed by the redraw; remember it so Back can return to it
@@ -8164,8 +8220,9 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   }
   function goBack() {
     var d = state.detail;
-    if (d && d.pushed && location.hash === '#detail') history.back();   // popstate closes the view
-    else closeDetail();
+    var np = onNpEntry() && !npShown();   // NAV-2: Now Playing's entry is still on top (it just closed): one step skips both
+    if (d && d.pushed && location.hash === '#detail') { if (np) navBack(2); else history.back(); }   // popstate closes the view
+    else { closeDetail(); if (np) navBack(1); }
   }
   // Closes the top view: back to the view under it (an artist), or to the list, at the scroll position it had.
   function closeDetail() {
@@ -10622,6 +10679,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   // replace: from the artist's song list, Liked Songs takes its place, so Back returns to the artist page.
   function findInLiked(name, replace) {
     if (!state.data) return;
+    if (navHold(function () { findInLiked(name, replace); })) return;   // NAV-2: a Back is on its way
     // Liked Songs already open under this view: that same view moves up to just above the artist page, with what
     // it has loaded (nothing asked again), so Back from it returns to the artist page and then to where it was.
     // The number of views stays the same (or drops by the artist's song list), so history stays in step.
@@ -11360,21 +11418,37 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   $('npFwd30').addEventListener('click', function () { seekBy(30000); });
   // Back (button or swipe) closes one view per history entry: an album opened from an artist, then the artist,
   // then the list. Entries are {detail, depth}; older ones without depth count as 1.
+  // NAV-2: Now Playing's entry ({np, depth}) sits at the depth of the view under it. Leaving it (Back) closes Now
+  // Playing, then the depth logic runs as usual, so a long-press Back over several entries also closes lists.
+  // Forward into it reopens Now Playing when something is playing, else steps back off it. Taps held while this
+  // page's own Back was on its way run last.
   window.addEventListener('popstate', function () {
     closeRowMenu(false);   // v2.51: Back (or the back swipe) closes the row menu with the view under it
-    var cur = state.detail ? state.detailStack.length + 1 : 0;
-    var want = location.hash === '#detail' ? Math.max(1, (history.state && history.state.depth) || 1) : 0;
-    if (want >= cur) {
-      // Forward into a view that's gone: put the address back in step with what's on screen.
-      if (want > cur) {
-        try {
-          if (cur) history.replaceState({ detail: true, depth: cur }, '', '#detail');
-          else history.replaceState(null, '', location.pathname + location.search);
-        } catch (e) {}
+    var held = navTake();
+    try {
+      var onNp = onNpEntry();
+      if (npShown() && !onNp) closeNp(true, 'back');
+      else if (onNp && !npShown()) {
+        if (state.started && state.player && state.player.item) openNp({ npEntry: 'exists' });
+        if (!npShown()) { navBack(1); return; }
       }
-      return;
+      var cur = state.detail ? state.detailStack.length + 1 : 0;
+      var want = location.hash === '#detail' ? Math.max(1, (history.state && history.state.depth) || 1) : 0;
+      if (want >= cur) {
+        // Forward into a view that's gone: put the address back in step with what's on screen.
+        if (want > cur) {
+          try {
+            if (onNp) history.replaceState({ np: 1, depth: cur }, '', cur ? '#detail' : location.pathname + location.search);
+            else if (cur) history.replaceState({ detail: true, depth: cur }, '', '#detail');
+            else history.replaceState(null, '', location.pathname + location.search);
+          } catch (e) {}
+        }
+        return;
+      }
+      while (state.detail && state.detailStack.length + 1 > want) closeDetail();
+    } finally {
+      navRun(held);
     }
-    while (state.detail && state.detailStack.length + 1 > want) closeDetail();
   });
   // v2.13: coming back to the page. The visible copy takes the player check; devices are checked at most
   // once per 15 s; the player check runs now unless it ran in the last 5 s; the background extras follow a
@@ -11385,6 +11459,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   var returnTimer = null;
   function onReturn() {
     if (!state.started || !get(K.token)) return;
+    if (onNpEntry() && !npShown() && !npNav) navBack(1);   // NAV-2: the entry "Open in Spotify" left behind
     takePoller();
     paintCool();
     netReturnAt = Date.now();
@@ -11432,7 +11507,8 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     if (state.started && get(K.token) && !document.hidden) resumePending(false);
   });
 
-  if (location.hash === '#detail') { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} }
+  // NAV-2: Now Playing's entry is kept as it is (see kpBoot.np); boot steps back off it below.
+  if (location.hash === '#detail' && !kpBoot.np) { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} }
   var params = new URLSearchParams(location.search);
   readPending();   // drops a pending tap older than 3 minutes
   if (params.has('wake')) {
@@ -11467,6 +11543,9 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     if (playLink) { linkReq = playLink; runLinkPlay(); }   // v2.39
     else if (linkNote) toast('That shortcut link isn’t one this page knows.');
   }
+  // NAV-2: reloaded on Now Playing's entry: step back once onto the top view's own entry (kpRestore reused them),
+  // so no Back is spent on a screen that isn't showing.
+  if (kpBoot.np && kpBoot.npBack) navBack(1);
 })();
 </script>
 </body>
