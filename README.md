@@ -81,6 +81,7 @@ Optional: Share → **Add to Home Screen**. The page brings its own icon (`apple
   - Songs you added in the Spotify app itself, or more than 24 hours ago, are hidden while the switch is on.
 - **Playing now:** in any song or episode list (albums, playlists, Liked Songs, Recent, search, podcasts), the song or episode that's playing shows its name in green with a small **Playing** label. It updates with the Now Playing check.
 - **Share (v2.20):** albums, playlists, podcasts and artist pages have a share button at the top, next to the heart or pin. It opens the iPhone share sheet with the Spotify link. If the share sheet isn't available, the link is copied instead (**Link copied**); if copying doesn't work either, the message shows the link as text (tap it to select it, then copy) and stays up for 15 seconds or until you tap **Close**. Closing the share sheet does nothing. Liked Songs and Saved episodes have no share button, since they have no public link. Sharing sends no requests to Spotify.
+- **Shortcut links (v2.36):** an address like `…/spotify-library/?play=liked` plays something as soon as the page opens, so an iPhone shortcut (Siri, Home Screen, Back Tap) can start it in one step. See **Shortcut links** below.
 - **Choosing a device:** tap the device name in the status line ("Playing on iPhone · Change") to see your open Spotify devices. Picking one moves playback there and makes it the device taps play on from then on. **Refresh** in that panel looks again.
 
 ### Home
@@ -188,6 +189,17 @@ When the iPhone's Spotify app has been idle for a while, Spotify stops listing i
 A tap is remembered for 3 minutes; after that the page forgets it. With the two options that open the app, if the page hasn't checked for devices recently when you tap, it checks first and then shows a button to wake Spotify, because iPhone Safari may not open another app after the page has been waiting on Spotify. (Waiting needs no button: nothing opens.) If you had picked the app or shortcut option in an earlier version, that choice stays.
 
 **Diagnostics** shows **Wake mode** (wait, link or shortcut), **Pending** (the remembered tap, its mode and how long ago, or none), **Appearance**, how many pins, queued songs and recent searches the page is keeping, and the **Latest episodes** cache.
+
+### Shortcut links (v2.36)
+
+Add `?play=…` to the page's address and the page plays that item when it opens, through the same path as a tap, so the **When Spotify isn't running** setting applies (in the default **Wait for me to press play** mode it waits for Control Center's play; with the app or shortcut option it shows a button to wake Spotify, since Safari can't open another app without a tap).
+
+- **Names:** `?play=liked` (Liked Songs), `?play=newest` (the newest unplayed episode in Podcasts → Latest, like **Play newest**), `?play=continue` (the first episode in **Continue listening**), `?play=resume` (what played last, at the spot it stopped, like pressing play while Spotify is asleep; if something is already playing it says so and does nothing).
+- **Your things:** `?play=spotify:playlist:ID`, and the same with `album`, `artist`, `show` (or `podcast`), `track` or `episode`. An `https://open.spotify.com/…` link works too. A podcast plays the episode the page already holds for it (as the play button on a pinned podcast does); if it holds none, the page says to open the podcast once.
+- **Shuffle:** add `&shuffle=1` for playlists, albums, artists and Liked Songs.
+- **Safety:** only things in your library, your pins and the names play on their own. Anything else (for example a link someone sent you) shows **A shortcut link wants to play … Play it?** with a **Play** button, for 30 seconds. Songs and episodes count as yours when the page already knows you liked them this visit, or the episode is in Latest, your podcast history or Continue listening.
+- The page takes `?play=` out of the address as soon as it reads it, so reloading the tab doesn't play it again. Nothing is looked up to play a link: one play request (plus one for shuffle), and the usual device check when the page hasn't just checked. If Spotify has paused playback requests, the link plays nothing and says when to try again.
+- **Diagnostics → Settings → Shortcut links** lists the open list (when one is open), Liked Songs, the four names and your pins, each with **Copy link**, a **Shuffle** switch for the copied links, and the steps: in the Shortcuts app add the action **Open URLs** with the link; for the Home Screen tap ⋯ on the shortcut, then ⓘ (Details), then **Add to Home Screen**; for Back Tap go to Settings → Accessibility → Touch → Back Tap. The link must open in Safari (a Home Screen web app has its own sign-in). The report shows **Shortcut link this visit** (what was read and what happened).
 
 ### Appearance
 
