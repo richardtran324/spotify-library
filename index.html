@@ -4219,16 +4219,21 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!n) return null;
     return { set: set, n: n, complete: total != null && n >= total, name: name };
   }
-  // The playing list: from the latest playback answer, or the last one kept when Spotify fell asleep.
-  function upnCtx() {
+  // The playing list: from the latest playback answer, but only when it is about the same item as the queue answer
+  // (the playback check can be up to 20 s older); the last one kept is used only while Spotify is asleep.
+  function upnCtx(cur) {
     var p = state.player;
-    if (p && p.item) return p.context || null;
-    var lp = readLastPlay();
-    return (lp && lp.context) || null;
+    if (state.playerIdle || !p || !p.item) {
+      if (p && p.item && p.context) return p.context;
+      var lp = readLastPlay();
+      return (lp && lp.context) || null;
+    }
+    return cur && cur.uri && cur.uri === p.item.uri ? (p.context || null) : null;
   }
-  // "6 songs · 23 min · ends about 9:42 PM": the rows shown, plus what's left of the current item for the end time.
+  // "6 songs · 23 min · ends about 9:42 PM": the rows shown; the end time adds what's left of the current item and
+  // every queue item up to the last shown one (ahead), hidden ones included, since they play first.
   // cut: the shown rows reach the end of a full-length queue answer, so there may be more ("at least", "ends after").
-  function upnSummary(shown, cut, cur) {
+  function upnSummary(shown, cut, cur, ahead) {
     var n = shown.length;
     if (!n) return '';
     var ms = shown.reduce(function (s, t) { return s + (t.duration_ms || 0); }, 0);
@@ -4238,7 +4243,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var p = state.player, live = p && p.item && !state.playerIdle;
     if (live && p.is_playing && cur && cur.uri === p.item.uri && ms > 0) {
       var rest = Math.max(0, (p.item.duration_ms || 0) - curPos());
-      txt += ' · ends ' + (cut ? 'after ' : 'about ') + clock(Date.now() + rest + ms);
+      var upto = (ahead || shown).reduce(function (s, t) { return s + (t.duration_ms || 0); }, 0);
+      txt += ' · ends ' + (cut ? 'after ' : 'about ') + clock(Date.now() + rest + upto);
     } else if (!live || !p.is_playing) txt += ' · paused';
     return txt;
   }
@@ -4318,7 +4324,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       list = [];
       lastIdx = -1;
       all.forEach(function (t, i) { if (t.uri && left[t.uri] > 0) { left[t.uri]--; list.push(t); lastIdx = i; } else rest.push({ t: t, i: i }); });
-      info = upnKnown(upnCtx(), q.data.current);   // v2.39
+      info = upnKnown(upnCtx(q.data.current), q.data.current);   // v2.39
       if (info) {
         for (var j = 0; j < rest.length; j++) {
           if (!rest[j].t.uri || !info.set[rest[j].t.uri]) break;
@@ -4329,7 +4335,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }
     var shown = list.concat(from);
     var cut = all.length >= QUEUE_FULL && shown.length > 0 && lastIdx === all.length - 1;
-    var sum = upnSummary(shown, cut, q.data.current);   // v2.39
+    var sum = upnSummary(shown, cut, q.data.current, all.slice(0, lastIdx + 1));   // v2.39
     if (sum) body.appendChild(el('p', { class: 'qsum', text: sum }));
     var rows = list.map(queueRow).filter(Boolean);
     var fromRows = from.map(queueRow).filter(Boolean);
