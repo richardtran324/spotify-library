@@ -2841,9 +2841,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
 
   // ---------- devices + playback ----------
   function recomputeDevice() {
-    var list = state.devices || [];
+    // audit: Spotify accepts no commands on a device marked is_restricted, and one with a null id can't be
+    // named in device_id; the device sheet already greys these out, so the automatic pick skips them too.
+    // state.active itself stays as it is: the Now Playing bar still shows where it really plays.
+    function ok(x) { return !!(x && x.id && !x.is_restricted); }
+    var list = (state.devices || []).filter(ok);
     var pref = get(K.device);
-    var act = state.active;
+    var act = ok(state.active) ? state.active : null;
     var d = null;
     if (pref) {
       d = list.filter(function (x) { return x.id === pref; })[0] || null;
