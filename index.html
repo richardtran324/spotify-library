@@ -283,7 +283,7 @@ ul.list.compact .cover.num { width: 28px; }
 body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px)); }
 /* v2.40: Jump to playing (song and episode lists) */
 .kpjump {
-  position: fixed; z-index: 20; right: max(16px, env(safe-area-inset-right, 0px));
+  position: fixed; z-index: 9; right: max(16px, env(safe-area-inset-right, 0px));   /* above the bar (8), under Now Playing (15) and sheets */
   bottom: calc(24px + env(safe-area-inset-bottom, 0px));
   font: inherit; font-size: 0.9rem; font-weight: 700; min-height: 44px; padding: 10px 16px;
   border: 0; border-radius: 999px; background: var(--accent); color: var(--accent-fg); cursor: pointer;
@@ -4906,7 +4906,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (it.kind === 'artist') return true;
     if (it.kind === 'album') { var a = it.id ? slGet(SL_ALBUM, it.id) : null; return !(a && a.items.length); }
     if (it.kind === 'show') { var s = it.id ? (slGet(SL_SHOW, it.id) || seedShowFromLatest(it)) : null; return !(s && s.items.length); }
-    if (it.kind === 'playlist') return !!detailUrl(it);   // your own and collaborative playlists; others show the note (no request)
+    if (it.kind === 'playlist') {
+      if (it.ownerId && !it.collaborative && !(state.data && state.data.me)) return true;   // whose it is isn't known yet: hold rather than show the wrong note
+      return !!detailUrl(it);   // your own and collaborative playlists; others show the note (no request)
+    }
     return false;   // Liked Songs and Saved episodes: one library request, as on any open
   }
   function kpRestore(p) {
@@ -4946,6 +4949,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function kpReopen(d) {
     if (!d || !d.held || state.detail !== d) return;
+    if (d.item.kind === 'playlist' && d.item.ownerId && !d.item.collaborative && !(state.data && state.data.me)) { toast('Your library is still loading. Try again in a moment.'); return; }
     d.held = false;
     if (d.kind === 'artist') { paintArtistFoot(d); loadArtist(d); }
     else { paintDetailFoot(); startDetail(d); }
@@ -4973,7 +4977,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var b = $('kpJump');
     if (!b) return;
     var li = state.started ? kpJumpRow() : null, show = false;
-    if (li && $('np').hidden && !document.querySelector('.sheet:not([hidden])')) {
+    if (li && $('np').hidden && $('toast').hidden && !document.querySelector('.sheet:not([hidden])')) {   // not over Now Playing, a sheet or a toast
       var r = li.getBoundingClientRect(), band = kpBand(), mid = (r.top + r.bottom) / 2;
       show = mid < band.top || mid > band.bottom;
     }
@@ -5003,7 +5007,25 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     kpJumpRaf = (window.requestAnimationFrame || setTimeout)(function () { kpJumpRaf = 0; kpPaintJump(); });
   }, { passive: true });
   window.addEventListener('resize', kpPaintJump);
-  ['touchstart', 'wheel', 'keydown'].forEach(function (t) { window.addEventListener(t, kpUserScrolled, { passive: true }); });
+  // Only a real scroll gesture cancels a waiting restore: a drag, the wheel or a scrolling key (a tap, such as Reopen, doesn't).
+  ['touchmove', 'wheel'].forEach(function (t) { window.addEventListener(t, kpUserScrolled, { passive: true }); });
+  window.addEventListener('keydown', function (e) {
+    var tg = e.target, tag = tg && tg.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || tag === 'A' || (tg && tg.isContentEditable)) return;
+    if (['PageUp', 'PageDown', 'Home', 'End', 'ArrowUp', 'ArrowDown', ' ', 'Spacebar'].indexOf(e.key) !== -1) kpUserScrolled();
+  });
+  // Now Playing, the sheets and the toast opening or closing show or hide Jump to playing: right away for the page's
+  // own open and close calls, and through the observer for anything else (such as the toast's timer).
+  function kpAfter(f) { return function () { var r = f.apply(this, arguments); kpPaintJump(); return r; }; }
+  openNp = kpAfter(openNp); closeNp = kpAfter(closeNp); openSheet = kpAfter(openSheet); closeSheet = kpAfter(closeSheet);
+  openQueue = kpAfter(openQueue); closeQueue = kpAfter(closeQueue); openNotes = kpAfter(openNotes); closeNotes = kpAfter(closeNotes);
+  openDiag = kpAfter(openDiag); closeDiag = kpAfter(closeDiag); openPl = kpAfter(openPl); closePl = kpAfter(closePl);
+  openPerm = kpAfter(openPerm); closePerm = kpAfter(closePerm); toast = kpAfter(toast);
+  if (window.MutationObserver) {
+    var kpMo = new MutationObserver(function () { kpPaintJump(); });
+    ['np', 'toast'].forEach(function (id) { if ($(id)) kpMo.observe($(id), { attributes: true, attributeFilter: ['hidden'] }); });
+    [].forEach.call(document.querySelectorAll('.sheet'), function (n) { kpMo.observe(n, { attributes: true, attributeFilter: ['hidden'] }); });
+  }
 
   // ---------- song list (detail) view ----------
   // v2.27: until your account (or the playlist's owner) is known, ask anyway; a 403 still shows the Show songs view.
@@ -7119,9 +7141,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   });
   document.querySelectorAll('.filters .chip').forEach(function (c) {
     c.addEventListener('click', function () {
-      var same = c.dataset.filter === state.filter;   // v2.40: tapping the chip you're on scrolls to the top
+      // v2.40: tapping the chip you're on only scrolls to the top (no redraw, no reload of Recent, no keyboard)
+      if (c.dataset.filter === state.filter && !state.detail) { kpPend = null; kpY[kpKey()] = 0; window.scrollTo(0, 0); kpSaveSoon(); return; }
       setFilter(c.dataset.filter, true);
-      if (same && !state.detail) { kpPend = null; kpY[kpKey()] = 0; window.scrollTo(0, 0); kpSaveSoon(); }
     });
   });
   document.querySelectorAll('.schip').forEach(function (c) {
