@@ -2879,6 +2879,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // positionMs starts there: an episode's resume point, or where a resumed song had got to.
   function playBody(item) {
     if (item.kind === 'liked') return likedCtx() ? { context_uri: likedCtx() } : null;
+    if (item.uris) return item.uris.length ? { uris: item.uris.slice(0, LIKEDBY_PLAY) } : null;   // v2.28: a list of songs, no context
     var b;
     if (item.ctx) b = { context_uri: item.ctx, offset: { uri: item.uri } };
     else if (item.kind === 'track' || item.kind === 'episode' || item.kind === 'resume') b = { uris: [item.uri] };
@@ -2891,6 +2892,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var d = state.device;
     var body = playBody(item);
     if (!body) return Promise.reject(new Error('your account details haven’t loaded yet'));
+    if (opts.shuffle && item.uris && body.uris.length > 1) shuffleList(body.uris);   // v2.28: a song list is shuffled here too
     var q = '?device_id=' + encodeURIComponent(d.id);
     function send(b) { return api('/me/player/play' + q, { method: 'PUT', body: b }); }
     function shuffle() { return api('/me/player/shuffle?state=true&device_id=' + encodeURIComponent(d.id), { method: 'PUT' }); }
@@ -2990,6 +2992,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       at: Date.now(),
       mode: mode || 'link'
     };
+    if (item.uris) p.item.uris = item.uris.slice(0, LIKEDBY_PLAY);   // v2.28: a song list (Liked songs by an artist), 100 at most
     set(K.pending, p);
     return p;
   }
@@ -3170,7 +3173,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.27 (2026-11-27)';
+  var VERSION = 'v2.28 (2026-11-27)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -4774,6 +4777,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (m && it.added_at) m.added = it.added_at;   // when it was added to the playlist (or liked), for sorting
     if (m && t.album && t.album.name) m.albumName = t.album.name;   // v2.22: for Find in list
     if (m && parent.kind === 'liked' && state.saved[m.uri] === undefined) state.saved[m.uri] = true;
+    if (m && parent.kind === 'liked') likedNote(m, t);   // v2.28: artist IDs, for Liked songs on the artist page
     return m;
   }
   // opts.push (v2.12): open on top of the current view (a release from an artist view), so Back returns to it.
@@ -6058,6 +6062,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // Opening an album or podcast: the saved copy first; during a catalog pause, the fallbacks; otherwise Spotify.
   function startDetail(d) {
     var it = d.item;
+    if (it.kind === 'likedby') { fillLikedBy(d); return; }   // v2.28: from memory, no request
     if (it.kind === 'album' && it.id) {
       var c = slGet(SL_ALBUM, it.id);
       if (c && c.items.length) { useAlbumCache(d, c); return; }
@@ -6231,6 +6236,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         }
       }
     } else if (kind === 'playlist') copyNoteParts(d, parts, link);   // v2.24
+    else if (kind === 'likedby') likedByNote(d, parts, link);   // v2.28
     parts.forEach(function (p, i) {
       if (i && p.tagName === 'BUTTON') n.appendChild(el('span', { 'aria-hidden': 'true', text: '·' }));
       n.appendChild(p);
@@ -6560,6 +6566,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       ]),
       el('div', { class: 'dbtns' }, btns)
     ]));
+    main.appendChild(el('div', { id: 'aliked' }));   // v2.28: Liked songs · N
+    paintArtistLiked(d);
     main.appendChild(el('div', { id: 'alist' }));
     main.appendChild(el('div', { class: 'dfoot', id: 'afoot' }));
     paintArtistList(d);
@@ -6625,6 +6633,127 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       var t = document.querySelector('#alist a.item[href="' + d.lastGot[0].url.replace(/"/g, '') + '"]');
       if (t) t.focus({ preventScroll: true });
     }
+  }
+
+  // ---------- Liked songs on the artist page (v2.28) ----------
+  // A "Liked songs · 12" row under the artist page's header: the songs in your Liked Songs where this artist is
+  // any of the credited artists, matched by artist ID. Built only from what the page already holds this visit,
+  // so showing it and opening it send nothing: Search all's answer (findMemo), a Liked Songs view that's open or
+  // under the current one, or the Liked Songs pages mapped earlier this visit (likedSeen, filled by mapDetail;
+  // memory only, nothing stored). While only part of Liked Songs is loaded, the row says how many were found so
+  // far; with none found yet it offers Find in list inside Liked Songs, filled with the artist's name (its Search
+  // all is the loader, no new kind of request). Hidden once the whole list is known and has none by this artist.
+  // The row opens the songs as a song list, newest liked first. Spotify has no context for "liked songs by one
+  // artist", so Play, Shuffle and a tapped song send a list of song URIs (the first LIKEDBY_PLAY): playback
+  // continues through those songs only, and Now Playing shows no album or playlist for them.
+  var LIKEDBY_PLAY = 100;
+  var likedSeen = { me: '', by: {}, n: 0 };   // uri -> {m, i}: Liked Songs rows mapped this visit (i: first seen)
+  function likedNote(m, t) {
+    m.artistIds = (t.artists || []).map(function (a) { return a && a.id ? String(a.id) : ''; }).filter(Boolean);
+    var me = state.data && state.data.me, id = (me && me.id) || '';
+    if (likedSeen.me !== id) likedSeen = { me: id, by: {}, n: 0 };   // another account: start over
+    var w = likedSeen.by[m.uri];
+    if (w) w.m = m; else likedSeen.by[m.uri] = { m: m, i: likedSeen.n++ };
+  }
+  // What's known of Liked Songs now: {items, complete, total}. Null when nothing is known and nothing can be.
+  function likedKnown() {
+    var data = state.data;
+    if (!data) return null;
+    var total = typeof data.likedTotal === 'number' ? data.likedTotal : null;
+    var memo = findMemo['liked:'];
+    if (memo && memo.items && memo.items.length && !memo.next) return { items: memo.items, complete: true, total: memo.total };
+    var views = [state.detail].concat(state.detailStack), best = null;
+    views.forEach(function (d) {
+      if (!d || d.kind === 'artist' || !d.item || d.item.kind !== 'liked' || d.src !== 'api') return;
+      if (typeof d.total === 'number') total = d.total;
+      if (d.items.length && !d.next && !d.loading && !d.error) best = d;
+    });
+    if (best) return { items: best.items, complete: true, total: best.items.length };
+    var me = data.me, id = (me && me.id) || '', list = [];
+    if (likedSeen.me === id) {
+      for (var u in likedSeen.by) list.push(likedSeen.by[u]);
+      list.sort(function (a, b) { return cmpDesc(a.m.added || '', b.m.added || '') || a.i - b.i; });   // newest liked first
+    }
+    var n = list.length;
+    return { items: list.map(function (w) { return w.m; }), complete: total != null && n >= total, total: total };
+  }
+  // {songs, complete, loaded, total}, or null to show nothing (not signed in, or no Liked Songs at all).
+  function likedByArtist(id) {
+    var k = likedKnown();
+    if (!k || !id || (k.total === 0 && !k.items.length)) return null;
+    var songs = k.items.filter(function (i) { return i && i.artistIds && i.artistIds.indexOf(id) !== -1 && state.saved[i.uri] !== false; });
+    return { songs: songs, complete: k.complete, loaded: k.items.length, total: k.total };
+  }
+  function likedLoadedText(s) {
+    return fmtCount(s.loaded) + (s.total != null ? ' of ' + fmtCount(s.total) : '') + ' Liked Songs loaded';
+  }
+  // A row like the other list rows, with the Liked Songs heart as its cover.
+  function likedRow(name, sub, label, fn) {
+    var a = el('a', { class: 'item', href: 'https://open.spotify.com/collection/tracks', 'aria-label': label + (sub ? ', ' + sub : '') }, [
+      coverFor({ kind: 'liked' }),
+      el('div', { class: 'meta' }, [el('div', { class: 'name', text: name }), el('div', { class: 'sub', text: sub })])
+    ]);
+    a.addEventListener('click', function (ev) { ev.preventDefault(); fn(); });
+    return el('li', { class: 'row', 'data-likedby': '' }, [a]);
+  }
+  function paintArtistLiked(d) {
+    var box = $('aliked');
+    if (!box) return;
+    box.textContent = '';
+    var a = d.item, s = likedByArtist(a.id), row = null;
+    if (!s) return;
+    if (s.songs.length) {
+      var name = 'Liked songs · ' + fmtCount(s.songs.length) + (s.complete ? '' : ' so far');
+      row = likedRow(name, s.complete ? 'From your Liked Songs' : likedLoadedText(s), 'Open “' + name + '”',
+        function () { openDetail(likedByItem(a, d.img || a.img), { push: true }); });
+    } else if (!s.complete) {
+      row = likedRow('Liked songs', 'Find ' + a.name + ' in your Liked Songs', 'Find “' + a.name + '” in Liked Songs',
+        function () { findInLiked(a.name, false); });
+    }
+    if (row) box.appendChild(el('ul', { class: 'list' }, [row]));
+  }
+  function likedByItem(a, pic) {
+    return { kind: 'likedby', artistId: a.id, artistName: a.name || '', name: 'Liked songs by ' + (a.name || 'this artist'), uri: null,
+      url: a.url || 'https://open.spotify.com/artist/' + a.id, img: pic || '', sub: 'From your Liked Songs', uris: [] };
+  }
+  // The song list: each song plays the list from itself, then the songs before it (all within LIKEDBY_PLAY).
+  function fillLikedBy(d) {
+    var s = likedByArtist(d.item.artistId) || { songs: [], complete: true, loaded: 0, total: null };
+    var uris = s.songs.map(function (m) { return m.uri; });
+    d.src = 'memory'; d.next = null; d.total = s.songs.length; d.liked = s;
+    d.item.uris = uris.slice(0, LIKEDBY_PLAY);
+    d.items = s.songs.map(function (m, i) {
+      return Object.assign({}, m, { ctx: null, uris: uris.slice(i).concat(uris.slice(0, i)).slice(0, LIKEDBY_PLAY) });
+    });
+    if (state.detail === d) { paintDetailList(); paintDetailSort(); paintDetailFoot(); }
+  }
+  function likedByNote(d, parts, link) {
+    var s = d.liked;
+    if (!s) return;
+    if (!s.complete) {
+      parts.push(el('span', { text: 'From the ' + likedLoadedText(s) }));
+      link('Find the rest', function () { findInLiked(d.item.artistName, true); });
+    }
+    if (d.items.length > LIKEDBY_PLAY) parts.push(el('span', { text: 'Play and Shuffle use the newest ' + LIKEDBY_PLAY }));
+  }
+  // Liked Songs with Find in list filled in: Search all there loads the rest (the existing library loader).
+  // replace: from the artist's song list, Liked Songs takes its place, so Back returns to the artist page.
+  function findInLiked(name, replace) {
+    if (!state.data) return;
+    openDetail(likedDetailItem(), { push: !replace && !!state.detail });
+    var d = state.detail;
+    d.find = name || '';
+    var box = $('dfind');
+    if (box) box.value = d.find;
+    paintFindBox(d);
+    paintDetailList();
+    paintDetailFoot();
+    var back = document.querySelector('.dhead .back');
+    if (back) back.focus({ preventScroll: true });
+  }
+  function shuffleList(a) {
+    for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)), t = a[i]; a[i] = a[j]; a[j] = t; }
+    return a;
   }
 
   // ---------- follow artists (v2.25) ----------
