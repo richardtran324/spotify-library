@@ -727,7 +727,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     epHistory: 'lib-ep-history', // v2.11: [{uri, id, name, show:{id, name, images}, duration_ms, positionMs, played, at[, checkedAt]}], newest first
     epNotes: 'lib-ep-notes',     // v2.18: [{id, t, at[, cut]}], newest first: notes of episodes you opened or played (40, 4,000 characters each)
     epMarks: 'lib-ep-marks',     // v2.21: {uri: {played, at, pos}}: Mark as played / unplayed, this phone only (400, 180 days)
-    playLog: 'lib-play-log',     // v2.27: {e: [[playedAt ms, track id], …] newest first, t: {track id: [name, artists, album, cover]}}: songs from Recently played, kept past its last 50 (1,500 plays, 90 days; names cut at 80 characters; covers without the i.scdn.co prefix)
+    playLog: 'lib-play-log',     // v2.27: {e: [[playedAt ms, track id], …] newest first, t: {track id: [name, artists, album, cover]}}: songs from Recently played, kept past its last 50 (1,500 plays, 90 days; names cut at 80 characters with …; covers without the i.scdn.co prefix)
     ctxLast: 'lib-ctx-last',     // v2.23: {album or playlist URI | 'liked': {uri, id, name, positionMs, durMs, at}}: the last song heard in each list (40, 30 days)
     // v2.13 rate limits. Shared by every copy of the page that shares this storage (Safari tabs on one origin).
     cool: 'lib-cooloff',         // v2.14: {group: {until, reason, strikes, quotaAt, retryAfter, last429:{at, reason, retryAfter, what}}}
@@ -2298,14 +2298,15 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // ---------- listening log (v2.27) ----------
   // Spotify's recently played answer holds only the last 50 songs, so the page keeps what it already gets: each
   // answer (Recent, or Home's at most once per 15 minutes) is merged into a log on this phone, one entry per play
-  // (played_at + song), newest first, at most 1,500 plays and 90 days, with each song's name, artists, album (each cut at 80
+  // (played_at + song), newest first, at most 1,500 plays and 90 days, with each song's name, artists, album (each cut to 80
   // characters) and cover once. No request of its own. Plays are missed when more than 50 songs play between two answers. Recent
   // shows it under day headings, each song once per day; Liked Songs can sort by it (Not played lately). No counts.
   var LOG_MAX = 1500, LOG_MS = 90 * 24 * 60 * 60 * 1000, LOG_ROWS = 150, LOG_IMG = 'https://i.scdn.co/image/';
   var playLogMem = null, logVer = 0, logLastVer = -1, logLastMap = {};
+  var logFull = {};   // song id -> [name, artists, album] uncut, from Spotify's latest answer (this visit only)
   var logShow = LOG_ROWS, logKind = 'all';   // Recent: rows drawn so far, and the Show chip (this visit only)
   function logOk(x, now) {
-    return Array.isArray(x) && typeof x[0] === 'number' && typeof x[1] === 'string' && !!x[1] && now - x[0] < LOG_MS && x[0] < now + 60000;
+    return Array.isArray(x) && typeof x[0] === 'number' && typeof x[1] === 'string' && !!x[1] && now - x[0] < LOG_MS && x[0] < now + 24 * 60 * 60 * 1000;   // a day of slack for a slow phone clock
   }
   // Drops bad, old and repeated entries, keeps the newest LOG_MAX, and keeps song details only for songs still in it.
   function logPrune(L) {
@@ -2345,7 +2346,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   // rItems: the items of a GET /me/player/recently-played answer the page already asked for.
   function logMerge(rItems) {
-    var L = playLog(), have = {}, changed = false;
+    var L = playLog(), have = {}, changed = false, fresh = {};
     L.e.forEach(function (x) { have[x[0] + ' ' + x[1]] = true; });
     (rItems || []).forEach(function (it) {
       var t = it && it.track;
@@ -2353,7 +2354,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       var at = Date.parse(it.played_at) || 0;
       if (!at) return;
       var cover = img(t.album && t.album.images);
-      var meta = [String(t.name || 'Untitled').slice(0, 80), names(t.artists).slice(0, 80), String((t.album && t.album.name) || '').slice(0, 80), cover.indexOf(LOG_IMG) === 0 ? cover.slice(LOG_IMG.length) : cover];
+      var full = [String(t.name || 'Untitled'), names(t.artists), String((t.album && t.album.name) || '')];
+      fresh[t.id] = full;
+      var meta = full.map(logCut).concat(cover.indexOf(LOG_IMG) === 0 ? cover.slice(LOG_IMG.length) : cover);
       var old = L.t[t.id];
       if (!Array.isArray(old) || old.join('\n') !== meta.join('\n')) { L.t[t.id] = meta; changed = true; }
       var k = at + ' ' + t.id;
@@ -2362,14 +2365,17 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       L.e.push([at, t.id]);
       changed = true;
     });
+    logFull = fresh;
     if (!changed) return;
     logPrune(L);
     logVer++;
     logSave(L);
   }
-  // A log entry as a song row, like Recent's rows before: "Song · artists · album · 3 h ago".
+  function logCut(v) { return v.length > 80 ? v.slice(0, 79) + '…' : v; }   // stored names: 80 characters at most
+  // A log entry as a song row, like Recent's rows before: "Song · artists · album · 3 h ago". Songs in Spotify's
+  // latest answer use their uncut names; older ones the stored names (ending in … when cut).
   function logItem(x) {
-    var m = playLogMem.t[x[1]] || [], id = x[1], c = String(m[3] || ''), when = agoAt(x[0]);
+    var id = x[1], s = playLogMem.t[id] || [], m = logFull[id] || s, c = String(s[3] || ''), when = agoAt(x[0]);
     var sub = 'Song · ' + (m[1] || '') + (m[2] ? ' · ' + m[2] : '') + (when ? ' · ' + when : '');
     return {
       kind: 'track', id: id, name: m[0] || 'Untitled', uri: 'spotify:track:' + id, url: 'https://open.spotify.com/track/' + id,
@@ -2409,7 +2415,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (n <= 0) return 'Today';
     if (n === 1) return 'Yesterday';
     var d = new Date(ms), o = n < 7 ? { weekday: 'long' } : { weekday: 'short', month: 'short', day: 'numeric' };
-    if (d.getFullYear() !== new Date().getFullYear()) o.year = 'numeric';
+    if (n >= 7 && d.getFullYear() !== new Date().getFullYear()) o.year = 'numeric';
     try { return d.toLocaleDateString(undefined, o); } catch (e) { return d.toDateString(); }
   }
   function playedAgo(ms) {
