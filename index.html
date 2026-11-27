@@ -874,20 +874,45 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     volume: svg('<path fill="currentColor" d="M4 9h4l5-4v14l-5-4H4z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12"/>')
   };
 
-  var toastTimer = null;
+  // audit: the toast waits while focus is in it (Undo, a link, Close) and closes toastMs after focus leaves;
+  // when it closes with focus inside, focus goes back to the control you were on (never to body).
+  var toastTimer = null, toastMs = 3000, toastReturn = null;
+  function toastFocused() {
+    var a = document.activeElement;
+    return !!(a && a !== document.body && $('toast').contains(a));
+  }
+  function toastGiveBack(a) {
+    var r = toastReturn;
+    toastReturn = null;
+    if (r && r !== document.body && document.body.contains(r) && !$('toast').contains(r)) r.focus();
+    else if (a && a.blur) a.blur();
+  }
+  function hideToast() {
+    var t = $('toast'), a = toastFocused() ? document.activeElement : null;
+    clearTimeout(toastTimer); toastTimer = null;
+    t.hidden = true;
+    if (a) toastGiveBack(a);
+  }
+  function toastTimeout() {
+    clearTimeout(toastTimer); toastTimer = null;
+    if (!toastFocused()) toastTimer = setTimeout(hideToast, toastMs);
+  }
   function toast(msg, link, action) {
-    var t = $('toast');
+    var t = $('toast'), inside = toastFocused();
+    if (!inside) toastReturn = document.activeElement;
     t.textContent = '';
     t.appendChild(el('span', { text: msg }));
     if (link) t.appendChild(el('a', { href: link.href, text: link.text }));
     if (action) {
       var b = el('button', { class: 'toastbtn', type: 'button', text: action.text });
-      b.addEventListener('click', function () { t.hidden = true; clearTimeout(toastTimer); action.fn(); });
+      b.addEventListener('click', function () { hideToast(); action.fn(); });
       t.appendChild(b);
     }
     t.hidden = false;
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { t.hidden = true; }, (link || action) ? 8000 : 3000);
+    // A new toast over one you were on: stay in it (its link or button), else back to where you were.
+    if (inside && !toastFocused()) { var nb = t.querySelector('a, button'); if (nb) nb.focus(); else toastGiveBack(null); }
+    toastMs = (link || action) ? 8000 : 3000;
+    toastTimeout();
   }
   function errMsg(r) {
     var e = r && r.json && r.json.error;
@@ -3833,8 +3858,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       toast('Copy this link:', null, { text: 'Close', fn: function () {} });
       var t = $('toast');
       t.insertBefore(el('span', { class: 'tsel', text: url }), t.querySelector('.toastbtn'));
-      clearTimeout(toastTimer);
-      toastTimer = setTimeout(function () { t.hidden = true; }, 15000);
+      toastMs = 15000;   // audit: and not while focus is in it
+      toastTimeout();
     }
     var c = navigator.clipboard;
     if (!c || !c.writeText) return byHand();
@@ -6845,6 +6870,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   $('sheetClose').addEventListener('click', closeSheet);
   $('sheetBack').addEventListener('click', closeSheet);
   $('sheetRefresh').addEventListener('click', loadSheetDevices);
+  // audit: the toast's timer stops while focus is in it and starts again when focus leaves.
+  $('toast').addEventListener('focusin', function () { clearTimeout(toastTimer); toastTimer = null; });
+  $('toast').addEventListener('focusout', function (e) {
+    if ($('toast').hidden || (e.relatedTarget && $('toast').contains(e.relatedTarget))) return;
+    clearTimeout(toastTimer); toastTimer = setTimeout(hideToast, toastMs);
+  });
   // Escape closes the topmost layer only: a sheet first, then the Now Playing screen.
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
