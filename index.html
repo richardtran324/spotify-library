@@ -341,7 +341,7 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   border: 0; border-radius: 8px; padding: 7px 10px; min-height: 36px; cursor: pointer;
 }
 .seg button[aria-pressed="true"] { background: var(--surface); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18); }
-.lbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; }
+.lbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; }   /* v2.40: wraps (filter chips) */
 .lbar .btn { display: inline-flex; align-items: center; gap: 6px; }
 .lbar .btn svg { width: 18px; height: 18px; display: block; }
 .lnote { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 0.85rem; color: var(--muted); margin: 10px 2px 0; }
@@ -387,6 +387,12 @@ header.top.detail .schips { display: none; }
 .sortbar .chip { font-size: 0.85rem; padding: 5px 11px; min-height: 34px; }
 .snote { font-size: 0.8rem; color: var(--muted); margin: 6px 2px 0; }
 .sortdir { margin-left: 4px; }   /* v2.34: ↑ or ↓ on a chosen sort that turns around */
+/* v2.40: episode filter chips (44px tap targets; they wrap at phone width) */
+.efbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+#dfilt .efbar { margin-top: 10px; }
+.efbar .chip { min-height: 44px; font-size: 0.85rem; padding: 6px 12px; }
+#dfilt .empty { margin: 10px 2px 0; }
+.epfreset { margin-top: 8px; min-height: 44px; }
 /* Full Now Playing screen: slides up over everything except the sheets (device picker, Up next) and the toast */
 body.npopen { overflow: hidden; }
 body.sheetopen { overflow: hidden; }   /* audit: the page stays still behind an open sheet (own class, so NP's lock is never touched) */
@@ -763,6 +769,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     pending: 'lib-pending',    // {item, opts, at, mode[, manual, retry]}: a tap waiting for Spotify to wake up
     latest: 'lib-latest',      // {at, items, failed}: newest episodes across your saved shows
     hidePlayed: 'lib-hide-played',
+    epFilters: 'lib-ep-filters', // v2.40: {latest | episodes | 'show:<id>': {s?, f?, at}}: episode filter chips per list (only non-default; 60 podcasts)
     searchType: 'lib-searchtype', // Search Spotify result type: 'all' (default) or one of SEARCH_TYPES
     showSort: 'lib-showsort',    // v2.7 Shows order; read only when 'lib-sort-shows' is unset (see sortMode)
     pins: 'lib-pins',            // [{kind, id, name, uri, url, img, sub[, ownerId, collaborative]}], oldest pin first; local only
@@ -1723,6 +1730,119 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       var x = m === 'dur' ? (i.durMs ? fmtTime(i.durMs) : '') : fmtDate(i.released);
       return x ? Object.assign({}, i, { sub: (i.sub || '') + ' · ' + x }) : i;
     });
+  }
+  // ---------- episode filters (v2.40) ----------
+  // v2.40: chips on Podcasts → Latest, a podcast's episode list and Saved episodes: Unplayed (not finished: what
+  // Hide played used to show, in-progress ones included), In progress (started, not finished) and All, plus a
+  // "Fits in" chip that cycles Any length → Under 20 min → Under 45 min by time LEFT (length minus where you are;
+  // a played episode would start over, so its whole length counts). Played state is the page's usual one: Spotify's
+  // resume point, the page's own history and this phone's Mark as played. They filter the rows already loaded and
+  // combine with the Sort chips; Play newest (and a podcast's Play) picks from what the filter shows. No requests.
+  // Remembered per list in 'lib-ep-filters' = {latest | episodes | 'show:<id>': {s?, f?, at}}: only lists set to
+  // something other than All / Any length are kept, at most EPF_MAX podcasts. On Latest, Unplayed IS Hide played:
+  // 'lib-hide-played' stays true whenever Latest hides played episodes (Unplayed or In progress), so Home's Latest
+  // episodes and older copies of the page agree, and an old Hide played setting opens as Unplayed.
+  var EPF_MAX = 60;                                    // v2.40: podcasts whose filter is remembered
+  var EPF_STATES = [['unplayed', 'Unplayed'], ['progress', 'In progress'], ['all', 'All']];
+  var EPF_FITS = [0, 20, 45];                          // minutes left; 0 = any length
+  var epfMem = null;                                   // v2.40: the stored filters (memory only, if storage is blocked)
+  var hideMem = null;                                  // v2.40: Hide played, if storage is blocked
+  var epfStale = false, hideStale = false;             // v2.40: the last write failed (quota/blocked): memory wins over storage
+  // set() that says whether the write went through (set() itself returns that since v2.38).
+  function setOk(k, v) { return set(k, v); }
+  function epfRead() {
+    if (epfStale && epfMem) return epfMem;
+    var o = get(K.epFilters);
+    if (o && typeof o === 'object' && !Array.isArray(o)) epfMem = o;
+    else if (!epfMem) epfMem = {};
+    return epfMem;
+  }
+  function epfOk(s) { for (var i = 0; i < EPF_STATES.length; i++) { if (EPF_STATES[i][0] === s) return true; } return false; }
+  // The list's filter: {s: 'unplayed' | 'progress' | 'all', f: 0 | 20 | 45}.
+  function epFilter(key) {
+    var o = epfRead(), e = Object.prototype.hasOwnProperty.call(o, key) && o[key] && typeof o[key] === 'object' ? o[key] : {};
+    var s = epfOk(e.s) ? e.s : 'all';
+    if (key === 'latest') s = hidePlayed() ? (s === 'progress' ? 'progress' : 'unplayed') : 'all';
+    return { s: s, f: EPF_FITS.indexOf(e.f) > 0 ? e.f : 0 };
+  }
+  function epfActive(key) { var f = epFilter(key); return f.s !== 'all' || f.f > 0; }
+  // Re-reads storage first, so another copy's choices for other lists are kept.
+  function setEpFilter(key, s, f) {
+    var o = epfRead();
+    var keep = key === 'latest' ? s === 'progress' : s !== 'all';
+    delete o[key];   // re-added last, so key order breaks ties in `at` (newest choice last)
+    if (keep || f) o[key] = { s: keep ? s : undefined, f: f || undefined, at: Date.now() };
+    var shows = Object.keys(o).filter(function (k) { return /^show:/.test(k); });
+    if (shows.length > EPF_MAX) {
+      var pos = {};
+      shows.forEach(function (k, i) { pos[k] = i; });
+      shows.sort(function (a, b) { return ((o[b] && o[b].at) || 0) - ((o[a] && o[a].at) || 0) || pos[b] - pos[a]; });
+      shows.slice(EPF_MAX).forEach(function (k) { delete o[k]; });
+    }
+    epfMem = o;
+    epfStale = !setOk(K.epFilters, o);
+    if (key === 'latest') { hideMem = s !== 'all'; hideStale = !setOk(K.hidePlayed, hideMem); }
+  }
+  function epfKey(it) { return !it ? '' : it.kind === 'show' ? (it.id ? 'show:' + it.id : '') : it.kind === 'episodes' ? 'episodes' : ''; }
+  // Time left in ms, or -1 when the length isn't known. Call on a marked row (markItem).
+  function epLeft(i) { return i.durMs > 0 ? Math.max(0, i.durMs - (i.played ? 0 : (i.positionMs || 0))) : -1; }
+  function epPass(i, flt) {
+    if (!i || i.kind !== 'episode') return flt.s === 'all' && !flt.f;
+    markItem(i);
+    if (flt.s === 'unplayed' && i.played) return false;
+    if (flt.s === 'progress' && (i.played || !(i.positionMs > 0))) return false;
+    if (flt.f) { var l = epLeft(i); if (l < 0 || l > flt.f * 60000) return false; }
+    return true;
+  }
+  function epFiltered(items, flt) { return flt.s === 'all' && !flt.f ? items : items.filter(function (i) { return epPass(i, flt); }); }
+  // "unplayed episodes under 20 min left", for the empty and Play newest messages.
+  function epfWords(flt) {
+    var w = flt.s === 'unplayed' ? 'unplayed episodes' : flt.s === 'progress' ? 'episodes in progress' : 'episodes';
+    return w + (flt.f ? ' with under ' + flt.f + ' min left' : '');
+  }
+  // The chip row. rerender() repaints whatever the row filters; focus then returns to the chip just pressed.
+  // Tapping the chosen Unplayed or In progress again goes back to All (so Unplayed works like Hide played did).
+  function epfBar(key, rerender) {
+    var cur = epFilter(key);
+    var g = el('div', { class: 'efbar', role: 'group', 'aria-label': 'Filter episodes', 'data-epf': key });
+    function after(sel) {
+      rerender();
+      var nb = document.querySelector('.efbar[data-epf="' + key + '"] ' + sel);
+      if (nb) nb.focus({ preventScroll: true });
+    }
+    EPF_STATES.forEach(function (s) {
+      var b = el('button', { class: 'chip', type: 'button', 'data-epf-s': s[0], 'aria-pressed': String(cur.s === s[0]), text: s[1] });
+      b.addEventListener('click', function () {
+        var c = epFilter(key);
+        var to = c.s === s[0] ? (s[0] === 'all' ? '' : 'all') : s[0];
+        if (!to) return;
+        setEpFilter(key, to, c.f);
+        after('[data-epf-s="' + s[0] + '"]');
+      });
+      g.appendChild(b);
+    });
+    var nxt = EPF_FITS[(EPF_FITS.indexOf(cur.f) + 1) % EPF_FITS.length];
+    var fb = el('button', { class: 'chip', type: 'button', 'data-epf-f': String(cur.f), 'aria-pressed': String(cur.f > 0),
+      text: cur.f ? 'Under ' + cur.f + ' min' : 'Any length',
+      'aria-label': 'Fits in: ' + (cur.f ? 'under ' + cur.f + ' minutes left' : 'any length') + '. Tap for ' + (nxt ? 'under ' + nxt + ' minutes left' : 'any length') + '.' });
+    fb.addEventListener('click', function () {
+      var c = epFilter(key);
+      setEpFilter(key, c.s, EPF_FITS[(EPF_FITS.indexOf(c.f) + 1) % EPF_FITS.length]);
+      after('[data-epf-f]');
+    });
+    g.appendChild(fb);
+    return g;
+  }
+  // "Show all episodes": back to All and Any length.
+  function epfReset(key, rerender) {
+    var b = el('button', { class: 'btn secondary epfreset', type: 'button', text: 'Show all episodes' });
+    b.addEventListener('click', function () {
+      setEpFilter(key, 'all', 0);
+      rerender();
+      var nb = document.querySelector('.efbar[data-epf="' + key + '"] [data-epf-s="all"]');
+      if (nb) nb.focus({ preventScroll: true });
+    });
+    return b;
   }
   function savedEpisodesItem(d) {
     return { kind: 'episodes', name: 'Saved episodes', uri: null, url: 'https://open.spotify.com/collection/your-episodes', sub: 'Podcast · ' + d.episodesTotal + (d.episodesTotal === 1 ? ' episode' : ' episodes') };
@@ -2934,7 +3054,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function onLatestView() { return state.started && !state.detail && state.filter === 'podcasts' && state.podTab === 'latest'; }
   function onHome() { return state.started && !state.detail && state.filter === 'home'; }
   function latestFresh(c) { return !!c && !c.partial && typeof c.at === 'number' && Date.now() - c.at < LATEST_MS && c.at < Date.now() + 60000; }   // audit: partial = cut short by leaving the page
-  function hidePlayed() { return get(K.hidePlayed) === true; }
+  function hidePlayed() { if (hideStale && hideMem != null) return hideMem; var v = get(K.hidePlayed); return v == null && hideMem != null ? hideMem : v === true; }   // v2.40: memory if storage is blocked or full
   function rerenderLatest() {
     var onShows = state.started && !state.detail && state.filter === 'podcasts' && state.podTab === 'shows';
     if (onLatestView() || onShows || onHome()) renderList();
@@ -3450,25 +3570,23 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!d.shows.length) { main.appendChild(el('p', { class: 'empty', text: 'You haven’t saved any podcasts yet.' })); return; }
     syncLatest();
     var c = L.cache;
-    var all = c ? latestVisible(c.items).map(latestItem) : [];
-    var hide = hidePlayed();
-    var newest = all.filter(function (i) { return !i.played; })[0] || null;
-    // Header: Play (newest unplayed), Hide played, then when it was updated.
+    var all = c ? latestVisible(c.items).map(latestItem) : [];   // audit: saved podcasts only
+    var flt = epFilter('latest');   // v2.40: Unplayed / In progress / All and Fits in (Unplayed is Hide played)
+    var fon = flt.s !== 'all' || flt.f > 0;
+    var newest = epFiltered(all, flt).filter(function (i) { return !i.played; })[0] || null;   // v2.40: follows the filter
+    // Header: Play (newest unplayed the filter shows), the filter chips, then when it was updated.
     var playA = el('a', { class: 'btn small', href: newest ? newest.url : '#', 'aria-label': newest ? 'Play newest unplayed episode: ' + newest.name : 'Play newest unplayed episode' });
     playA.innerHTML = ICON.play;
     playA.appendChild(el('span', { text: 'Play newest' }));
     playA.addEventListener('click', function (ev) {
-      if (!newest) { ev.preventDefault(); toast(L.loading ? 'Episodes are still loading.' : 'No unplayed episodes.'); return; }
+      if (!newest) {
+        ev.preventDefault();
+        toast(L.loading ? 'Episodes are still loading.' : fon && flt.s !== 'all' ? 'No ' + epfWords(flt) + '.' : fon ? 'No unplayed ' + epfWords(flt) + '.' : 'No unplayed episodes.');
+        return;
+      }
       onItemClick(newest, ev);
     });
-    var hideB = el('button', { class: 'chip', type: 'button', 'aria-pressed': String(hide), text: 'Hide played' });
-    hideB.addEventListener('click', function () {
-      set(K.hidePlayed, !hidePlayed());
-      renderList();
-      var nb = document.querySelector('.lbar .chip');
-      if (nb) nb.focus();
-    });
-    main.appendChild(el('div', { class: 'lbar' }, [playA, hideB]));
+    main.appendChild(el('div', { class: 'lbar' }, [playA, epfBar('latest', renderList)]));
     if (c && c.items.length > 1) main.appendChild(sortBar('latest', renderList));
     var note = el('p', { class: 'lnote' });
     if (c) note.appendChild(el('span', { text: 'Updated ' + ago(new Date(c.at).toISOString()) + (L.loading ? ' · Updating…' : '') }));
@@ -3488,12 +3606,16 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!c) return;
     // Play newest (above) always uses the newest-first order; the list follows the chosen sort.
     var shown = sortIsDefault('latest') ? all : sortList('latest', latestVisible(c.items)).map(latestItem);
-    var items = matches(shown.filter(function (i) { return !(hide && i.played); }));
+    var items = matches(epFiltered(shown, flt));   // v2.40
     if (!items.length) {
       main.appendChild(el('p', { class: 'empty', text: state.query.trim() ? 'Nothing matches “' + state.query + '”.'
-        : (all.length ? 'Everything here is played. Turn off Hide played to see it.' : 'No episodes yet.') }));
+        : !all.length ? 'No episodes yet.'
+        : flt.s === 'unplayed' && !flt.f ? 'Everything here is played. Tap All to see it.'
+        : 'No ' + epfWords(flt) + ' among the ' + all.length + ' latest episodes.' }));
+      if (fon && all.length && !state.query.trim()) main.appendChild(epfReset('latest', renderList));
       return;
     }
+    if (fon) main.appendChild(el('p', { class: 'snote', text: 'Showing ' + items.length + ' of ' + all.length + ' episodes' }));   // v2.40
     var ul = el('ul', { class: 'list' });
     items.forEach(function (i) { ul.appendChild(itemRow(i)); });
     main.appendChild(ul);
@@ -4083,7 +4205,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.39 (2026-11-27)';
+  var VERSION = 'v2.40 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -5798,7 +5920,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!q) jump = jump.slice(0, HOME_JUMP);
     cardStrip(main, 'hJump', 'Jump back in', jump, function () { setFilter('recent'); });
     shown += jump.length;
-    // Latest episodes: the newest few from the Latest cache (Hide played applies).
+    // Latest episodes: the newest few from the Latest cache (Hide played applies; v2.40: it stays on while Latest is Unplayed or In progress).
     if (d.shows && d.shows.length) {
       syncLatest();   // v2.14: the cache only; Latest refreshes when you open it
       var c = state.latest.cache;
@@ -5985,9 +6107,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var btns = [playA];
     if (isPod(it)) {
       // No show context to play, so Play starts the newest episode you haven't finished.
+      // v2.40: from the episodes the filter shows (with the chips at All / Any length, every loaded one).
       playA.addEventListener('click', function (ev) {
-        var t = firstUnplayed(d.items);
-        if (!t) { ev.preventDefault(); toast(d.loading ? 'Episodes are still loading.' : 'No episodes to play.'); return; }
+        var k = epfKey(it), flt = k ? epFilter(k) : { s: 'all', f: 0 };
+        var t = firstUnplayed(epFiltered(d.items, flt));
+        if (!t) { ev.preventDefault(); toast(d.loading ? 'Episodes are still loading.' : d.items.length ? 'No ' + epfWords(flt) + ' loaded.' : 'No episodes to play.'); return; }
         onItemClick(t, ev);
       });
     } else {
@@ -6014,6 +6138,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var fbox = findBox(d);   // v2.22: Find in list
     main.appendChild(fbox);
     if (fsel && !fbox.hidden) { try { $('dfind').focus({ preventScroll: true }); $('dfind').setSelectionRange(fsel[0], fsel[1]); } catch (e) {} }
+    main.appendChild(el('div', { id: 'dfilt' }));   // v2.40: episode filter chips
     main.appendChild(el('div', { id: 'dsort' }));
     main.appendChild(el('ul', { class: 'list compact', id: 'dlist' }));
     main.appendChild(el('div', { class: 'dfoot', id: 'dfoot' }));
@@ -6069,12 +6194,39 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (d.editing) return paintEditRows(d);   // v2.26
     var view = detailView(d.item);
     var tok = findTokens(d), list = d.items;
+    var ek = epfKey(d.item);   // v2.40: the episode filter first, then Find in list, then the sort
+    if (ek) list = epFiltered(list, epFilter(ek));
     if (tok) {   // v2.22: filter first (cheap), then sort only the matches; at most FIND_SHOW rows are drawn
       list = list.filter(function (i) { return findHit(i, tok); });
       d.findHits = list.length;
     }
     list = view ? sortShown(view, sortList(view, list)) : list;
     appendDetailRows(tok ? list.slice(0, FIND_SHOW) : list, true);
+  }
+  // v2.40: the filter chips above a podcast's episodes and Saved episodes, with "Showing 3 of 50 loaded" while a
+  // filter is on, and "Show all episodes" when it hides every loaded row (Load more stays below: older pages may
+  // hold matches).
+  function paintDetailFilter() {
+    var d = state.detail;
+    var box = $('dfilt');
+    if (!d || !box || d.kind === 'artist') return;
+    var key = epfKey(d.item);
+    var a = document.activeElement;
+    var had = a && box.contains(a) ? (a.hasAttribute('data-epf-f') ? '[data-epf-f]' : a.hasAttribute('data-epf-s') ? '[data-epf-s="' + a.getAttribute('data-epf-s') + '"]' : '.epfreset') : null;
+    box.textContent = '';
+    if (!key || d.restricted || d.editing) return;
+    var flt = epFilter(key), on = flt.s !== 'all' || flt.f > 0;
+    if (!d.items.length && !on) return;
+    box.appendChild(epfBar(key, function () { paintDetailList(); paintDetailFoot(); }));
+    if (on && d.items.length) {
+      var n = epFiltered(d.items, flt).length, loaded = d.next ? ' loaded' : '';
+      if (n) box.appendChild(el('p', { class: 'snote', text: 'Showing ' + n + ' of ' + d.items.length + loaded + (d.items.length === 1 ? ' episode' : ' episodes') }));
+      else if (!findTokens(d)) {
+        box.appendChild(el('p', { class: 'empty', text: 'No ' + epfWords(flt) + ' in the ' + d.items.length + (d.items.length === 1 ? ' episode' : ' episodes') + (d.next ? ' loaded so far.' : ' here.') }));
+        box.appendChild(epfReset(key, function () { paintDetailList(); paintDetailFoot(); }));
+      }
+    }
+    if (had) { var nb = box.querySelector(had); if (nb) nb.focus({ preventScroll: true }); }
   }
   function firstUnplayed(items) {
     for (var i = 0; i < items.length; i++) { if (!markItem(items[i]).played) return items[i]; }   // v2.21: marks count
@@ -6147,6 +6299,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       ul.appendChild(itemRow(i));
     });
     requestSaved(savableUris(items));
+    paintDetailFilter();   // v2.40: the chips and their count follow the rows
   }
   // v2.38: the album details footer under the last song: release date at Spotify's precision, ℗/© lines, label.
   // Saved albums have them from the library answer; others (search, an artist's releases) have the date only.
@@ -6360,7 +6513,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function paintFindFoot(d, f, noun) {
     var hits = d.findHits || 0, q = (d.find || '').trim();
-    if (!hits) f.appendChild(el('p', { class: 'empty', text: 'No ' + noun + ' match “' + q + '”' + (d.next ? ' in the ' + fmtCount(d.items.length) + ' loaded.' : '.') }));
+    var ek = epfKey(d.item), fon = !!ek && epfActive(ek);   // v2.40: the episode filter also hides rows
+    if (!hits) f.appendChild(el('p', { class: 'empty', text: 'No ' + noun + ' match “' + q + '”' + (fon ? ' with the current filter' : '') + (d.next ? ' in the ' + fmtCount(d.items.length) + ' loaded.' : '.') }));
+    if (!hits && fon) f.appendChild(epfReset(ek, function () { paintDetailList(); paintDetailFoot(); }));
     else if (hits > FIND_SHOW) f.appendChild(el('p', { class: 'snote', text: 'Showing the first ' + FIND_SHOW + ' of ' + fmtCount(hits) + ' matches. Type more to narrow it.' }));
     if (!d.next) return;
     var p = findPlan(d);
@@ -6375,6 +6530,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var capped = p.group !== 'catalog' && !p.memo && p.more > p.reqs * FIND_PAGE;
     var label = capped ? 'Search ' + fmtCount(p.reqs * FIND_PAGE) + ' more' : 'Search all ' + fmtCount(p.total) + ' ' + noun;
     if (p.group === 'catalog' && p.reqs) label += ' (' + p.reqs + (p.reqs === 1 ? ' request)' : ' requests)');
+    if (fon) label += ' with the current filter';   // v2.40: what it finds still goes through the chips
     var b = el('button', { class: 'btn secondary', type: 'button', id: 'dfindAll', text: label });
     if (p.disabled) b.disabled = true;
     b.addEventListener('click', function () { searchAll(d); });
@@ -6448,7 +6604,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     function paintNew(mapped, last) {
       if (d.item.kind === 'album') { remapDetail(d); return; }   // first: d.items follows d.raw even off screen (it paints only on screen)
       if (state.detail !== d) return;
-      var tok = findTokens(d), plain = sortIsDefault(detailView(d.item));
+      var tok = findTokens(d), plain = sortIsDefault(detailView(d.item)) && !(epfKey(d.item) && epfActive(epfKey(d.item)));   // v2.40
       if (tok) {
         var n = mapped.filter(function (i) { return findHit(i, tok); }).length;
         if (n && plain && (d.findHits || 0) >= FIND_SHOW) d.findHits += n;   // already a full screen: only the count changes
@@ -6718,7 +6874,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (kind === 'playlist') { var pm = catMemo[memoKey(url)]; if (plLabel && pm) pm.plLabel = plLabel; plSave(d.item.id); }   // v2.37
       if (!cur) return;
       // In the default order new rows go at the end; a chosen sort re-sorts everything loaded so far.
-      if (sortIsDefault(detailView(d.item)) && !d.editing && !findTokens(d)) appendDetailRows(mapped);   // v2.26 Edit / v2.22 Find redraw the list
+      if (sortIsDefault(detailView(d.item)) && !d.editing && !findTokens(d) && !(epfKey(d.item) && epfActive(epfKey(d.item)))) appendDetailRows(mapped);   // v2.40: a filter redraws too   // v2.26 Edit / v2.22 Find redraw the list
       else paintDetailList();
       paintDetailSort();
       paintDetailFoot();
