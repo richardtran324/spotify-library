@@ -29,7 +29,7 @@ function setup(store, env, tabOpts) {
   var tab = H.makeTab(store, function (method, path, q, body, call) {
     call.body = body ? JSON.parse(body) : null;
     var off = +(q.get('offset') || 0);
-    if (method === 'GET' && env.fail && env.fail[path + '@' + off]) return { status: env.fail[path + '@' + off], json: { error: { status: 429, message: 'API rate limit exceeded' } }, delay: env.delay || 0 };
+    if (method === 'GET' && env.fail && env.fail[path + '@' + off]) return { status: env.fail[path + '@' + off], json: { error: { status: 429, message: 'API rate limit exceeded' } }, delay: env.delayOf ? env.delayOf(off) : env.delay || 0 };
     if (method === 'GET' && (path === '/me/tracks' || path === '/playlists/p1/items')) {
       var total = path === '/me/tracks' ? env.liked || 0 : env.pl || 0, items = [];
       for (var i = off; i < Math.min(total, off + 50); i++) {
@@ -38,7 +38,7 @@ function setup(store, env, tabOpts) {
         o[path === '/me/tracks' ? 'track' : 'item'] = songObj(i, path === '/me/tracks' ? 't' : 'p');
         items.push(o);
       }
-      return { status: 200, delay: env.delay || 0, json: { items: items, total: total, offset: off, limit: 50,
+      return { status: 200, delay: env.delayOf ? env.delayOf(off) : env.delay || 0, json: { items: items, total: total, offset: off, limit: 50,
         next: off + 50 < total ? 'https://api.spotify.com/v1' + path + '?offset=' + (off + 50) + '&limit=50' : null } };
     }
     if (method === 'GET' && path === '/me/library/contains') return { status: 200, json: (q.get('uris') || '').split(',').map(function () { return false; }) };
@@ -513,6 +513,112 @@ tests.push(function () {
     check('15 year chips at least 44px tall and wide', /\.yearbar \.chip \{[^}]*min-height: 44px;[^}]*min-width: 44px;/.test(css));
     check('15 headers have scroll margin', /li\.yhead \{[^}]*scroll-margin-top/.test(css));
     check('15 header colours use theme tokens', /\.yhead h3 \{[^}]*color: var\(--muted\)/.test(css));
+  });
+});
+
+// 16. Review fix: Older waiting behind an earlier load that ends in a 429 doesn't get stuck on "Loading songs…".
+tests.push(function () {
+  var store = H.seedStore(), fail = {};
+  fail['/me/tracks@100'] = 429;
+  return setup(store, { liked: 500, fail: fail, delayOf: function (off) { return off ? 600 : 10; } }, scrollOpts(false)).then(function (tab) {
+    var t = tab.t(), d2;
+    t.openDetail(LIKED);
+    return H.wait(200).then(function () {
+      click(tab, chip(tab, 'older'));   // run A: offsets 50 and 100 in flight; 100 answers 429
+      t.goBack(); t.closeDetail();
+      t.openDetail(LIKED);
+      return H.wait(150);
+    }).then(function () {
+      d2 = t.state.detail;
+      click(tab, chip(tab, 'older'));   // waits for run A
+      check('16 second Older waits behind the first', d2.findRun && d2.findRun.waiting && !!d2.lyJump, d2.findRun);
+      return H.wait(1200);
+    }).then(function () {
+      check('16 library paused by the 429', t.coolLeft('library') > 0);
+      check('16 not stuck: no load, no run, no pending jump', !d2.loading && !d2.findRun && !d2.lyJump, { l: d2.loading, r: d2.findRun, j: d2.lyJump });
+      check('16 footer no longer says Loading', !/Loading songs/.test(footText(tab)) && !/Stop/.test(footText(tab)), footText(tab));
+      check('16 Load more back', !!loadMore(tab), footText(tab));
+      check('16 Older off with the pause note', chip(tab, 'older').disabled && /paus/i.test($(tab, 'dyears').textContent), $(tab, 'dyears').textContent);
+      check('16 the waiting list sent nothing', reqs(tab, 'GET', '/me/tracks').filter(function (c) { return +new URLSearchParams(c.query).get('offset') > 100; }).length === 0, offsets(reqs(tab, 'GET', '/me/tracks')));
+      // Later, after the pause: Load more doesn't trigger a stale jump.
+      store.setItem('lib-cooloff', '{}');
+      tab.w.__scrolls.length = 0;
+      click(tab, loadMore(tab));
+      return H.wait(800);
+    }).then(function () {
+      check('16 Load more later: no stale jump', tab.w.__scrolls.length === 0 && !/^ly-/.test((doc(tab).activeElement || {}).id || ''), { s: tab.w.__scrolls, a: doc(tab).activeElement && doc(tab).activeElement.id });
+      check('16 Older on again once the pause is over', chip(tab, 'older') && !chip(tab, 'older').disabled);
+    });
+  });
+});
+
+// 17. Review fix: the end-of-Older jump doesn't scroll or take focus while a sheet or Now Playing is open.
+tests.push(function () {
+  return setup(H.seedStore(), { liked: 240, delay: 40 }, scrollOpts(false)).then(function (tab) {
+    var t = tab.t(), qb;
+    t.openDetail(LIKED);
+    return H.wait(300).then(function () {
+      tab.w.__scrolls.length = 0;
+      click(tab, chip(tab, 'older'));
+      var q = $(tab, 'queue');
+      q.hidden = false;   // Up next opens over the list while Older loads
+      qb = q.querySelector('button');
+      qb.focus();
+      return settled(tab);
+    }).then(function () {
+      check('17 Older finished', heads(tab).length === 4 && !t.state.detail.lyJump);
+      check('17 sheet open: no scroll', tab.w.__scrolls.length === 0, tab.w.__scrolls);
+      check('17 sheet open: focus stays in the sheet', doc(tab).activeElement === qb, doc(tab).activeElement && (doc(tab).activeElement.id || doc(tab).activeElement.textContent));
+      $(tab, 'queue').hidden = true;
+      tab.w.__scrolls.length = 0;
+      click(tab, chip(tab, '2023'));
+      check('17 sheet closed: chips jump as usual', tab.w.__scrolls.length === 1 && doc(tab).activeElement === $(tab, 'ly-2023'));
+    });
+  }).then(function () {
+    return setup(H.seedStore(), { liked: 240, delay: 40 }, scrollOpts(false));
+  }).then(function (tab) {
+    var t = tab.t();
+    t.openDetail(LIKED);
+    return H.wait(300).then(function () {
+      tab.w.__scrolls.length = 0;
+      click(tab, chip(tab, 'older'));
+      doc(tab).body.classList.add('npopen');   // Now Playing open
+      return settled(tab);
+    }).then(function () {
+      check('17 Now Playing open: no scroll, no header focus', tab.w.__scrolls.length === 0 && !/^ly-/.test((doc(tab).activeElement || {}).id || ''), tab.w.__scrolls);
+      check('17 Now Playing open: jump dropped, not kept', !t.state.detail.lyJump);
+    });
+  });
+});
+
+// 18. Review fix: the chip row isn't rebuilt by a page that changes nothing; Older only toggles.
+tests.push(function () {
+  return setup(H.seedStore(), { liked: 400, delay: 30, dates: function (n) { return n < 300 ? '2026-06-15T12:00:00Z' : '2025-06-15T12:00:00Z'; } }).then(function (tab) {
+    var t = tab.t(), c26, cOld;
+    t.openDetail(LIKED);
+    return H.wait(300).then(function () {
+      c26 = chip(tab, '2026'); cOld = chip(tab, 'older');
+      check('18 chips 2026 and Older', JSON.stringify(chips(tab)) === '["2026","Older"]', chips(tab));
+      click(tab, loadMore(tab));
+      check('18 same Older element turned off while loading', chip(tab, 'older') === cOld && cOld.disabled);
+      return H.wait(300);
+    }).then(function () {
+      check('18 appended page: 2026 chip is the same element', chip(tab, '2026') === c26);
+      check('18 appended page: Older is the same element, on again', chip(tab, 'older') === cOld && !cOld.disabled);
+      // Older over several pages: no rebuild until a new year arrives.
+      var seen = [];
+      var obs = new tab.w.MutationObserver(function (m) { m.forEach(function (x) { if (x.type === 'childList') seen.push(x.addedNodes.length + x.removedNodes.length); }); });
+      obs.observe($(tab, 'dyears'), { childList: true, subtree: true });
+      cOld.focus();
+      click(tab, cOld);
+      return H.wait(110).then(function () {
+        check('18 mid-load: chips not rebuilt yet', chip(tab, '2026') === c26 && chip(tab, 'older') === cOld, seen);
+        return settled(tab);
+      }).then(function () {
+        obs.disconnect();
+        check('18 rebuilt once the new year (2025) and the end arrived', JSON.stringify(chips(tab)) === '["2026","2025"]' && chip(tab, '2026') !== c26, chips(tab));
+      });
+    });
   });
 });
 
