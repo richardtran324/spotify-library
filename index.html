@@ -2490,10 +2490,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         // audit: the new `at` below also dates their positions, so what the page heard since the old one goes in first.
         var oldAt = (L.cache && L.cache.at) || 0, hist = histByUri();
         old.forEach(function (x, k) {
-          if (done[x.showId]) return;
+          if (done[x.showId] || order[x.showId] == null) return;   // audit: a podcast no longer saved drops out
           var h = hist[x.uri];
           if (h && histSnap(h) > oldAt) x = Object.assign({}, x, { positionMs: h.played ? 0 : (h.positionMs || 0), played: !!h.played });
-          found.push({ x: x, si: order[x.showId] != null ? order[x.showId] : all.length, k: k });
+          found.push({ x: x, si: order[x.showId], k: k });
         });
         // Newest first; same date keeps the order of your shows, then each show's own order.
         found.sort(function (a, b) { return a.x.date < b.x.date ? 1 : a.x.date > b.x.date ? -1 : (a.si - b.si) || (a.k - b.k); });
@@ -2530,6 +2530,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }
     launch();
     setTimeout(rerenderLatest, 0);   // shows "Updating…"
+  }
+  // audit: Latest rows of saved podcasts only (a heart removal takes effect at once; Undo brings them back).
+  function latestVisible(items) {
+    var shows = state.data && state.data.shows, ids = {};
+    if (!Array.isArray(shows)) return items;
+    shows.forEach(function (s) { ids[s.id] = true; });
+    return items.filter(function (x) { return !!ids[x.showId] && state.saved['spotify:show:' + x.showId] !== false; });
   }
   function latestItem(x) {
     // v2.11: what the page heard beats a cache up to 12 hours old (v2.14).
@@ -2771,7 +2778,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!d.shows.length) { main.appendChild(el('p', { class: 'empty', text: 'You haven’t saved any podcasts yet.' })); return; }
     syncLatest();
     var c = L.cache;
-    var all = c ? c.items.map(latestItem) : [];
+    var all = c ? latestVisible(c.items).map(latestItem) : [];
     var hide = hidePlayed();
     var newest = all.filter(function (i) { return !i.played; })[0] || null;
     // Header: Play (newest unplayed), Hide played, then when it was updated.
@@ -2808,7 +2815,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     main.appendChild(note);
     if (!c) return;
     // Play newest (above) always uses the newest-first order; the list follows the chosen sort.
-    var shown = sortIsDefault('latest') ? all : sortList('latest', c.items).map(latestItem);
+    var shown = sortIsDefault('latest') ? all : sortList('latest', latestVisible(c.items)).map(latestItem);
     var items = matches(shown.filter(function (i) { return !(hide && i.played); }));
     if (!items.length) {
       main.appendChild(el('p', { class: 'empty', text: state.query.trim() ? 'Nothing matches “' + state.query + '”.'
@@ -4711,7 +4718,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       syncLatest();   // v2.14: the cache only; Latest refreshes when you open it
       var c = state.latest.cache;
       var hide = hidePlayed();
-      var eps = c ? matches(c.items.map(latestItem).filter(function (i) { return !(hide && i.played); })) : [];
+      var eps = c ? matches(latestVisible(c.items).map(latestItem).filter(function (i) { return !(hide && i.played); })) : [];
       if (!q) eps = eps.slice(0, HOME_LATEST);
       if (eps.length) {
         main.appendChild(sectHead('hLatest', 'Latest episodes', function () { state.podTab = 'latest'; setFilter('podcasts'); }));
