@@ -4738,6 +4738,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!shown) main.appendChild(el('p', { class: 'empty', text: q ? 'Nothing on Home matches “' + state.query + '”. Try All for your whole library.' : 'Nothing here yet.' }));
   }
   function setFilter(f, focus) {
+    clearTimeout(queryTimer); queryTimer = null;   // audit: PERF-3, this draws the view anyway
     var wasSearch = state.filter === 'search';
     state.filter = f; set(K.filter, f);
     document.querySelectorAll('.filters .chip').forEach(function (c) { c.setAttribute('aria-pressed', String(c.dataset.filter === f)); });
@@ -6849,9 +6850,20 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- wiring ----------
+  // audit: PERF-3. The name filter used to rebuild the whole list on every key. Like Find in list, a view with
+  // more than 300 rows now redraws 150 ms after typing stops (only if still on the same tab); short views and
+  // clearing the box redraw at once. state.query always updates at once. The box isn't redrawn, so focus and
+  // the caret stay put.
+  var queryTimer = null, QUERY_DEBOUNCE_ROWS = 300;
   $('search').addEventListener('input', function (e) {
     if (state.filter === 'search') scheduleSearch(e.target.value, false);
-    else { state.query = e.target.value; renderList(); }
+    else {
+      state.query = e.target.value;
+      clearTimeout(queryTimer); queryTimer = null;
+      var f0 = state.filter;
+      if (!state.query || $('main').getElementsByTagName('li').length <= QUERY_DEBOUNCE_ROWS) renderList();
+      else queryTimer = setTimeout(function () { queryTimer = null; if (state.filter === f0) renderList(); }, 150);
+    }
   });
   $('search').addEventListener('keydown', function (e) {
     if (e.key !== 'Enter') return;
