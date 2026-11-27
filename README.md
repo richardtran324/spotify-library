@@ -51,6 +51,11 @@ Optional: Share → **Add to Home Screen**. The page brings its own icon (`apple
   - **Back** returns to the link; pressing **Done** (or **Search**) on the keyboard opens it again. Clear the box to get your list or search back.
   - Short `spotify.link` links can't be opened (the page would need to follow Spotify's redirect); the page says so and offers **Open in Spotify**. Links to anything else (Liked Songs, audiobooks, profiles, other sites such as YouTube) show a short message and are never searched by name.
   - The page never reads the clipboard on its own; paste into the box. Nothing is stored on the phone.
+- **Compact view (v2.49):** more of the list fits on screen.
+  - The filter chips sit in one row that scrolls sideways instead of wrapping onto a second row. The chip you picked is always scrolled into view (including Search Spotify, the last one).
+  - Scrolling down a list (including a song list) slides the **Library** title row and the status line out of view; the search box and chips stay. Scrolling up, or getting near the top, brings them back. They stay put while you're typing (the keyboard is up), and they always show while the wake message ("Press play in Control Center…", "Spotify didn't wake up yet") is up. With **Reduce Motion** on, they appear and disappear instantly instead of sliding.
+  - **Compact player** (**Diagnostics → Settings**, off by default): the Now Playing bar becomes one row: cover, title, **Play/Pause** and **Next**. Up next, the heart, Shuffle, Previous and Repeat stay on the full **Now Playing** screen (tap the title). The space kept free at the bottom of the page, and toasts, follow the shorter bar. While Spotify is asleep, the bar's message is cut to one line; the full message is on the Now Playing screen. The setting is stored only on this phone; if Safari won't store it, it applies until you reload and the page says so.
+  - None of this sends anything to Spotify.
 - **Buttons on each row** (the row itself opens or plays the item, as above):
   - **Heart:** like a song, or save an album or someone else's playlist. A filled heart means it's in your library. Removing something shows **Undo** for a few seconds. Your own playlists, artists and Liked Songs have no heart.
   - **+:** add a song to the queue. Spotify must be open on a device.
@@ -261,7 +266,7 @@ Add `?play=…` to the page's address and the page plays that item when it opens
 
 ### Appearance
 
-**Diagnostics → Settings → Appearance:** **Match phone** (default), **Light** or **Dark**. Light and Dark apply right away and override the phone's setting.
+**Diagnostics → Settings → Appearance:** **Match phone** (default), **Light** or **Dark**. Light and Dark apply right away and override the phone's setting. **Compact player** (v2.49, below Appearance) makes the Now Playing bar one row; see **Compact view** above. Diagnostics' report lists it after Appearance.
 
 ### Spotify's request limit (v2.13, per part since v2.14)
 
@@ -355,6 +360,7 @@ Album and podcast details are the part of Spotify's quota that runs out first, s
 - **v2.46** makes **Play** on a whole song list start it in order: it turns Spotify's Shuffle off if it was on, and **Shuffle** turns it on. Tapping a song or **Continue** leaves Shuffle as it is. No new permissions.
 - **v2.47** adds **Wake Spotify without its Home screen** to Diagnostics → Settings: steps for a Back Tap or Action button play shortcut, and a Wake Spotify shortcut built with Play/Pause instead of Open App. The wake option notes now say which ones show Spotify's Home screen. No new requests or permissions.
 - **v2.48** fixes six small bugs the new tests found: a sign-in answer with no check value is no longer accepted, "1 song" instead of "1 songs", a search sent while search is paused isn't saved as a recent search, songs that arrive after you tap **Edit** get edit buttons, a podcast's next page isn't asked twice in one visit, and signing out closes the permission and Add to playlist sheets in the right order. No new permissions.
+- **v2.49** adds **Compact view**: the filter chips in one row that scrolls sideways, a title row and status line that hide while you scroll down, and an optional **Compact player** (one-row Now Playing bar) in Diagnostics → Settings (see **Compact view**). No requests and no new permissions.
 - If Spotify doesn't let the page check which items are already saved, hearts start outlined and a tap saves the item. A check that only fails (no connection, or a Spotify error) doesn't count: it is tried again when the item shows, at most once a minute.
 - **Refresh** reloads your library and checks for an open Spotify device (whichever isn't paused by Spotify), and forgets the album and podcast pages kept for this visit (the lists saved on the phone stay). The page also checks each time you come back to it (devices at most once every 15 seconds).
 - To update the page later, upload the new `index.html` to the same repo (it replaces the old one).
