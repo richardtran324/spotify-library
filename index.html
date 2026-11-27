@@ -3039,11 +3039,15 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     return state.deviceChecked && !state.device && !state.deviceError && (Date.now() - state.devicesAt < NO_DEVICE_MS);
   }
   var goneWaitAt = 0;   // last time a 404 (device gone) turned a tap into a wait; once a minute at most, so it can't loop
+  var tapSeq = 0;   // audit: newest tap wins; a tap still waiting on the device check plays only if no tap came after it
   function playNow(item, opts) {
     return play(item, opts).catch(function (e) {
       if (e.message === 'signed-out') return renderSignIn();
       if (isCool(e)) return coolToast(e.group);   // v2.13: the device is fine; Spotify asked the page to wait
-      state.device = null; state.deviceAt = 0; state.devicesAt = 0; showStatus();   // next tap checks again
+      // audit: only a 404 means the device is gone. A 5xx, a 403 or a network blip leaves the device
+      // (and the header) as it was; the next tap still checks devices first.
+      if (e.status === 404) { state.device = null; state.devicesAt = 0; showStatus(); }
+      state.deviceAt = 0;   // next tap checks again
       // 404: the device went to sleep since the last check (iPhone Spotify drops off after a pause).
       // In 'wait' mode the tap waits for Control Center play instead of failing.
       if (e.status === 404 && wakeMode() === 'wait' && Date.now() - goneWaitAt > WAIT_FOR_MS) {
@@ -3061,9 +3065,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     // In 'wait' mode nothing opens at all: the page waits for you to press play in Control Center.
     ev.preventDefault();
     if (coolBlocked('player')) return;   // v2.13: nothing is sent while playback is paused by Spotify
+    var mine = ++tapSeq;
     if (deviceFresh()) { playNow(item, opts); return; }
     if (noDeviceKnown()) { wakeSpotify(item, opts); return; }
     checkDevice().then(function () {
+      if (mine !== tapSeq) return;   // audit: a newer tap came during the check; it plays instead
       if (!state.started) return;
       if (coolLeft('player')) { coolToast('player'); return; }   // the check itself hit the limit: nothing more is sent
       if (state.device) return playNow(item, opts);
