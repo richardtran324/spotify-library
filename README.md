@@ -116,7 +116,7 @@ Optional: Share → **Add to Home Screen**. The page brings its own icon (`apple
 
 ### Home
 
-Home is a shortcuts page made only from your own things the page already loads. Nothing on it is suggested by Spotify. Besides recently played, its only extra requests are the episode progress checks described under **Podcasts → Fresh listening progress**. From the top:
+Home is a shortcuts page made only from your own things the page already loads. Nothing on it is suggested by Spotify. Besides recently played, its only extra requests are the episode progress checks described under **Podcasts → Fresh listening progress**. From the top (the usual order; **Edit Home** below changes it):
 
 - **Liked Songs** as a large row: tap it to open the song list (Play and Shuffle are at its top).
 - **Pinned:** everything you pinned (playlists, albums, artists, podcasts), as a row of covers you swipe sideways, in the order you pinned them. A tap does the same as in its own tab: playlists, albums and podcasts open their list, artists open the artist page.
@@ -129,6 +129,11 @@ Home is a shortcuts page made only from your own things the page already loads. 
   - **See all** opens **Recent**. Home asks Spotify for recently played at most once every 15 minutes, and only while Home is on screen; podcasts come from the page's own history (see **Podcast listening history**).
 - **Latest episodes:** the newest 5 from the Latest episodes list (played ones are left out while Latest is set to **Unplayed** or **In progress**). **See all** opens **Podcasts → Latest**.
 - **Your playlists:** the first 6 in the order picked on the Playlists tab, leaving out pinned ones (they're already above). **See all** opens **Playlists**.
+
+- **Edit Home (v2.57):** the **Edit Home** link at the bottom of Home opens a sheet listing Home's sections in their order. The arrows move a section up or down and the switch shows or hides it; Home changes behind the sheet as you go. **Reset** puts back the usual order above. The layout is kept on this phone only (one storage key, `lib-home-layout`); if storage refuses it, a message says so and the layout lasts until you close the page. A section added in a later version shows up in its usual place. Editing sends nothing to Spotify. Hiding a section only hides it: Home still asks for recently played as before, even with **Jump back in** hidden. While **Pinned** is hidden, **Your playlists** includes your pinned playlists too. Two extra sections, off until you switch them on, use only your own library:
+  - **Recently saved albums:** the first 8 of your Albums list as Spotify gives it (newest saved first), with a play button on each cover. **See all** opens **Albums**.
+  - **Recently liked songs:** the newest 8 songs of Liked Songs, taken from Liked Songs' first page once you've opened Liked Songs on this visit. Until then it says so, with an **Open Liked Songs** button; it never asks Spotify on its own. A song you unlike on the page drops out; **Refresh** (when it reloads your library) and signing out forget the list until you open Liked Songs again.
+  - Nothing ranked or "most played" is offered.
 
 A section is hidden when it has nothing in it. Home has no Sort chips. The name box works on Home too: it filters every section, and while you type, **Jump back in**, **Latest episodes** and **Your playlists** look through all their items, not only the first few. For your whole library, use **All**.
 
@@ -380,6 +385,7 @@ Album and podcast details are the part of Spotify's quota that runs out first, s
 - **v2.54** adds year headers, **· Liked Mar 2021** and **Jump to** year chips in Liked Songs (**Recently liked** order only; see **Features**). No new requests to show them; **Older** uses Search all. No new permissions.
 - **v2.55** adds swipes on the Now Playing bar: left for Next, right for Previous, up to open the Now Playing screen. No new permissions, nothing stored.
 - **v2.56** adds the **Recents** sort chip (Playlists, Albums, Podcasts → Shows) and the **By you** chip on Playlists (see **Features**). No requests and no new permissions.
+- **v2.57** adds **Edit Home**: reorder, hide and reset Home's sections (Bookmarks included), plus two optional sections, **Recently saved albums** and **Recently liked songs** (see **Home**). No requests and no new permissions.
 - If Spotify doesn't let the page check which items are already saved, hearts start outlined and a tap saves the item. A check that only fails (no connection, or a Spotify error) doesn't count: it is tried again when the item shows, at most once a minute.
 - **Refresh** reloads your library and checks for an open Spotify device (whichever isn't paused by Spotify), and forgets the album and podcast pages kept for this visit (the lists saved on the phone stay). The page also checks each time you come back to it (devices at most once every 15 seconds).
 - To update the page later, upload the new `index.html` to the same repo (it replaces the old one).

@@ -599,6 +599,31 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
 .shead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 18px 2px 2px; }
 .shead .sect { margin: 0; }
 .shead .linkbtn { font-size: 0.85rem; }
+/* v2.57: Edit Home (the link at the bottom of Home and its sheet) */
+.homeedit { display: flex; justify-content: center; margin: 22px 0 4px; }
+.homeedit .linkbtn { margin: 0; padding: 0 16px; min-height: 44px; min-width: 44px; }
+.hshint { display: flex; align-items: center; flex-wrap: wrap; gap: 0 8px; margin: 2px 2px 0; }
+.hshint .linkbtn { margin: 0; padding: 0 4px; min-height: 44px; font-size: inherit; }
+#homeSheet .sheet-panel { overflow: hidden; }   /* the rows scroll; title, hint and buttons stay put */
+.hslist { list-style: none; margin: 0; padding: 0; flex: 1 1 auto; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+#homeSheet .sheet-btns { flex: none; }
+.hsrow { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--line); padding: 6px 0; min-height: 56px; }
+.hsmeta { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.hsacts { display: flex; align-items: center; gap: 2px; flex: none; }
+.act.hsmove { width: 44px; height: 44px; }
+.hsswitchwrap { display: inline-grid; place-items: center; min-width: 60px; min-height: 44px; cursor: pointer; }
+.hsswitch {
+  -webkit-appearance: none; appearance: none; margin: 0; position: relative; flex: none; cursor: pointer;
+  width: 51px; height: 31px; border-radius: 16px; background: var(--chip); box-shadow: inset 0 0 0 1px var(--muted); transition: background 0.2s;
+}
+.hsswitch::before {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); transition: transform 0.2s;
+}
+.hsswitch:checked { background: var(--accent); box-shadow: none; }
+.hsswitch:checked::before { transform: translateX(20px); }
+.hsswitch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .hsswitch, .hsswitch::before { transition: none; } }
 /* v2.12: Jump back in album and podcast cards open on a tap; the round button on the cover plays */
 .cl li { position: relative; }
 .cardplay {
@@ -919,6 +944,21 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
 </div>
 
 <button class="kpjump" id="kpJump" type="button" hidden>Jump to playing</button>   <!-- v2.42 -->
+<!-- v2.57: Edit Home -->
+<div class="sheet" id="homeSheet" role="dialog" aria-modal="true" aria-labelledby="homeSheetTitle" hidden>
+  <div class="sheet-back" id="homeSheetBack"></div>
+  <div class="sheet-panel">
+    <h2 id="homeSheetTitle">Edit Home</h2>
+    <p class="sethint">Move sections with the arrows, or switch them off. Kept on this phone only.</p>
+    <ul class="hslist" id="homeSheetList"></ul>
+    <p class="vh" id="homeSheetLive" aria-live="polite"></p>
+    <div class="sheet-btns">
+      <button class="btn secondary" id="homeReset" type="button">Reset</button>
+      <button class="btn" id="homeSheetClose" type="button">Done</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast" hidden></div>
 <div class="vh" id="announce" role="status" aria-live="polite"></div>
 
@@ -984,6 +1024,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     rewind: 'lib-rewind',        // v2.44: 'off' turns off the rewind when the page resumes an episode; unset = on
     plSeen: 'lib-pl-seen',       // v2.52: {playlist id: {s: snapshot, o: opened at (0 = not yet), f: first seen at[, e: snapshot after this page's own change]}} (500)
     byYou: 'lib-pl-byyou',       // v2.56: true: Playlists shows only playlists you own (By you)
+    homeLayout: 'lib-home-layout', // v2.57: {order: [section ids], hidden: [section ids]}: Edit Home, this phone only
     ctxLast: 'lib-ctx-last',     // v2.23: {album or playlist URI | 'liked': {uri, id, name, positionMs, durMs, at}}: the last song heard in each list (40, 30 days)
     bookmarks: 'lib-bookmarks',  // v2.32: [{uri, id, kind: 'track'|'episode', name, by, img, url, pos, at}], newest first: Bookmarks saved on Now Playing (200, 2 years); local only
     introSkip: 'lib-intro-skip', // v2.33: {show URI: {s, at}}: Skip intro per podcast, s = 15|30|45|60|90|120 seconds, at = last set or used (100 shows, 365 days)
@@ -1034,6 +1075,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   var LASTPLAY_MS = 6 * 60 * 60 * 1000;   // the last playback stays on screen (as paused) this long after Spotify goes idle
   var HOME_RECENT_MS = 15 * 60 * 1000;    // Home: recently played is asked for at most this often (v2.13: was 10 min)
   var HOME_JUMP = 8, HOME_LATEST = 5, HOME_PLAYLISTS = 6;
+  var HOME_RECENT_N = 8;                  // v2.57: Recently saved albums / Recently liked songs show this many
   var IDLE_TEXT = 'Spotify is asleep. Press play to wake it.';
   var WAKE_FIRST = 'Press play first to wake Spotify.';
   var PINS_MAX = 30;
@@ -5080,7 +5122,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.56 (2026-11-27)';
+  var VERSION = 'v2.57 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -7250,54 +7292,252 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     });
     main.appendChild(ul);
   }
+  // ---------- Edit Home (v2.57) ----------
+  // Home's sections in the order you pick, each shown or hidden, kept in one localStorage key (this phone only).
+  // Two optional sections, off until you turn them on, are built only from your library: the first 8 of the
+  // Albums list (Spotify lists them newest saved first) and the first 8 of Liked Songs, but only while Liked
+  // Songs' first page is in memory from opening it this visit. Nothing ranked, nothing extra asked: 0 requests.
+  var HOME_SECTIONS = [
+    { id: 'liked', name: 'Liked Songs' },
+    { id: 'pinned', name: 'Pinned' },
+    { id: 'continue', name: 'Continue listening' },
+    { id: 'bookmarks', name: 'Bookmarks' },
+    { id: 'jump', name: 'Jump back in' },
+    { id: 'latest', name: 'Latest episodes' },
+    { id: 'playlists', name: 'Your playlists' },
+    { id: 'albums', name: 'Recently saved albums', off: true, note: 'The first 8 of your Albums list, newest saved first.' },
+    { id: 'likedRecent', name: 'Recently liked songs', off: true, note: 'Your newest 8 likes, once you’ve opened Liked Songs on this visit. Nothing extra is asked.' }
+  ];
+  var homeMem = null;         // v2.57: the layout, when storage refused it (kept until the page closes)
+  var likedFirst = null;      // v2.57: the first few songs of Liked Songs' first page, from opening it this visit
+  function homeSect(id) {
+    for (var i = 0; i < HOME_SECTIONS.length; i++) if (HOME_SECTIONS[i].id === id) return HOME_SECTIONS[i];
+    return null;
+  }
+  // {order: [ids], hidden: {id: true}}. Unknown ids are dropped; a known section the saved order doesn't have
+  // (a new one) goes back to its default place, shown or hidden as by default.
+  function readHomeLayout() {
+    var raw = homeMem || get(K.homeLayout);
+    var order = [], hidden = {}, seen = {};
+    var rawOrder = raw && typeof raw === 'object' && Array.isArray(raw.order) ? raw.order : [];
+    var rawHidden = raw && typeof raw === 'object' && Array.isArray(raw.hidden) ? raw.hidden : [];
+    rawOrder.forEach(function (id) {
+      if (typeof id === 'string' && homeSect(id) && !seen[id]) { seen[id] = true; order.push(id); }
+    });
+    rawHidden.forEach(function (id) { if (typeof id === 'string' && seen[id]) hidden[id] = true; });
+    HOME_SECTIONS.forEach(function (sc, i) {
+      if (seen[sc.id]) return;
+      order.splice(Math.min(i, order.length), 0, sc.id);
+      if (sc.off) hidden[sc.id] = true;
+    });
+    return { order: order, hidden: hidden };
+  }
+  function homeIsDefault(l) {
+    return HOME_SECTIONS.every(function (sc, i) { return l.order[i] === sc.id && !!l.hidden[sc.id] === !!sc.off; });
+  }
+  // The default layout stores nothing. False when storage refused: the layout then lasts until the page closes.
+  function writeHomeLayout(l) {
+    var v = { order: l.order.slice(), hidden: l.order.filter(function (id) { return l.hidden[id]; }) };
+    if (homeIsDefault(l)) { homeMem = null; del(K.homeLayout); return true; }
+    try { localStorage.setItem(K.homeLayout, JSON.stringify(v)); homeMem = null; return true; } catch (e) { homeMem = v; return false; }
+  }
+  function noteLikedFirst(mapped) {
+    likedFirst = mapped.filter(function (m) { return m && m.kind === 'track'; }).slice(0, HOME_RECENT_N);
+  }
+  // Recently liked songs: what Liked Songs' first page held, minus songs unliked since on this page.
+  function likedRecentItems() {
+    if (!likedFirst) return null;
+    return likedFirst.filter(function (m) { return state.saved[m.uri] !== false; });
+  }
+
+  var homeSheetReturn = null;
+  var homeSaveWarned = false;   // the couldn't-save toast shows once per opening of the sheet
+  var homeLiveTimer = null;
+  function openHomeSheet(from) {
+    homeSaveWarned = false;
+    homeSheetReturn = (from && from.nodeType === 1) ? from : document.activeElement;
+    $('homeSheet').hidden = false;
+    syncSheetLock();   // main's scroll lock for open sheets
+    $('homeSheetLive').textContent = '';
+    paintHomeSheet();
+    $('homeSheetClose').focus();
+  }
+  function closeHomeSheet(restore) {
+    if ($('homeSheet').hidden) return;
+    $('homeSheet').hidden = true;
+    syncSheetLock();
+    var r = homeSheetReturn;
+    homeSheetReturn = null;
+    if (restore !== false && r && r.focus && document.body.contains(r)) r.focus();
+    else if (restore !== false && $('homeEdit')) $('homeEdit').focus();   // Home was redrawn behind the sheet
+  }
+  // focus: [section id, 'up' | 'down' | 'show'] to put focus back on after the redraw.
+  function paintHomeSheet(focus) {
+    var l = readHomeLayout();
+    var ul = $('homeSheetList');
+    ul.textContent = '';
+    l.order.forEach(function (id, k) {
+      var sc = homeSect(id);
+      function move(dir) {
+        return function () { moveHomeSection(id, dir); };
+      }
+      var pos = ', ' + (k + 1) + ' of ' + l.order.length;   // the label carries the place, in case the announcement is dropped
+      var up = el('button', { class: 'act hsmove', type: 'button', 'data-hs': 'up', 'aria-label': 'Move “' + sc.name + '” up' + pos });
+      up.innerHTML = EDIT_ICON.up;
+      up.disabled = k === 0;
+      up.addEventListener('click', move(-1));
+      var down = el('button', { class: 'act hsmove', type: 'button', 'data-hs': 'down', 'aria-label': 'Move “' + sc.name + '” down' + pos });
+      down.innerHTML = EDIT_ICON.down;
+      down.disabled = k === l.order.length - 1;
+      down.addEventListener('click', move(1));
+      var sw = el('input', { type: 'checkbox', role: 'switch', class: 'hsswitch', 'data-hs': 'show', 'aria-label': 'Show “' + sc.name + '” on Home' });
+      sw.checked = !l.hidden[id];
+      sw.addEventListener('change', function () { showHomeSection(id, sw.checked); });
+      ul.appendChild(el('li', { class: 'hsrow', 'data-sect': id }, [
+        el('div', { class: 'hsmeta' }, [el('span', { class: 'setname', text: sc.name }), sc.note ? el('span', { class: 'setnote', text: sc.note }) : null]),
+        el('div', { class: 'hsacts' }, [up, down, el('label', { class: 'hsswitchwrap' }, [sw])])
+      ]));
+    });
+    $('homeReset').disabled = homeIsDefault(l);
+    if (focus) {
+      var row = ul.querySelector('li[data-sect="' + focus[0] + '"]');
+      var b = row && row.querySelector('[data-hs="' + focus[1] + '"]');
+      if (b && b.disabled) b = row.querySelector('[data-hs="' + (focus[1] === 'up' ? 'down' : 'up') + '"]');   // moved to an end
+      if (b && !b.disabled) b.focus({ preventScroll: true });
+    }
+  }
+  function homeChanged(l, said) {
+    var ok = writeHomeLayout(l);
+    if (!ok && !homeSaveWarned) { homeSaveWarned = true; toast('Couldn’t save on this phone. Home keeps this layout until you close the page.'); }
+    if (onHome()) renderList();
+    sayHome(said);
+  }
+  // Set after the redraw has moved focus, so VoiceOver doesn't drop the announcement for the focus change.
+  function sayHome(said) {
+    var live = $('homeSheetLive');
+    live.textContent = '';
+    clearTimeout(homeLiveTimer);
+    homeLiveTimer = setTimeout(function () { if (!$('homeSheet').hidden) live.textContent = said; }, 150);
+  }
+  function moveHomeSection(id, dir) {
+    var l = readHomeLayout();
+    var k = l.order.indexOf(id), j = k + dir;
+    if (k < 0 || j < 0 || j >= l.order.length) return;
+    l.order[k] = l.order[j]; l.order[j] = id;
+    homeChanged(l, homeSect(id).name + ': ' + (j + 1) + ' of ' + l.order.length + '.');
+    paintHomeSheet([id, dir < 0 ? 'up' : 'down']);
+  }
+  function showHomeSection(id, on) {
+    var l = readHomeLayout();
+    if (on) delete l.hidden[id]; else l.hidden[id] = true;
+    homeChanged(l, homeSect(id).name + (on ? ' shown.' : ' hidden.'));
+    paintHomeSheet([id, 'show']);
+  }
+  function resetHome() {
+    homeMem = null;
+    del(K.homeLayout);
+    if (onHome()) renderList();
+    paintHomeSheet();
+    $('homeSheetClose').focus();
+    sayHome('Home is back to the usual order.');
+  }
+
   function renderHome(main, d) {
     var q = state.query.trim();
     var shown = 0;
-    // Liked Songs: a big row at the top (a tap opens the song list; Play and Shuffle are at its top).
-    if (d.likedTotal != null) {
-      var liked = matches([likedItem(d)]);
-      if (liked.length) { main.appendChild(el('ul', { class: 'list hero' }, [itemRow(liked[0])])); shown++; }
-    }
-    // Pinned: all kinds, in the order you pinned them.
-    var pins = matches(pinsFor('all', d));
-    var pinnedUris = {};
-    pinsFor('all', d).forEach(function (p) { pinnedUris[p.uri] = true; });
-    cardStrip(main, 'hPinned', 'Pinned', pins, null, { pinPlay: true });   // v2.23: round play buttons
-    shown += pins.length;
-    // Continue listening: in-progress episodes (as on Podcasts).
-    var cl = matches(continueItems());
-    renderContinue(main);
-    shown += cl.length;
-    shown += renderBookmarks(main, q);   // v2.32
-    // Jump back in: your last few distinct albums from Recently played, and (v2.11) one card per podcast
-    // from the page's own history, newest first.
+    var layout = readHomeLayout();   // v2.57: sections in your order; hidden ones are skipped
+    // Recently played: asked whether or not Jump back in is shown (v2.23 Continue · song fills its gaps from it).
     setTimeout(maybeLoadHomeRecent, 0);   // after this render; at most once per 15 minutes
-    var jump = matches(byTime([state.recent.jump || [], jumpEpisodes()]));
-    if (!q) jump = jump.slice(0, HOME_JUMP);
-    cardStrip(main, 'hJump', 'Jump back in', jump, function () { setFilter('recent'); });
-    shown += jump.length;
-    // Latest episodes: the newest few from the Latest cache (Hide played applies; v2.40: it stays on while Latest is Unplayed or In progress).
-    if (d.shows && d.shows.length) {
-      syncLatest();   // v2.14: the cache only; Latest refreshes when you open it
-      var c = state.latest.cache;
-      var hide = hidePlayed();
-      var eps = c ? matches(latestOrder(latestVisible(c.items).map(latestItem)).filter(function (i) { return !(hide && i.played); })) : [];   // v2.50: In Latest
-      if (!q) eps = eps.slice(0, HOME_LATEST);
-      if (eps.length) {
+    var pinnedUris = {};
+    if (!layout.hidden.pinned) pinsFor('all', d).forEach(function (p) { pinnedUris[p.uri] = true; });
+    var draw = {
+      // Liked Songs: a big row at the top (a tap opens the song list; Play and Shuffle are at its top).
+      liked: function () {
+        if (d.likedTotal == null) return;
+        var liked = matches([likedItem(d)]);
+        if (liked.length) { main.appendChild(el('ul', { class: 'list hero' }, [itemRow(liked[0])])); shown++; }
+      },
+      // Pinned: all kinds, in the order you pinned them.
+      pinned: function () {
+        var pins = matches(pinsFor('all', d));
+        cardStrip(main, 'hPinned', 'Pinned', pins, null, { pinPlay: true });   // v2.23: round play buttons
+        shown += pins.length;
+      },
+      // Continue listening: in-progress episodes (as on Podcasts).
+      'continue': function () {
+        var cl = matches(continueItems());
+        renderContinue(main);
+        shown += cl.length;
+      },
+      bookmarks: function () { shown += renderBookmarks(main, q); },   // v2.32
+      // Jump back in: your last few distinct albums from Recently played, and (v2.11) one card per podcast
+      // from the page's own history, newest first.
+      jump: function () {
+        var jump = matches(byTime([state.recent.jump || [], jumpEpisodes()]));
+        if (!q) jump = jump.slice(0, HOME_JUMP);
+        cardStrip(main, 'hJump', 'Jump back in', jump, function () { setFilter('recent'); });
+        shown += jump.length;
+      },
+      // Latest episodes: the newest few from the Latest cache (Hide played applies; v2.40: it stays on while Latest is Unplayed or In progress).
+      latest: function () {
+        if (!(d.shows && d.shows.length)) return;
+        syncLatest();   // v2.14: the cache only; Latest refreshes when you open it
+        var c = state.latest.cache;
+        var hide = hidePlayed();
+        var eps = c ? matches(latestOrder(latestVisible(c.items).map(latestItem)).filter(function (i) { return !(hide && i.played); })) : [];   // v2.50: In Latest
+        if (!q) eps = eps.slice(0, HOME_LATEST);
+        if (!eps.length) return;
         main.appendChild(sectHead('hLatest', 'Latest episodes', function () { state.podTab = 'latest'; setFilter('podcasts'); }));
         var ul = el('ul', { class: 'list' });
         eps.forEach(function (i) { ul.appendChild(itemRow(i)); });
         main.appendChild(ul);
         requestSaved(savableUris(eps));
         shown += eps.length;
+      },
+      // Your playlists: in the Playlists tab's current order, leaving out pinned ones (they're above;
+      // v2.57: unless Pinned is hidden).
+      playlists: function () {
+        var pls = matches(sortList('playlists', (d.playlists || []).filter(function (p) { return !pinnedUris[p.uri]; })));
+        if (!q) pls = pls.slice(0, HOME_PLAYLISTS);
+        cardStrip(main, 'hPlaylists', 'Your playlists', pls, function () { setFilter('playlists'); });
+        shown += pls.length;
+      },
+      // v2.57 Recently saved albums: the first 8 of the Albums list as Spotify returns it (newest saved first).
+      albums: function () {
+        var al = matches(d.albums || []);
+        if (!q) al = al.slice(0, HOME_RECENT_N);
+        cardStrip(main, 'hAlbums', 'Recently saved albums', al, function () { setFilter('albums'); }, { pinPlay: true });
+        shown += al.length;
+      },
+      // v2.57 Recently liked songs: only from Liked Songs' first page already in memory; nothing is asked for it.
+      likedRecent: function () {
+        if (!d.likedTotal) return;
+        var openLiked = function () { openDetail(likedItem(d)); };
+        var lr = likedRecentItems();
+        if (!lr) {
+          if (q) return;
+          main.appendChild(sectHead('hLikedRecent', 'Recently liked songs', null));
+          var b = el('button', { class: 'linkbtn hsopen', type: 'button', text: 'Open Liked Songs' });
+          b.addEventListener('click', openLiked);
+          main.appendChild(el('p', { class: 'sethint hshint' }, [document.createTextNode('Shows after you open Liked Songs on this visit. '), b]));
+          shown++;
+          return;
+        }
+        lr = matches(lr);
+        cardStrip(main, 'hLikedRecent', 'Recently liked songs', lr, openLiked);
+        shown += lr.length;
       }
+    };
+    layout.order.forEach(function (id) { if (!layout.hidden[id]) draw[id](); });
+    if (!shown) {
+      var allOff = layout.order.every(function (id) { return layout.hidden[id]; });
+      main.appendChild(el('p', { class: 'empty', text: q ? 'Nothing on Home matches “' + state.query + '”. Try All for your whole library.' : allOff ? 'Every Home section is hidden.' : 'Nothing here yet.' }));
     }
-    // Your playlists: in the Playlists tab's current order, leaving out pinned ones (they're above).
-    var pls = matches(sortList('playlists', (d.playlists || []).filter(function (p) { return !pinnedUris[p.uri]; })));
-    if (!q) pls = pls.slice(0, HOME_PLAYLISTS);
-    cardStrip(main, 'hPlaylists', 'Your playlists', pls, function () { setFilter('playlists'); });
-    shown += pls.length;
-    if (!shown) main.appendChild(el('p', { class: 'empty', text: q ? 'Nothing on Home matches “' + state.query + '”. Try All for your whole library.' : 'Nothing here yet.' }));
+    if (!q) {   // v2.57
+      var eb = el('button', { class: 'linkbtn', type: 'button', id: 'homeEdit', text: 'Edit Home' });
+      eb.addEventListener('click', function () { openHomeSheet(eb); });
+      main.appendChild(el('div', { class: 'homeedit' }, [eb]));
+    }
   }
   function setFilter(f, focus) {
     clearTimeout(queryTimer); queryTimer = null;   // audit: PERF-3, this draws the view anyway
@@ -8638,6 +8878,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       }
       var off = pageOffset(url, r.json);   // v2.26: each song's place in the playlist, for Edit
       var mapped = dropShown(d, (r.json.items || []).map(function (it, j) { var m = mapDetail(d.item, it); if (m && kind === 'playlist') m.pos = off + j; return m; }).filter(Boolean));
+      if (kind === 'liked' && first) noteLikedFirst(mapped);   // v2.57: Home's Recently liked songs (memory only)
       d.items = d.items.concat(mapped);
       if (kind === 'liked') upnNoteLiked(mapped);   // v2.41: Up next "Next from · Liked Songs" knows these
       if (isPod(d.item)) rememberEpisodes(mapped);   // for Continue listening
@@ -10297,6 +10538,8 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     closePerm();   // the permission sheet and the Add to playlist / Remove sheet belong to that sign-in too
     closePl();     // (closed in the reverse of the order they can open: the permission sheet opens from this one)
     closeQueue(false);
+    closeHomeSheet(false);   // v2.57
+    likedFirst = null;       // v2.57: that sign-in's Liked Songs
     closeNp(false);
     closePl(); closePerm();   // v2.28: Add to playlist and the permission sheet close on sign-out too
     closeRowMenu(false); rowRaw = {};   // v2.51
@@ -10653,7 +10896,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     catMemo = {}; findMemo = {};
     plTrustFrom = Date.now();   // v2.37: saved playlists wait for the library's new snapshots
     if (!coolLeft('player')) { checkDevice(); schedulePoll(0, true); }
-    if (!coolLeft('library')) refresh();
+    if (!coolLeft('library')) { likedFirst = null; refresh(); }   // v2.57: Recently liked songs waits for Liked Songs to open again
     toast('Refreshing…');
   });
   $('bannerBtn').addEventListener('click', login);
@@ -10677,6 +10920,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     else if (!$('notes').hidden) closeNotes();   // v2.18
     else if (!$('queue').hidden) closeQueue();
     else if (!$('diag').hidden) closeDiag();
+    else if (!$('homeSheet').hidden) closeHomeSheet();   // v2.57
     else closeNp();
   });
   $('pInfo').addEventListener('click', openNp);
@@ -10731,6 +10975,9 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   $('queueBack').addEventListener('click', function () { closeQueue(); });
   $('queueRefresh').addEventListener('click', loadQueue);
   $('notesClose').addEventListener('click', function () { closeNotes(); });   // v2.18
+  $('homeSheetClose').addEventListener('click', function () { closeHomeSheet(); });   // v2.57
+  $('homeSheetBack').addEventListener('click', function () { closeHomeSheet(); });
+  $('homeReset').addEventListener('click', resetHome);
   $('notesBack').addEventListener('click', function () { closeNotes(); });
   $('permGo').addEventListener('click', permGo);   // v2.25
   $('rmClose').addEventListener('click', function (ev) { if (!rmTooSoon(ev)) closeRowMenu(); });   // v2.51
