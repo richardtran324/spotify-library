@@ -2964,7 +2964,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.21 (2026-11-27)';
+  var VERSION = 'v2.22 (2026-11-27)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -4485,13 +4485,18 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (ep && state.saved[ep.uri] === undefined) state.saved[ep.uri] = true;
       return ep;
     }
-    if (parent.kind === 'album') return mapTrack(it, { num: it.track_number, noImg: true, sub: names(it.artists), ctx: parent.uri });
+    if (parent.kind === 'album') {
+      var at = mapTrack(it, { num: it.track_number, noImg: true, sub: names(it.artists), ctx: parent.uri });
+      if (at) at.albumName = parent.name || '';   // v2.22: Find in list matches the album name
+      return at;
+    }
     if (it.is_local) return null;
     var t = it.item || it.track;
     if (!t) return null;
     var sub = t.type === 'episode' ? ((t.show && t.show.name) || 'Podcast') : names(t.artists) + (t.album && t.album.name ? ' · ' + t.album.name : '');
     var m = mapTrack(t, { sub: sub, ctx: parent.kind === 'liked' ? likedCtx() : parent.uri });
     if (m && it.added_at) m.added = it.added_at;   // when it was added to the playlist (or liked), for sorting
+    if (m && t.album && t.album.name) m.albumName = t.album.name;   // v2.22: for Find in list
     if (m && parent.kind === 'liked' && state.saved[m.uri] === undefined) state.saved[m.uri] = true;
     return m;
   }
@@ -4506,6 +4511,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       ? { kind: 'artist', item: item, img: '', items: [], offset: 0, more: false, total: null, loading: false, error: '', lastGot: 0 }
       : { item: item, items: [], next: null, loading: false, error: '', restricted: false, lastUrl: null,
           raw: [], src: 'api', savedAt: 0, checkedAt: 0, seed: false, pausedUntil: 0 };   // v2.15: saved lists and pause fallbacks
+    if (old && !opts.push) stopFind(old);   // v2.22: a replaced list stops its Search all
     if (old && opts.push) {
       state.detailStack.push(old);
       d.returnScroll = y; d.pushed = false;
@@ -4534,6 +4540,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function closeDetail() {
     var d = state.detail;
     if (!d) return;
+    stopFind(d);   // v2.22
     if (state.detailStack.length) {
       state.detail = state.detailStack.pop();
       renderDetail();   // from what that view already loaded; nothing is asked again
@@ -4560,6 +4567,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var it = d.item;
     $('top').classList.add('detail');
     var main = $('main');
+    var fa = document.activeElement, fsel = null;   // v2.22: a redraw of the same list keeps the find box's focus and caret
+    if (fa && fa.id === 'dfind' && findBoxFor === d) fsel = [fa.selectionStart, fa.selectionEnd];
     main.textContent = '';
     var back = backButton();
     var playA = el('a', { class: 'btn', href: it.url, text: 'Play' });
@@ -4589,6 +4598,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       el('div', { class: 'dbtns' }, btns)
     ]));
     main.appendChild(el('p', { class: 'lnote', id: 'dnote', hidden: true }));   // v2.15: saved list / fallback note
+    var fbox = findBox(d);   // v2.22: Find in list
+    main.appendChild(fbox);
+    if (fsel && !fbox.hidden) { try { $('dfind').focus({ preventScroll: true }); $('dfind').setSelectionRange(fsel[0], fsel[1]); } catch (e) {} }
     main.appendChild(el('div', { id: 'dsort' }));
     main.appendChild(el('ul', { class: 'list compact', id: 'dlist' }));
     main.appendChild(el('div', { class: 'dfoot', id: 'dfoot' }));
@@ -4639,7 +4651,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!d || !ul) return;
     ul.textContent = '';
     var view = detailView(d.item);
-    appendDetailRows(view ? sortList(view, d.items) : d.items);
+    var tok = findTokens(d), list = d.items;
+    if (tok) {   // v2.22: filter first (cheap), then sort only the matches; at most FIND_SHOW rows are drawn
+      list = list.filter(function (i) { return findHit(i, tok); });
+      d.findHits = list.length;
+    }
+    list = view ? sortList(view, list) : list;
+    appendDetailRows(tok ? list.slice(0, FIND_SHOW) : list);
   }
   function firstUnplayed(items) {
     for (var i = 0; i < items.length; i++) { if (!markItem(items[i]).played) return items[i]; }   // v2.21: marks count
@@ -4676,6 +4694,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!d || !f) return;
     paintDetailSum();
     paintDetailNote();
+    paintFindBox(d);   // v2.22
     if (d.restricted && d.embed && f.querySelector('iframe.sembed')) return;   // v2.16: keep the open player (redrawing would reload it)
     f.textContent = '';
     if (d.restricted) {
@@ -4695,7 +4714,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       return;
     }
     var noun = isPod(d.item) ? 'episodes' : 'songs';
+    if (d.findRun) { paintFindRun(d, f, noun); return; }   // v2.22: Search all in progress
     if (d.loading) { f.appendChild(el('p', { class: 'empty', text: (d.src === 'search' ? 'Searching for ' : 'Loading ') + noun + '…' })); return; }
+    if (findTokens(d)) { paintFindFoot(d, f, noun); return; }   // v2.22: results of Find in list
     if (d.next) {
       var more = el('button', { class: 'btn secondary', type: 'button', text: 'Load more' });
       more.addEventListener('click', function () { if (d.src === 'search') loadAlbumSearch(d); else loadDetail(d.next); });
@@ -4704,6 +4725,246 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       f.appendChild(el('p', { class: 'empty', text: d.src === 'search' ? 'Search didn’t find this album’s songs. Try again after Spotify’s pause.'
         : d.src === 'local' ? 'You haven’t saved or played an episode of this show on this phone yet.' : 'No ' + noun + ' here.' }));
     }
+  }
+  // ---------- Find in list (v2.22) ----------
+  // A box under the header of Liked Songs, your own (and collaborative) playlists, albums and Saved episodes.
+  // It matches the title, the artist (an episode's show) and the album, ignoring case and accents, over the
+  // songs loaded so far. Typing sends nothing: it only redraws the rows (filter first, then sort the matches).
+  // When more pages remain, "Search all N songs" loads them: Liked Songs and Saved episodes are the library
+  // group (2 requests at a time, up to FIND_LIB_MAX per tap so a 429 can't pause hearts and refresh; another tap
+  // carries on; kept for this visit in findMemo); your playlists
+  // and partial albums are the catalog group (one at a time, kept by apiCached; the button names the request
+  // count and is off above FIND_CAT_MAX or while catalog is paused). Any 429 or pause stops it; what arrived stays.
+  // It also stops once its list is closed or replaced (only a view still on screen or under one keeps loading),
+  // and only one load runs at a time: a new one waits until the last one's answers are in.
+  var FIND_SHOW = 300, FIND_PAGE = 50, FIND_LIB_MAX = 20, FIND_CAT_MAX = 4, FIND_DEBOUNCE_ROWS = 300;
+  var findMemo = {};   // 'liked:' / 'episodes:' -> {total, head, items, next}: Search all's answer, for this visit
+  var findBoxFor = null, findTimer = null;
+  var findBusy = null;   // the load with requests in flight: {waiters: [fn]}
+  function findAlive(d) { return state.detail === d || state.detailStack.indexOf(d) !== -1; }
+  function stopFind(d) { if (d && d.findRun) d.findRun.stop = true; }
+  function findable(d) {
+    var it = d && d.item;
+    if (!it || d.kind === 'artist' || d.restricted) return false;
+    return it.kind === 'liked' || it.kind === 'episodes' || it.kind === 'album' || (it.kind === 'playlist' && canList(it));
+  }
+  // Lower case, no accents (NFD, then the combining marks dropped), curly apostrophes made straight.
+  function foldText(s) {
+    s = String(s == null ? '' : s);
+    if (s.normalize) { try { s = s.normalize('NFD'); } catch (e) {} }
+    return s.replace(/[\u0300-\u036f]/g, '').replace(/[\u2018\u2019]/g, '\'').toLowerCase();
+  }
+  function findTokens(d) {
+    var q = d && findable(d) ? foldText(d.find || '').trim() : '';
+    return q ? q.split(/\s+/) : null;
+  }
+  // Every word must appear in the title, artist, album or (episodes) show; the folded text is kept on the row's item.
+  function findHit(i, tok) {
+    if (i.findKey == null) i.findKey = foldText(i.name + '\n' + (i.artist || '') + '\n' + (i.albumName || '') + '\n' + (i.showName || ''));
+    for (var k = 0; k < tok.length; k++) { if (i.findKey.indexOf(tok[k]) === -1) return false; }
+    return true;
+  }
+  function findBox(d) {
+    var pod = isPod(d.item);
+    var input = el('input', { class: 'search dfind', id: 'dfind', type: 'search', placeholder: 'Find in ' + (pod ? 'episodes' : 'songs'),
+      autocomplete: 'off', autocorrect: 'off', autocapitalize: 'off', spellcheck: 'false', enterkeyhint: 'done', 'aria-label': 'Find in this list' });
+    input.value = d.find || '';
+    var box = el('div', { id: 'dfindBox', hidden: true }, [input]);
+    findBoxFor = d;
+    function onType() {
+      if (state.detail !== d) return;
+      d.find = input.value;
+      clearTimeout(findTimer);
+      // Short lists redraw at once; long ones wait for a pause in typing so each key stays quick.
+      if (d.items.length <= FIND_DEBOUNCE_ROWS || !input.value) applyFind(d);
+      else findTimer = setTimeout(function () { applyFind(d); }, 150);
+    }
+    input.addEventListener('input', onType);
+    input.addEventListener('search', onType);   // Safari's clear button
+    input.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      clearTimeout(findTimer); d.find = input.value; applyFind(d);
+      input.blur();   // hides the iPhone keyboard so the matches are visible
+    });
+    paintFindBox(d, box);
+    return box;
+  }
+  // Shown once there's something to find in (and kept while it has text).
+  function paintFindBox(d, box) {
+    box = box || $('dfindBox');
+    if (!box || findBoxFor !== d) return;
+    box.hidden = !(findable(d) && (d.items.length >= 2 || d.next || d.find));
+  }
+  function applyFind(d) {
+    if (state.detail !== d) return;
+    paintDetailList();
+    paintDetailFoot();   // only the rows and the footer: the box itself is never redrawn while you type
+  }
+  function fmtCount(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+  // What "Search all" would do: the page URLs still to load, their group, and whether it's allowed now.
+  function findPageUrl(item, off) {
+    if (item.kind === 'album') return albumPage(item.id, off);
+    if (item.kind === 'liked') return '/me/tracks?limit=' + FIND_PAGE + '&offset=' + off;
+    if (item.kind === 'episodes') return '/me/episodes?limit=' + FIND_PAGE + '&offset=' + off;
+    return '/playlists/' + encodeURIComponent(item.id) + '/items?limit=' + FIND_PAGE + '&offset=' + off;
+  }
+  function findMemoKey(d) { return d.item.kind + ':' + (d.item.id || ''); }
+  function findHead(items) { return items.slice(0, FIND_PAGE).map(function (i) { return i.uri; }).join(' '); }
+  function findPlan(d) {
+    if (!findable(d) || !d.next || typeof d.total !== 'number' || d.src === 'search' || d.src === 'local') return null;
+    var m = /[?&]offset=(\d+)/.exec(String(d.next));
+    if (!m) return null;
+    var off = +m[1], urls = [];
+    for (var o = off; o < d.total; o += FIND_PAGE) urls.push(findPageUrl(d.item, o));
+    if (!urls.length) return null;
+    var g = coolGroup(urls[0]);
+    var p = { urls: urls, group: g, total: d.total, more: d.total - off, reqs: 0, memo: null, disabled: false, why: '' };
+    if (g === 'catalog') {
+      p.reqs = urls.filter(function (u) { return !catMemo[u]; }).length;   // pages kept for this visit cost nothing
+      if (p.reqs > FIND_CAT_MAX) { p.disabled = true; p.why = 'cap'; }
+      else if (p.reqs && coolLeft('catalog')) { p.disabled = true; p.why = 'paused'; }
+    } else {
+      var c = findMemo[findMemoKey(d)];
+      if (c && c.total === d.total && c.head === findHead(d.items) && c.items.length > d.items.length) p.memo = c;
+      else {
+        p.urls = urls.slice(0, FIND_LIB_MAX);
+        p.reqs = p.urls.length;
+        if (coolLeft(g)) { p.disabled = true; p.why = 'paused'; }
+      }
+    }
+    return p;
+  }
+  function paintFindFoot(d, f, noun) {
+    var hits = d.findHits || 0, q = (d.find || '').trim();
+    if (!hits) f.appendChild(el('p', { class: 'empty', text: 'No ' + noun + ' match “' + q + '”' + (d.next ? ' in the ' + fmtCount(d.items.length) + ' loaded.' : '.') }));
+    else if (hits > FIND_SHOW) f.appendChild(el('p', { class: 'snote', text: 'Showing the first ' + FIND_SHOW + ' of ' + fmtCount(hits) + ' matches. Type more to narrow it.' }));
+    if (!d.next) return;
+    var p = findPlan(d);
+    if (!p) {   // an album found through search: its own Load more
+      if (d.src === 'search') {
+        var more = el('button', { class: 'btn secondary', type: 'button', text: 'Load more' });
+        more.addEventListener('click', function () { loadAlbumSearch(d); });
+        f.appendChild(more);
+      }
+      return;
+    }
+    var capped = p.group !== 'catalog' && !p.memo && p.more > p.reqs * FIND_PAGE;
+    var label = capped ? 'Search ' + fmtCount(p.reqs * FIND_PAGE) + ' more' : 'Search all ' + fmtCount(p.total) + ' ' + noun;
+    if (p.group === 'catalog' && p.reqs) label += ' (' + p.reqs + (p.reqs === 1 ? ' request)' : ' requests)');
+    var b = el('button', { class: 'btn secondary', type: 'button', id: 'dfindAll', text: label });
+    if (p.disabled) b.disabled = true;
+    b.addEventListener('click', function () { searchAll(d); });
+    f.appendChild(b);
+    var note = '';
+    if (p.why === 'cap') note = 'That needs ' + p.reqs + ' requests. Spotify allows only about 20 an hour for playlist and album songs, so this works for up to ' + (FIND_CAT_MAX * FIND_PAGE) + ' more songs. Clear the box and use Load more instead.';
+    else if (p.why === 'paused') note = coolText(p.group);
+    else if (p.memo || (p.group === 'catalog' && !p.reqs)) note = 'Already loaded this visit. No requests.';
+    else if (p.group !== 'catalog') note = 'Loads ' + fmtCount(Math.min(p.more, p.reqs * FIND_PAGE)) + ' more ' + noun + ' (' + p.reqs + (p.reqs === 1 ? ' request' : ' requests') + ')' +
+      (capped ? ', ' + fmtCount(p.more - p.reqs * FIND_PAGE) + ' left after that. Tap again for the rest.' : '.');
+    if (note) f.appendChild(el('p', { class: 'snote', text: note }));
+  }
+  function paintFindRun(d, f, noun) {
+    var r = d.findRun;
+    f.appendChild(el('p', { class: 'empty', text: 'Loading ' + noun + '… ' + fmtCount(d.items.length) + (typeof d.total === 'number' ? ' of ' + fmtCount(d.total) : '') }));
+    var stop = el('button', { class: 'btn secondary', type: 'button', text: 'Stop' });
+    stop.addEventListener('click', function () { r.stop = true; stop.disabled = true; });
+    f.appendChild(stop);
+  }
+  // One answered page goes into the list in order (albums: into the saved copy's raw list).
+  function addFindPage(d, j) {
+    if (typeof j.total === 'number') d.total = j.total;
+    if (d.item.kind === 'album') {
+      var have = {};
+      d.raw.forEach(function (x) { have[x.id] = true; });
+      d.raw = d.raw.concat((j.items || []).filter(function (x) { return x && x.id && x.uri && !have[x.id]; }).map(slTrack));
+      return [];
+    }
+    var mapped = (j.items || []).map(function (it) { return mapDetail(d.item, it); }).filter(Boolean);
+    d.items = d.items.concat(mapped);
+    if (isPod(d.item)) rememberEpisodes(mapped);
+    return mapped;
+  }
+  function searchAll(d) {
+    var p = findPlan(d);
+    if (!p || p.disabled || d.loading || d.findRun) return;
+    if (p.reqs && coolBlocked(p.group)) return;
+    if (p.memo) {   // Search all already ran this visit and page 1 hasn't changed: no requests
+      d.items = p.memo.items.slice(); d.next = p.memo.next;
+      if (state.detail === d) { paintDetailList(); paintDetailSort(); paintDetailFoot(); }
+      return;
+    }
+    if (findBusy) {   // the last load (another visit to this list) still has answers coming: start after it
+      var wait = d.findRun = { stop: false, waiting: true };
+      d.loading = true;
+      findBusy.waiters.push(function () {
+        d.loading = false; d.findRun = null;
+        if (!wait.stop && findAlive(d)) searchAll(d);
+        else if (state.detail === d) paintDetailFoot();
+      });
+      if (state.detail === d) paintDetailFoot();
+      return;
+    }
+    var urls = p.urls, cat = p.group === 'catalog', par = cat ? 1 : 2;
+    var run = d.findRun = { stop: false };
+    var got = {}, done = 0, nextI = 0, active = 0, failed = null, lastJ = null;
+    var busy = findBusy = { waiters: [] };
+    d.loading = true;
+    if (state.detail === d) paintDetailFoot();
+    // Draws what a page added, cheaply: matches only when they change what's shown; a sorted full list once at the end.
+    function paintNew(mapped, last) {
+      if (d.item.kind === 'album') { remapDetail(d); return; }   // first: d.items follows d.raw even off screen (it paints only on screen)
+      if (state.detail !== d) return;
+      var tok = findTokens(d), plain = sortIsDefault(detailView(d.item));
+      if (tok) {
+        var n = mapped.filter(function (i) { return findHit(i, tok); }).length;
+        if (n && plain && (d.findHits || 0) >= FIND_SHOW) d.findHits += n;   // already a full screen: only the count changes
+        else if (n) paintDetailList();
+      } else if (plain) appendDetailRows(mapped);
+      else if (last) paintDetailList();
+      paintDetailFoot();
+    }
+    function commit() {
+      var mapped = [];
+      while (done < urls.length && got[done]) { lastJ = got[done]; mapped = mapped.concat(addFindPage(d, lastJ)); delete got[done]; done++; }
+      // Where Load more (or the next Search all) carries on.
+      d.next = done < urls.length ? urls[done] : (lastJ && lastJ.next) || null;
+      return mapped;
+    }
+    function finish(mapped) {
+      d.loading = false; d.findRun = null;
+      if (findBusy === busy) findBusy = null;
+      busy.waiters.splice(0).forEach(function (fn) { setTimeout(fn, 0); });
+      if (d.item.kind === 'album') { if (done) saveAlbumList(d); }   // v2.15: the saved copy stays whole
+      paintNew(mapped, true);   // the last rows (an album redraws from its saved copy)
+      if (d.item.kind !== 'album' && !cat && !d.next && done === urls.length) findMemo[findMemoKey(d)] = { total: d.total, head: findHead(d.items), items: d.items.slice(), next: null };
+      if (failed) {
+        if (failed.message === 'signed-out') { if (state.started) renderSignIn(); return; }
+        if (state.detail === d) {
+          if (isCool(failed)) coolToast(failed.group);
+          else toast('Couldn’t load every ' + (isPod(d.item) ? 'episode' : 'song') + ' (' + (failed.message || 'unknown error') + ').');
+        }
+      }
+      if (state.detail === d) { paintDetailSort(); paintDetailFoot(); }
+    }
+    function launch() {
+      while (!failed && !run.stop && findAlive(d) && active < par && nextI < urls.length) {
+        (function (i) {
+          active++;
+          (cat ? apiCached : api)(urls[i]).then(function (r) {
+            if (!r.ok || !r.json) throw new Error(errMsg(r));
+            got[i] = r.json;
+          }).catch(function (e) { if (!failed) failed = e || new Error('unknown error'); }).then(function () {
+            active--;
+            var mapped = commit();
+            if (active === 0 && (failed || run.stop || !findAlive(d) || nextI >= urls.length)) { finish(mapped); return; }
+            paintNew(mapped);
+            launch();
+          });
+        })(nextI++);
+      }
+    }
+    launch();
   }
   // v2.16: "Show songs" for playlists the page can't list. It loads Spotify's own embedded player (an iframe, so no
   // Web API request and no new permission) only when tapped, never autoplays, and uses Spotify's dark style in dark
@@ -4801,8 +5062,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (isPod(d.item)) rememberEpisodes(mapped);   // for Continue listening
       if (!cur) return;
       // In the default order new rows go at the end; a chosen sort re-sorts everything loaded so far.
-      if (sortIsDefault(detailView(d.item))) appendDetailRows(mapped);
-      else paintDetailList();
+      if (sortIsDefault(detailView(d.item)) && !findTokens(d)) appendDetailRows(mapped);
+      else paintDetailList();   // v2.22: and while Find in list has text
       paintDetailSort();
       paintDetailFoot();
     }).catch(function (e) {
@@ -5306,6 +5567,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     clearLastPlay();   // signed out: the last playback belongs to that sign-in
     releasePoller();
     paintCool();       // hides the cool-off line (state.started is false now)
+    stopFind(state.detail); state.detailStack.forEach(stopFind);   // v2.22
     state.detail = null; state.detailStack = [];
     $('top').classList.remove('detail');
     $('top').hidden = true;
@@ -5415,7 +5677,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   $('refreshBtn').addEventListener('click', function () {
     // v2.14: refreshes what isn't paused; album and podcast pages kept for this visit are asked again when opened.
     if (coolLeft('player') && coolLeft('library')) { coolToast('library'); return; }
-    catMemo = {};
+    catMemo = {}; findMemo = {};
     if (!coolLeft('player')) { checkDevice(); schedulePoll(0, true); }
     if (!coolLeft('library')) refresh();
     toast('Refreshing…');
