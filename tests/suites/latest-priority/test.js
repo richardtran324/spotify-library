@@ -1,5 +1,5 @@
 'use strict';
-// In Latest: Priority · Normal · Hidden (v2.44) tests: jsdom, mocked fetch (answers on timers), shared localStorage.
+// In Latest: Priority · Normal · Hidden (v2.52) tests: jsdom, mocked fetch (answers on timers), shared localStorage.
 // Run: node tests/run.js latest-priority  (or, after npm ci in tests/: node test.js [path to index.html])
 if (process.argv[2]) process.env.SRC = process.argv[2];
 var H = require('./harness');
@@ -106,6 +106,12 @@ function lastToast(tab) { var a = tab.toasts(); return a[a.length - 1] || ''; }
 function stored(store) { try { return JSON.parse(store.getItem(KEY) || 'null'); } catch (e) { return 'bad'; } }
 function emptyText(tab) { var p = q(tab, '#main p.empty'); return p ? p.textContent : ''; }
 function showItem(id) { return { kind: 'show', id: id, uri: 'spotify:show:' + id, name: 'Show ' + id.slice(1), url: 'https://open.spotify.com/show/' + id, img: '', sub: 'Podcast' }; }
+
+// The podcasts a reload would ask from these (Hidden left out, as loadLatest does), none asked before.
+function pickIds(t, list, lim) {
+  var pri = t.readLatestPri();
+  return t.latestPick(list.filter(function (s) { return pri[s.id] !== 'h'; }), lim, {}).map(function (s) { return s.id; });
+}
 
 var tests = [];
 
@@ -270,8 +276,8 @@ tests.push(function () {
     check('7 list shows no Hidden show', !ids(tab).some(function (id) { return /^e[123]-/.test(id); }), ids(tab).slice(0, 5));
     check('7 Priority show’s unplayed episodes on top', ids(tab).slice(0, 5).every(function (id) { return /^e14-/.test(id); }), ids(tab).slice(0, 6));
     var t = tab.t();
-    var set = t.latestShows(t.state.data.shows).map(function (s) { return s.id; });
-    check('7 latestShows: 11, Priority first', set.length === 11 && set[0] === 's14', set);
+    var set = pickIds(t, t.state.data.shows, 12);
+    check('7 latestPick: 11, Priority first', set.length === 11 && set[0] === 's14', set);
   });
 });
 
@@ -284,13 +290,20 @@ tests.push(function () {
     check('8 no settings: 12 requests as before', latestReqs(tab.boot).length === 12, latestReqs(tab.boot).map(showIdOf));
     var t = tab.t();
     store.setItem(KEY, JSON.stringify(many));
-    var set = t.latestShows(t.state.data.shows).map(function (s) { return s.id; });
+    var set = pickIds(t, t.state.data.shows, 12);
     check('8 13 Priority, 1 Normal: 11 Priority + the Normal one = 12', set.length === 12 && set.indexOf('s14') !== -1 &&
       set.filter(function (id) { return many[id]; }).length === 11, set);
     var three = {}; for (var j = 1; j <= 3; j++) three['s' + j] = 'p';
     store.setItem(KEY, JSON.stringify(three));
-    set = t.latestShows(t.state.data.shows).map(function (s) { return s.id; });
+    set = pickIds(t, t.state.data.shows, 12);
     check('8 3 Priority: all 3 first, then 9 Normal', set.length === 12 && set.slice(0, 3).sort().join() === 's1,s2,s3' && set.slice(3).every(function (id) { return !three[id]; }), set);
+    store.setItem(KEY, JSON.stringify(many));
+    var twenty = shows(20);
+    set = pickIds(t, twenty, 6);
+    check('8 only 6 places (lookup budget): 4 Priority + 2 Normal', set.length === 6 && set.filter(function (id) { return many[id]; }).length === 4, set);
+    store.removeItem(KEY);
+    var plain = t.latestPick(twenty, 12, {}).map(function (s) { return s.id; });
+    check('8 nothing set: same pick as before (first 6, then rotation)', plain.length === 12 && plain.slice(0, 6).join() === 's1,s2,s3,s4,s5,s6', plain);
   });
 });
 tests.push(function () {
@@ -450,7 +463,7 @@ tests.push(function () {
     return H.wait(300).then(function () {
       var txt = q(tab, '#diag').textContent;
       check('14 Diagnostics lists the counts', /In Latest \(set on this phone\): 2 Priority · 1 Hidden/.test(txt), txt.slice(0, 400));
-      check('14 Diagnostics version', /Page v2\.44 \(2026-11-27\)/.test(txt));
+      check('14 Diagnostics version', /Page v2\.52 \(2026-11-27\)/.test(txt));
       check('14 counts helper', JSON.stringify(tab.t().latestPriCounts()) === '{"p":2,"h":1}');
     });
   });

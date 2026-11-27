@@ -5,6 +5,6 @@ module.exports = require('../../lib/harness')({
   delays: true,
   expose: 'state: state, K: K, setPlayer: setPlayer, setFilter: setFilter, renderList: renderList, openDetail: openDetail, ' +
     'closeDetail: closeDetail, goBack: goBack, epHistory: epHistory, epPlayed: epPlayed, resumeOf: resumeOf, resumeItem: resumeItem, ' +
-    'mapArtist: mapArtist, releaseGroup: releaseGroup, jumpEpisodes: jumpEpisodes, latestShows: latestShows, latestFresh: latestFresh, ' +
+    'mapArtist: mapArtist, releaseGroup: releaseGroup, jumpEpisodes: jumpEpisodes, latestPlan: latestPlan, latestFresh: latestFresh, ' +
     'showFresh: showFresh, savedEpisodesItem: savedEpisodesItem, albumPage: albumPage, showPage: showPage'
 });
