@@ -3248,7 +3248,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var until = Date.now() + WAIT_FOR_MS;
     showWake('Press play in Control Center or on the lock screen. “' + p.item.name + '” starts as soon as Spotify wakes.', { pulse: true, open: true });
     function mine() { var cur = readPending(); return !!cur && cur.at === p.at; }
-    var n = 0;
+    // audit: if the device list is under one wait step old (the tap's own check just came back empty),
+    // start with the player check instead of asking for the same list again ~100 ms later.
+    var n = (Date.now() - (state.devicesAt || 0) < WAIT_POLL_MS) ? 1 : 0;
     function tick() {
       w.timer = null;
       if (!w.running || w.gen !== gen) return;
