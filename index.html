@@ -501,7 +501,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     </div>
     <div class="status" id="status"><span class="dot" id="dot"></span><span class="stext"><span id="statusText">Checking for Spotify on your devices…</span> <button class="linkbtn" id="devBtn" type="button" hidden></button></span></div>
     <div class="wake" id="wake" hidden><span class="dot pulse" id="wakeDot"></span><span class="stext" id="wakeText"></span><span class="wakebtns"><button class="linkbtn" id="wakeRetry" type="button" hidden>Try again</button><button class="linkbtn" id="wakeOpen" type="button" hidden>Open Spotify instead</button><button class="linkbtn" id="wakeCancel" type="button">Cancel</button></span></div>
-    <input class="search" id="search" type="search" placeholder="Filter by name" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Filter by name">
+    <input class="search" id="search" type="search" placeholder="Filter by name or paste a link" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Filter by name or paste a Spotify link">
     <div class="filters" role="group" aria-label="Show">
       <button class="chip" type="button" data-filter="home" aria-pressed="true">Home</button>
       <button class="chip" type="button" data-filter="playlists" aria-pressed="false">Playlists</button>
@@ -2406,6 +2406,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     set(K.searchType, t);
     paintSearchChips();
     clearTimeout(searchTimer);
+    if (linkOf($('search').value)) { renderList(); return; }   // v2.36: a link in the box: nothing is searched
     var q = $('search').value.trim();
     var e = q.length >= 2 ? cacheGet(t, q) : null;
     if (q.length >= 2 && (!e || e.error)) runSearch(q);
@@ -3090,7 +3091,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // A tap on this page started an episode: record it now if the page knows its show; otherwise the
   // player check a moment later records it with the full details.
   function noteStarted(item) {
-    if (!item || !/^spotify:episode:/.test(item.uri || '')) return;
+    if (!item || item.linkStub || !/^spotify:episode:/.test(item.uri || '')) return;   // v2.36: no placeholder names in the history
     if (markOf(item.uri)) { writeMark(item.uri, null); marksChanged(); }   // v2.21: played again from this page
     var h = histByUri()[item.uri], info = null;
     if (h) info = { show: h.show, dur: h.duration_ms };
@@ -3839,7 +3840,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.35 (2026-11-27)';
+  var VERSION = 'v2.36 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -5087,7 +5088,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
 
   // ---------- pinned favorites (stored on this phone only, never sent to Spotify) ----------
   var PIN_KINDS = { playlist: 'playlists', album: 'albums', artist: 'artists', show: 'podcasts' };
-  function canPin(item) { return !!(item && item.uri && item.id && PIN_KINDS[item.kind]); }
+  function canPin(item) { return !!(item && item.uri && item.id && PIN_KINDS[item.kind] && !item.linkStub); }   // v2.36: not under a placeholder name
   function readPins() {
     var a = get(K.pins);
     if (!Array.isArray(a)) return [];
@@ -5381,6 +5382,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (state.detail) return;   // the song list view owns the page
     var main = $('main');
     main.textContent = '';
+    var plk = linkOf($('search').value);   // v2.36: a pasted Spotify link replaces the list
+    if (plk) return renderLink(main, plk);
     if (state.filter === 'search') return renderSearch(main);
     if (state.filter === 'recent') return renderRecent(main);
     var d = state.data;
@@ -5579,14 +5582,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var box = $('search');
     $('schips').hidden = f !== 'search';
     if (f === 'search') {
-      box.placeholder = 'Search all of Spotify';
-      box.setAttribute('aria-label', 'Search all of Spotify');
+      box.placeholder = 'Search Spotify or paste a link';   // v2.36
+      box.setAttribute('aria-label', 'Search all of Spotify or paste a Spotify link');
       box.setAttribute('enterkeyhint', 'search');
       if (!wasSearch) { box.value = state.search.q; }
       if (focus) box.focus();
     } else {
-      box.placeholder = 'Filter by name';
-      box.setAttribute('aria-label', 'Filter by name');
+      box.placeholder = 'Filter by name or paste a link';   // v2.36
+      box.setAttribute('aria-label', 'Filter by name or paste a Spotify link');
       box.setAttribute('enterkeyhint', 'done');
       if (wasSearch) { box.value = state.query; }
     }
@@ -7006,7 +7009,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // An album or podcast with nothing on screen while catalog is paused (or its request just hit a 429).
   function detailFallback(d) {
     if (d.items.length || d.src === 'search' || d.src === 'local') return false;
-    if (d.item.kind === 'album' && d.item.id && d.item.name) { startAlbumSearch(d); return true; }
+    if (d.item.kind === 'album' && d.item.id && d.item.name && !d.item.linkStub) { startAlbumSearch(d); return true; }   // v2.36: no name to search for
     if (d.item.kind === 'show' && d.item.id) { startShowLocal(d); return true; }
     return false;
   }
@@ -7449,6 +7452,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         if (!r.ok || !r.json) return;
         var src = img(r.json.images);
         if (src) d.img = src;
+        if (d.item.linkStub && r.json.name) linkArtistNamed(d, String(r.json.name));   // v2.36: opened from a link
         if (state.detail === d) paintArtistCover(d);
       }).catch(function () {});
     }
@@ -7928,6 +7932,207 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     resumePending(false);
   }
 
+  // ---------- pasted Spotify links (v2.36) ----------
+  // A song, episode, album, playlist, artist or podcast link (open.spotify.com, with or without /intl-xx/, ?si= or
+  // /embed/, or a spotify: URI) pasted or typed into the name box is shown instead of a name filter or search.
+  // Songs and episodes get one row: a tap plays it through the usual play path (one player call). Their name
+  // comes from what the page already has (library, search, recently played, lists, Now Playing); otherwise the
+  // row says "Song from link" and Show details asks once (GET /tracks/{id} or /episodes/{id}, kept for the visit).
+  // Albums, artists and podcasts open their page right away (same requests as opening them anywhere else);
+  // a playlist outside your library first asks GET /playlists/{id}, as Now Playing does. Short spotify.link links
+  // need a redirect the page can't follow, so they only get Open in Spotify. The clipboard is never read.
+  // Nothing is stored on the phone.
+  // The link must start the text or follow a space, so evil.com/open.spotify.com/…, ?u=…, javascript:… and xspotify.link don't count.
+  var LINK_URL = /(?:^|\s)(?:https?:\/\/)?((?:[a-z0-9-]+\.)*(?:spotify\.com|spotify\.link|spotify\.app\.link))(\/[^\s<>"'()]*)/i;
+  var LINK_MAX = 2000;    // longer text is never read as a link (keeps typing fast after a huge paste)
+  var LINK_URI = /(?:^|\s)(spotify:[a-z][^\s<>"']*)/i;
+  var LINK_KINDS = { track: 'track', episode: 'episode', album: 'album', playlist: 'playlist', artist: 'artist', show: 'show' };
+  var LINK_STUB = { track: ['Song from link', 'Song · tap to play'], episode: ['Episode from link', 'Episode · tap to play'],
+    album: ['Album from link', 'Album'], playlist: ['Playlist from link', 'Playlist'], artist: ['Artist from link', 'Artist'], show: ['Podcast from link', 'Podcast'] };
+  var LINK_BAD = 'This link can’t be opened here. Paste a Spotify link to a song, episode, album, playlist, artist or podcast.';
+  var linkMemo = {};      // uri -> item from Show details, this visit only
+  var linkLooks = {};    // uri -> {busy, error}: Show details asked this visit (an answer drops its entry)
+  var linkOpened = '';    // the album, artist, podcast or playlist link already opened from this paste
+  var linkLast = { v: null, lk: null };
+  function isSongLink(lk) { return !!lk && (lk.kind === 'track' || lk.kind === 'episode'); }
+  // null: not a link (a name). {bad}: looks like a Spotify link but can't be opened. {short, url}: spotify.link.
+  // Text that starts like a link (a scheme with // after it, or spotify:) but isn't one Spotify link the page reads is {bad} too,
+  // so it's never searched by name.
+  function parseLink(text) {
+    var s = String(text || '');
+    if (s.length > LINK_MAX) s = s.trim();
+    if (s.length > LINK_MAX) return null;
+    var t = s.trim(), looks = /^spotify:/i.test(t) || (/^[a-z][a-z0-9+.-]*:/i.test(t) && t.indexOf('//') !== -1);   // also javascript:…//… and data:…https://…
+    if (!looks && s.toLowerCase().indexOf('spotify') === -1) return null;
+    return readLink(s) || (looks ? { bad: true } : null);
+  }
+  function readLink(s) {
+    var m = LINK_URL.exec(s), parts;
+    if (m) {
+      var host = m[1].toLowerCase(), path = m[2].split(/[?#]/)[0].replace(/[.,!?;:]+$/, '');   // a link ending a sentence
+      if (host === 'spotify.link' || host === 'spotify.app.link') return { short: true, url: /^\/[A-Za-z0-9_-]+\/?$/.test(path) ? 'https://' + host + path : '' };
+      if (host !== 'open.spotify.com' && host !== 'play.spotify.com') return { bad: true };
+      parts = path.split('/').filter(Boolean);
+      if (parts[0] && /^intl-[a-z]{2}/i.test(parts[0])) parts.shift();
+      if (parts[0] === 'embed' || parts[0] === 'embed-podcast') parts.shift();
+    } else {
+      m = LINK_URI.exec(s);
+      if (!m) return null;
+      parts = m[1].split(/[?#]/)[0].replace(/[.,!?;)]+$/, '').split(':').slice(1);
+    }
+    if (parts[0] === 'user' && parts.length >= 4) parts = parts.slice(2);   // old /user/<name>/playlist/<id> links
+    var kind = LINK_KINDS[String(parts[0] || '').toLowerCase()], id = parts[1] || '';
+    if (!kind || !/^[A-Za-z0-9]{22}$/.test(id)) return { bad: true };
+    return { kind: kind, id: id, uri: 'spotify:' + kind + ':' + id, url: 'https://open.spotify.com/' + kind + '/' + id };
+  }
+  function linkOf(v) {
+    if (linkLast.v !== v) linkLast = { v: v, lk: parseLink(v) };
+    return linkLast.lk;
+  }
+  // What the page already knows about this link (no request). Songs lose any album or playlist context.
+  function knownLinkItem(lk) {
+    if (linkMemo[lk.uri]) return linkMemo[lk.uri];
+    if (lk.kind === 'playlist') return libraryPlaylist(lk.id);
+    var d = state.data || {}, hit = null;
+    function look(list) {
+      if (hit || !Array.isArray(list)) return;
+      for (var i = 0; i < list.length; i++) { if (list[i] && list[i].uri === lk.uri && list[i].kind === lk.kind) { hit = list[i]; return; } }
+    }
+    look(lk.kind === 'album' ? d.albums : lk.kind === 'artist' ? d.artists : lk.kind === 'show' ? d.shows : null);
+    if (!isSongLink(lk)) look(readPins());
+    Object.keys(searchCache).forEach(function (k) {
+      var e = searchCache[k];
+      if (!e) return;
+      look(e.items);
+      if (e.results) Object.keys(e.results).forEach(function (g) { look(e.results[g]); });
+    });
+    if (isSongLink(lk)) {
+      look(state.recent.items);
+      if (lk.kind === 'episode') look(epHistory().map(histRow));
+      var lc = state.latest.cache;
+      if (!hit && lk.kind === 'episode' && lc && Array.isArray(lc.items)) lc.items.forEach(function (x) { if (!hit && x && x.uri === lk.uri) hit = latestItem(x); });
+      [state.detail].concat(state.detailStack).forEach(function (v) { if (v && v.kind !== 'artist') look(v.items); });
+      var p = state.player && state.player.item;
+      if (!hit && p && p.uri === lk.uri) hit = mapTrack(p);
+      if (hit) { hit = Object.assign({}, hit); delete hit.ctx; delete hit.num; }
+    }
+    return hit;
+  }
+  function linkItem(lk) {
+    var k = knownLinkItem(lk);
+    if (k) return k;
+    var s = LINK_STUB[lk.kind];
+    return { kind: lk.kind, id: lk.id, uri: lk.uri, url: lk.url, name: s[0], sub: s[1], img: '', linkStub: true };
+  }
+  function renderLink(main, lk) {
+    if (lk.bad) { main.appendChild(el('p', { class: 'empty', text: LINK_BAD })); return; }
+    if (lk.short) {
+      main.appendChild(el('p', { class: 'empty' }, [
+        document.createTextNode('Short spotify.link links can’t be opened here. Paste the full open.spotify.com link instead.' + (lk.url ? ' ' : '')),
+        lk.url ? el('a', { href: lk.url, text: 'Open in Spotify' }) : null
+      ]));
+      return;
+    }
+    var item = linkItem(lk);
+    var li = itemRow(item);
+    if (item.linkStub) {
+      var acts = li.querySelector('.acts');
+      if (acts) li.removeChild(acts);   // no heart, queue or pin under a placeholder name
+      if (lk.kind === 'playlist') {
+        var a = li.querySelector('a.item'), a2 = a.cloneNode(true);   // the copy has no click handler
+        a.parentNode.replaceChild(a2, a);
+        a2.addEventListener('click', function (ev) { ev.preventDefault(); openLink(lk, a2); });
+      }
+    }
+    main.appendChild(el('h2', { class: 'sect', text: 'From your link' }));
+    main.appendChild(el('ul', { class: 'list', id: 'linkList' }, [li]));
+    if (!item.linkStub || !isSongLink(lk)) return;
+    var look = linkLooks[lk.uri] || null;
+    var foot = el('p', { class: 'empty', id: 'linkFoot' });
+    if (look && look.busy) foot.textContent = 'Looking it up…';
+    else {
+      if (look && look.error) foot.appendChild(el('span', { class: 'err', text: look.error + ' ' }));
+      var b = el('button', { class: 'linkbtn', type: 'button', id: 'linkMore', text: lk.kind === 'episode' ? 'Show episode details' : 'Show song details' });
+      b.addEventListener('click', function () { lookupLink(lk); });
+      foot.appendChild(b);
+    }
+    main.appendChild(foot);
+  }
+  function linkOnScreen(lk) { var cur = linkOnBox(); return !!cur && cur.uri === lk.uri; }
+  function linkOnBox() { var cur = state.started && !state.detail ? linkOf($('search').value) : null; return cur && cur.uri ? cur : null; }
+  // Show details: one GET (podcast and album details), only on that tap; Episode notes use the same answer.
+  function lookupLink(lk) {
+    if (linkLooks[lk.uri] && linkLooks[lk.uri].busy) return;
+    var url = '/' + (lk.kind === 'episode' ? 'episodes/' : 'tracks/') + encodeURIComponent(lk.id);
+    if (!catMemo[url] && coolBlocked('catalog')) return;
+    linkLooks[lk.uri] = { busy: true, error: '' };
+    if (linkOnScreen(lk)) renderList();
+    apiCached(url).then(function (r) {
+      if (!r.ok || !r.json) throw httpError(r);
+      var it = lk.kind === 'episode' ? mapEpisode(r.json, true) : mapTrack(r.json);
+      if (!it) throw new Error('unreadable answer');
+      linkMemo[lk.uri] = it;
+      delete linkLooks[lk.uri];
+    }).catch(function (e) {
+      if (e && e.message === 'signed-out') { delete linkLooks[lk.uri]; return renderSignIn(); }
+      var msg = isCool(e) ? coolText(e.group) : (e && (e.status === 404 || e.status === 400)) ? 'Spotify doesn’t know this link.' : 'Couldn’t look it up (' + ((e && e.message) || 'error') + ').';
+      if (isCool(e)) coolToast(e.group);
+      linkLooks[lk.uri] = { busy: false, error: msg };
+    }).then(function () {
+      if (!linkOnBox()) return;
+      var mine = linkOnScreen(lk);
+      renderList();   // also when another link is on screen now: its own lookup may have finished earlier
+      if (!mine) return;
+      var n = linkMemo[lk.uri] ? document.querySelector('#linkList a.item') : $('linkMore');
+      if (n) n.focus({ preventScroll: true });
+    });
+  }
+  // An artist opened from a link gets its name from the picture request; the page is repainted in place (focus stays).
+  function linkArtistNamed(d, name) {
+    var it = d.item;
+    it.name = name; it.linkStub = false;
+    linkMemo[it.uri] = it;
+    if (state.detail !== d) return;
+    var h = document.querySelector('.dhead .dname');
+    if (h) h.textContent = name;
+    var play = document.querySelector('.dhead .dbtns a.btn');
+    if (play) play.setAttribute('aria-label', 'Play “' + name + '”');
+    var f = document.querySelector('.dhead [data-follow]');
+    if (f) { f.setAttribute('data-name', name); paintFollow(f); }
+    var row = play && play.parentNode, sh = row && row.querySelector('button[aria-label^="Share"]');
+    if (sh) { var nsh = shareBtn(it); if (nsh) row.replaceChild(nsh, sh); sh = nsh; }
+    if (row && canPin(it) && !row.querySelector('.pinbtn')) row.insertBefore(pinBtn(it), sh || null);
+  }
+  // Albums, artists and podcasts open their usual page; a playlist outside your library is asked for first.
+  function openLink(lk, from) {
+    var item = linkItem(lk);
+    if (lk.kind !== 'playlist' || !item.linkStub) { openDetail(item, { push: !!state.detail }); return; }
+    if (from && from.getAttribute('aria-busy') === 'true') return;
+    if (from) from.setAttribute('aria-busy', 'true');
+    playlistById(lk.id).then(function (pl) {
+      if (from) from.removeAttribute('aria-busy');
+      if (linkOnScreen(lk)) openDetail(pl, { push: false });   // not if the box changed meanwhile
+    }, function (e) {
+      if (from) from.removeAttribute('aria-busy');
+      if (e && e.message === 'signed-out') return renderSignIn();
+      if (isCool(e)) return coolToast(e.group);
+      toast('Couldn’t open the playlist (' + (e && e.message ? e.message : 'unknown error') + ').');
+    });
+  }
+  // From the name box: true when it holds a link (shown instead of a name filter or search, which don't run).
+  function linkInput(v) {
+    var lk = linkOf(v);
+    if (!lk) { linkOpened = ''; return false; }
+    clearTimeout(searchTimer);
+    renderList();
+    if (lk.kind && !isSongLink(lk) && linkOpened !== lk.uri) {
+      linkOpened = lk.uri;
+      $('search').blur();   // hides the iPhone keyboard
+      openLink(lk, document.querySelector('#linkList a.item'));
+    }
+    return true;
+  }
+
   // ---------- wiring ----------
   // audit: PERF-3. The name filter used to rebuild the whole list on every key. Like Find in list, a view with
   // more than 300 rows now redraws 150 ms after typing stops (only if still on the same tab); short views and
@@ -7935,6 +8140,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // the caret stay put.
   var queryTimer = null, QUERY_DEBOUNCE_ROWS = 300;
   $('search').addEventListener('input', function (e) {
+    if (linkInput(e.target.value)) return;   // v2.36: a pasted Spotify link
     if (state.filter === 'search') scheduleSearch(e.target.value, false);
     else {
       state.query = e.target.value;
@@ -7947,6 +8153,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   $('search').addEventListener('keydown', function (e) {
     if (e.key !== 'Enter') return;
     e.preventDefault();
+    var lk = linkOf(e.target.value);   // v2.36: Done or Search opens an album, artist, podcast or playlist link again
+    if (lk) { e.target.blur(); if (lk.kind && !isSongLink(lk)) openLink(lk, document.querySelector('#linkList a.item')); return; }
     if (state.filter === 'search') scheduleSearch(e.target.value, true);
     e.target.blur(); // hides the iPhone keyboard so results are visible
   });

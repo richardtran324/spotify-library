@@ -389,9 +389,9 @@ tests.push(function () {
       d(tab).querySelector('.filters .chip[data-filter="playlists"]').getAttribute('aria-pressed') === 'false');
     check('10 choice stored', stored(store, 'lib-filter') === 'albums');
     check('10 the list changes', mainNames(tab).join() === 'Blue,apple,Céline', mainNames(tab));
-    check('10 box filters by name', $(tab, 'search').placeholder === 'Filter by name' && $(tab, 'schips').hidden);
+    check('10 box filters by name', $(tab, 'search').placeholder === 'Filter by name or paste a link' && $(tab, 'schips').hidden);   // #52: or paste a link
     tab.t().setFilter('search');
-    check('10 Search Spotify turns the box into a search', $(tab, 'search').placeholder === 'Search all of Spotify' && !$(tab, 'schips').hidden);
+    check('10 Search Spotify turns the box into a search', $(tab, 'search').placeholder === 'Search Spotify or paste a link' && !$(tab, 'schips').hidden);   // #52
     tab.t().setFilter('albums');
     finish(tab);
     return setup(store).then(function (tab2) {
