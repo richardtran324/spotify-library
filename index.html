@@ -728,7 +728,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     epNotes: 'lib-ep-notes',     // v2.18: [{id, t, at[, cut]}], newest first: notes of episodes you opened or played (40, 4,000 characters each)
     epMarks: 'lib-ep-marks',     // v2.21: {uri: {played, at, pos}}: Mark as played / unplayed, this phone only (400, 180 days)
     ctxLast: 'lib-ctx-last',     // v2.23: {album or playlist URI | 'liked': {uri, id, name, positionMs, durMs, at}}: the last song heard in each list (40, 30 days)
-    plSaved: 'lib-pl-saved',     // v2.34: {playlist id: {s: snapshot_id, at, o: last opened, t: total, n: [{i, n, a, l, r, d, c, t[, e, u]} | 0 (local file)]}}: songs loaded in your own and collaborative playlists (25 playlists, 1,000 songs each, ≈ 500,000 characters in all, 90 days unopened; least recently opened go first)
+    plSaved: 'lib-pl-saved',     // v2.34: {playlist id: {s: snapshot_id, at, o: last opened, t: total, n: [{i, n, a, l, r, d, c, t[, e, u]} | 0 (local file)]}}: songs loaded in your own and collaborative playlists (25 playlists, 1,000 songs each, ≈ 500,000 characters in all, 90 days unopened; least recently opened go first); a change made on the page removes that playlist's copy
     // v2.13 rate limits. Shared by every copy of the page that shares this storage (Safari tabs on one origin).
     cool: 'lib-cooloff',         // v2.14: {group: {until, reason, strikes, quotaAt, retryAfter, last429:{at, reason, retryAfter, what}}}
     poller: 'lib-poller',        // {id, at, every}: the one visible copy that runs the player check
@@ -5188,6 +5188,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var note = '';
     if (p.why === 'cap') note = 'That needs ' + p.reqs + ' requests. Spotify allows only about 20 an hour for playlist and album songs, so this works for up to ' + (FIND_CAT_MAX * FIND_PAGE) + ' more songs. Clear the box and use Load more instead.';
     else if (p.why === 'paused') note = coolText(p.group);
+    else if (p.group === 'catalog' && !p.reqs && d.plSavedAt) note = 'Saved on this phone. No requests.';   // v2.34
     else if (p.memo || (p.group === 'catalog' && !p.reqs)) note = 'Already loaded this visit. No requests.';
     else if (p.group !== 'catalog') note = 'Loads ' + fmtCount(Math.min(p.more, p.reqs * FIND_PAGE)) + ' more ' + noun + ' (' + p.reqs + (p.reqs === 1 ? ' request' : ' requests') + ')' +
       (capped ? ', ' + fmtCount(p.more - p.reqs * FIND_PAGE) + ' left after that. Tap again for the rest.' : '.');
@@ -5576,7 +5577,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // its `next` points at the first song not kept. Returns {total} or null when nothing is kept.
   function rewriteMemo(id, fn, extra, snap) {
     var pages = memoPages(id);
-    if (!pages.length) { plEdited(id, extra, snap); return null; }   // v2.34: the copy saved on the phone
+    if (!pages.length) { plEdited(id); return null; }   // v2.34: the copy saved on the phone goes
     var raw = [];
     pages.forEach(function (p) { raw = raw.concat(p.r.json.items); });
     var before = raw.length;
@@ -5592,7 +5593,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         : p.off + items.length < total ? API + plItemsPath(id) + '?offset=' + (p.off + items.length) + '&limit=' + lim : null;
       catMemo[p.key] = { ok: true, status: p.r.status || 200, json: Object.assign({}, p.r.json, { items: items, total: total, offset: p.off, next: next }), snap: snap || null };
     });
-    plSave(id, true);   // v2.34: the saved copy follows the change (or goes, without a new snapshot)
+    plSave(id, true);   // v2.34: the saved copy goes (see plSave)
     return { total: total };
   }
   // The snapshot the loaded positions belong to: the last change's answer, or none (Spotify then uses the
@@ -6261,8 +6262,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // for nothing while the library's snapshot is the same; a changed snapshot loads it again. Only a snapshot from
   // the library loaded this visit (and after the last Refresh) counts, and a copy is labelled only with a snapshot
   // known before its first page was asked, so the label is never newer than the songs. Edit and Add to playlist
-  // update the saved copy with Spotify's new snapshot, or drop it. Compact songs: what the rows, sorting, Find in
-  // list and Play need. Refresh keeps the copies; Diagnostics → Clear saved lists removes them.
+  // remove the saved copy: Spotify's new snapshot may also hold changes made elsewhere that the page never saw,
+  // so it can't label the page's songs. This visit's pages (catMemo) follow the change as before, and the next
+  // visit loads the playlist from Spotify and saves it again. Compact songs: what the rows, sorting, Find in list
+  // and Play need. Refresh keeps the copies; Diagnostics → Clear saved lists removes them.
   var PL_SAVE_MAX = 25, PL_SAVE_SONGS = 1000, PL_SAVE_CHARS = 500000, PL_SAVE_MS = 90 * 24 * 60 * 60 * 1000;
   var PL_IMG = 'https://i.scdn.co/image/';
   var plTrustFrom = Date.now();   // the library must be loaded after this (page start, then each Refresh)
@@ -6284,7 +6287,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // `keep` itself, then the whole key. True when `keep` was saved.
   function plWrite(map, keep) {
     var now = Date.now(), lib = null;
-    if (plLibFresh()) { lib = {}; state.data.playlists.forEach(function (p) { if (p && p.id && knownListable(p)) lib[p.id] = true; }); }
+    if (plLibFresh() && state.data.me && state.data.me.id) { lib = {};   // without your account, own playlists can't be told apart
+ state.data.playlists.forEach(function (p) { if (p && p.id && knownListable(p)) lib[p.id] = true; }); }
     var list = Object.keys(map).filter(function (id) {
       var c = map[id];
       return plValid(c) && (id === keep || now - c.o < PL_SAVE_MS) && (!lib || lib[id]);
@@ -6292,6 +6296,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var out = {}, ids = [], size = 2;
     for (var i = 0; i < list.length && ids.length < PL_SAVE_MAX; i++) {
       var n = list[i].length + 4 + JSON.stringify(map[list[i]]).length;
+      if (n + 2 > PL_SAVE_CHARS) continue;   // one too big on its own is left out; the others stay
       if (size + n > PL_SAVE_CHARS) break;
       out[list[i]] = map[list[i]]; ids.push(list[i]); size += n;
     }
@@ -6329,19 +6334,16 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     else { t.artists = (Array.isArray(o.a) ? o.a : []).map(function (n) { return { name: n }; }); t.album = { name: o.l || '', release_date: o.r || '', images: im }; }
     return { added_at: o.t || null, is_local: false, track: t };
   }
-  // The pages kept this visit (as loaded, or after an edit) become the saved copy. Without a label, a load leaves
-  // the old copy alone (its own snapshot keeps it honest) and an edit drops it.
+  // The pages kept this visit become the saved copy, labelled with the snapshot known before page 1 was asked
+  // (plLabel). Pages changed by an edit lose that label (rewriteMemo makes new ones), so they're never saved again
+  // this visit; without a label a load leaves the old copy alone (its own snapshot keeps it honest).
   function plSave(id, edited) {
+    if (edited) { plEdited(id); return; }
     var pages = memoPages(id);
     if (!pages.length) return;
-    var p0 = pages[0].r, label = p0.snap || p0.plLabel || '', d = state.detail, on = isEditDetail(d, id) ? d : null;
+    var p0 = pages[0].r, label = p0.plLabel || '', d = state.detail, on = isEditDetail(d, id) ? d : null;
+    if (!label) return;
     var map = plRead();
-    if (!label) {
-      if (edited && map[id]) { delete map[id]; plWrite(map, null); }
-      if (edited && on) on.plSavedAt = 0;
-      return;
-    }
-    if (edited) plLibSnap(id, label);
     var raw = [];
     pages.forEach(function (p) { raw = raw.concat(p.r.json.items); });
     var at = Date.now();
@@ -6349,16 +6351,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (plWrite(map, id)) { if (on) on.plSavedAt = at; }
     else if (on) on.plSavedAt = 0;
   }
-  // The library keeps Spotify's snapshot after a change made here, so the saved copy still matches this visit.
-  function plLibSnap(id, snap) { var lp = plLibFresh() ? inLibraryPlaylist(id) : null; if (lp && snap) lp.snap = snap; }
-  // A change to a playlist with no pages kept this visit (Add to playlist, or after Refresh): a song added at the
-  // end only raises the saved copy's count (Load more brings it in), if the copy matched the library; else it goes.
-  function plEdited(id, extra, snap) {
-    var map = plRead(), c = map[id];
-    if (!c) return;
-    if (extra > 0 && snap && c.s === plTrustedSnap(id)) { c.t += extra; c.s = snap; c.at = Date.now(); plLibSnap(id, snap); }
-    else delete map[id];
-    plWrite(map, map[id] ? id : null);
+  // Any change made on the page (Edit, Add to playlist): the saved copy goes and the open list's note with it.
+  function plEdited(id) {
+    var d = state.detail, map = plRead();
+    if (isEditDetail(d, id)) d.plSavedAt = 0;
+    if (!map[id]) return;
+    delete map[id];
+    plWrite(map, null);
   }
   // The saved copy to open, when the library loaded this visit has the same snapshot and nothing is kept this visit.
   function plSavedFor(id) {
@@ -6380,7 +6379,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   // Reload from Spotify: forgets this visit's pages and loads page 1 again, which replaces the saved copy.
   function reloadPl(d) {
-    if (!d || d.loading || state.detail !== d || coolBlocked('catalog')) return;
+    if (!d || d.loading || plEdit.busy || state.detail !== d || coolBlocked('catalog')) return;
     var path = plItemsPath(d.item.id);
     Object.keys(catMemo).forEach(function (k) { if (k.replace(API, '').split('?')[0] === path) delete catMemo[k]; });
     d.items = []; d.next = null; d.error = ''; d.plSavedAt = 0; d.editing = false; delete d.snap;
