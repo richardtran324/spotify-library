@@ -136,6 +136,9 @@ A row of **Sort** chips sits above most lists. The first chip is the order the p
   - The notes are the podcaster's own text, shown as written, so they can include the podcaster's sponsor reads. Links in them are plain text and don't open.
   - They usually cost nothing: Spotify already includes them in the Now Playing check, a podcast's episode list, Saved episodes, Latest and search. When the page doesn't have them (for example a Latest or Recent row after a reload), the sheet offers **Load notes**, which asks Spotify once (podcast and album details, so not while those are paused).
   - The notes of episodes you open or play are kept on this phone (the last 40, up to 4,000 characters each; longer ones offer **Load full notes**). Saved podcast lists don't keep notes.
+- **Mark as played or unplayed (v2.21):** the Episode notes sheet has **Mark as played** (or **Mark as unplayed** for an episode shown as played), and each **Continue listening** card has a small check button that marks it played, so a show you gave up on leaves the row. A toast offers **Undo**. The mark counts everywhere the page shows played state: **Continue listening**, **Hide played**, **Play newest**, a podcast's **Play**, the green dot and the **Played** label. **Mark as unplayed** brings an episode back.
+  - Only on this phone. Spotify has no way for apps to set played state, so the Spotify app won't see it, and other browsers won't either. Nothing is sent to Spotify.
+  - Playing the episode again clears the mark: a tap on this page, or the page seeing it play (more than 30 seconds away from where it was when you marked it). Marks are kept for 180 days, the newest 400.
 - **Search Spotify** also finds podcasts and episodes, shown under **Podcasts** and **Episodes**.
 - If an episode won't play from the page, the message offers **Open in Spotify** for that episode.
 
@@ -148,7 +151,7 @@ Spotify's recently played list for apps leaves out podcast episodes (its referen
 - **Recent** lists these episodes among your songs by time: **Episode · podcast · 12 min ago · 34 min left** (or **Played**). Tap one to pick up where you left off.
 - **It only covers listening the page saw.** The page checks what's playing only while it's open on screen. An episode you play entirely in the Spotify app while the page is closed won't appear in the history until the page sees it playing. Its progress still reaches **Continue listening** and the Latest list through Spotify's resume points when Latest reloads or you open that podcast, as long as it's one of those episodes.
 
-**Diagnostics** shows **Podcast history** (how many episodes, the newest and when you heard it) and, since v2.18, **Episode notes** (how many are kept, and whether Spotify's Now Playing answer included the playing episode's notes).
+**Diagnostics** shows **Podcast history** (how many episodes, the newest and when you heard it) and, since v2.18, **Episode notes** (how many are kept, and whether Spotify's Now Playing answer included the playing episode's notes), and since v2.21 how many episodes are marked played or unplayed on this phone.
 
 ### When Spotify goes to sleep
 
@@ -235,6 +238,7 @@ Album and podcast details are the part of Spotify's quota that runs out first, s
 - **v2.17** makes **Pause** quiet when Spotify has fallen asleep: the song shows as paused where you tapped, with no **Press play first** message (see **When Spotify goes to sleep**). Podcast history records that spot right away, and other Safari tabs keep the same spot. No new permissions.
 - **v2.14** pauses only the part of the page Spotify refused (playback, library, search, or podcast and album details), never re-sends a refused request, makes Latest episodes reload only when you open it (12 podcasts at a time), drops the automatic resume-point checks, and keeps album and podcast pages for the visit. No new permissions.
 - **v2.18** adds **Episode notes** with tappable times (see **Podcasts**). No new permissions.
+- **v2.21** adds **Mark as played** and **Mark as unplayed** for episodes, kept on this phone only (see **Podcasts**). No new permissions.
 - If Spotify doesn't let the page check which items are already saved, hearts start outlined and a tap saves the item.
 - **Refresh** reloads your library and checks for an open Spotify device (whichever isn't paused by Spotify), and forgets the album and podcast pages kept for this visit (the lists saved on the phone stay). The page also checks each time you come back to it (devices at most once every 15 seconds).
 - To update the page later, upload the new `index.html` to the same repo (it replaces the old one).
