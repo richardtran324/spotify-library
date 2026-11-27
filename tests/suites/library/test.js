@@ -911,11 +911,11 @@ tests.push(function () {
     // Settings sheet: the count, then Clear saved lists.
     t.paintSettings();
     group('21 settings count and Clear saved lists');
-    check('21 settings show the saved lists', /^Saved lists: 0 albums, 1 show \(≈ \d+ KB\)$/.test($(tab, 'slInfo').textContent), $(tab, 'slInfo').textContent);
+    check('21 settings show the saved lists', /^Saved lists: 0 albums, 1 show, 0 playlists \(≈ \d+ KB\)$/.test($(tab, 'slInfo').textContent), $(tab, 'slInfo').textContent);   // #53: playlists counted too
     click(tab, $(tab, 'slClear'));
     check('21 Clear saved lists removes them', t.slKeys(A).length === 0 && t.slKeys(S).length === 0);
     check('21 Clear leaves the library cache and pins alone', store.getItem('lib-cache') !== null && store.getItem('lib-token') !== null);
-    check('21 Clear: count and toast updated', $(tab, 'slInfo').textContent === 'Saved lists: 0 albums, 0 shows (≈ 0 KB)' && lastToast(tab) === 'Saved lists cleared.', [$(tab, 'slInfo').textContent, tab.toasts()]);
+    check('21 Clear: count and toast updated', $(tab, 'slInfo').textContent === 'Saved lists: 0 albums, 0 shows, 0 playlists (≈ 0 KB)' && lastToast(tab) === 'Saved lists cleared.', [$(tab, 'slInfo').textContent, tab.toasts()]);   // #53
     finish(tab);
   });
 });
