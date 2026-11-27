@@ -319,6 +319,11 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
 }
 .seg button[aria-pressed="true"] { background: var(--surface); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18); }
 .lbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; }
+/* v2.44: In Latest: Priority · Normal · Hidden in a podcast's page header */
+.lprirow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.lprilbl { font-size: 0.85rem; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.seg.lpri { flex: 1 1 220px; min-width: 0; margin-top: 0; }
+.seg.lpri button { min-height: 44px; padding: 7px 6px; }
 .lbar .btn { display: inline-flex; align-items: center; gap: 6px; }
 .lbar .btn svg { width: 18px; height: 18px; display: block; }
 .lnote { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 0.85rem; color: var(--muted); margin: 10px 2px 0; }
@@ -716,6 +721,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     searchType: 'lib-searchtype', // Search Spotify result type: 'all' (default) or one of SEARCH_TYPES
     showSort: 'lib-showsort',    // v2.7 Shows order; read only when 'lib-sort-shows' is unset (see sortMode)
     pins: 'lib-pins',            // [{kind, id, name, uri, url, img, sub[, ownerId, collaborative]}], oldest pin first; local only
+    latestPri: 'lib-latest-pri', // v2.44: {show id: 'p' | 'h'}: In Latest Priority or Hidden (Normal isn't stored), 100 at most; local only
     plCopies: 'lib-pl-copies',   // v2.24: {original id: {copyId, name, ownerName, ownerId, uri, img, snap, count, at}}, 50 at most; local only
     copyWatch: 'lib-copy-watch', // v2.24: {origId, name, at, known: [ids] | null, snap, count, ownerName, ownerId, uri, img[, no]}: set by Make a copy, 24 h
     recentSearches: 'lib-recent-searches', // [{q, at}], newest first
@@ -764,6 +770,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   var IDLE_TEXT = 'Spotify is asleep. Press play to wake it.';
   var WAKE_FIRST = 'Press play first to wake Spotify.';
   var PINS_MAX = 30;
+  var LATEST_PRI_MAX = 100;   // v2.44: podcasts set to Priority or Hidden in Latest, at most
   var RECENT_SEARCHES_MAX = 8;
   var QUEUED_MAX = 100;
   var QUEUED_MS = 24 * 60 * 60 * 1000;
@@ -2452,10 +2459,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     };
   }
   // The 12 shows most recently updated per the cache (newest episode date), then saved order for the rest.
+  // v2.44: podcasts set to Hidden in Latest are never asked, so their slots go to the others; Priority ones
+  // come first (still 12 at most).
   function latestShows(all) {
     var newest = (state.latest.cache && state.latest.cache.newest) || {};
-    return all.map(function (s, i) { return { s: s, i: i, d: newest[s.id] || '' }; })
-      .sort(function (a, b) { return cmpDesc(a.d, b.d) || a.i - b.i; })
+    var pri = readLatestPri();
+    return all.filter(function (s) { return pri[s.id] !== 'h'; })
+      .map(function (s, i) { return { s: s, i: i, d: newest[s.id] || '', p: pri[s.id] === 'p' ? 0 : 1 }; })
+      .sort(function (a, b) { return (a.p - b.p) || cmpDesc(a.d, b.d) || a.i - b.i; })
       .slice(0, LATEST_SHOWS).map(function (w) { return w.s; });
   }
   function loadLatest() {
@@ -2463,6 +2474,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var all = state.data && state.data.shows;
     if (L.loading || !all || !all.length || document.hidden || coolLeft('catalog')) return;
     var shows = latestShows(all);
+    if (!shows.length) { L.error = ''; L.triedAt = Date.now(); setTimeout(rerenderLatest, 0); return; }   // v2.44: every podcast Hidden: nothing to ask
     L.loading = true; L.error = ''; L.triedAt = Date.now();
     var seq = ++L.seq;
     var found = [], done = {}, failed = 0, next = 0, running = 0, stopped = false, signedOut = false, finished = false;
@@ -2514,6 +2526,75 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     launch();
     setTimeout(rerenderLatest, 0);   // shows "Updating…"
   }
+  // ---------- v2.44: In Latest: Priority · Normal · Hidden (per podcast, this phone only, never sent to Spotify) ----------
+  // Stored as {show id: 'p' | 'h'}; Normal is the absence of an entry. Read from storage each time, so other copies
+  // of the page agree.
+  function readLatestPri() {
+    var o = get(K.latestPri), out = {}, n = 0;
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return out;
+    Object.keys(o).forEach(function (id) { if (id && n < LATEST_PRI_MAX && (o[id] === 'p' || o[id] === 'h')) { out[id] = o[id]; n++; } });
+    return out;
+  }
+  function latestPriOf(showId) { return (showId && readLatestPri()[showId]) || 'n'; }
+  // v: 'p', 'n' or 'h'. False (with a toast) when it couldn't be stored.
+  function setLatestPri(showId, v) {
+    var o = readLatestPri();
+    if ((o[showId] || 'n') === v) return true;
+    if (v === 'n') delete o[showId];
+    else {
+      if (!o[showId] && Object.keys(o).length >= LATEST_PRI_MAX) {
+        var lib = state.data && state.data.shows;   // make room: settings of podcasts no longer in your library go first
+        if (lib && lib.length) {
+          var have = {};
+          lib.forEach(function (s) { if (s && s.id) have[s.id] = true; });
+          Object.keys(o).forEach(function (id) { if (!have[id]) delete o[id]; });
+        }
+        if (Object.keys(o).length >= LATEST_PRI_MAX) { toast('You can set up to ' + LATEST_PRI_MAX + ' podcasts. Set one back to Normal first.'); return false; }
+      }
+      o[showId] = v;
+    }
+    try {
+      if (Object.keys(o).length) localStorage.setItem(K.latestPri, JSON.stringify(o));
+      else localStorage.removeItem(K.latestPri);
+    } catch (e) { toast('Couldn’t save that on this phone. Its storage is full.'); return false; }
+    return true;
+  }
+  // Latest rows as shown: Hidden podcasts left out, then Priority podcasts' unplayed episodes on top (each part keeps
+  // its order). Latest, Home's Latest episodes and Play newest use it.
+  function latestOrder(items, pri) {
+    pri = pri || readLatestPri();
+    var top = [], rest = [];
+    items.forEach(function (i) {
+      var v = pri[i.showId];
+      if (v === 'h') return;
+      (v === 'p' && !i.played ? top : rest).push(i);
+    });
+    return top.concat(rest);
+  }
+  function latestPriCounts() {
+    var o = readLatestPri(), c = { p: 0, h: 0 };
+    Object.keys(o).forEach(function (id) { c[o[id]]++; });
+    return c;
+  }
+  var LATEST_PRI_OPTS = [['p', 'Priority'], ['n', 'Normal'], ['h', 'Hidden']];
+  var LATEST_PRI_SAID = { p: ' goes to the top of Latest.', n: ' shows in Latest as usual.', h: ' is hidden from Latest and Home.' };
+  // The switch in a podcast's page header. A tap repaints it in place (focus stays) and asks Spotify nothing.
+  function latestPriBox(show) {
+    var cur = latestPriOf(show.id);
+    var g = el('div', { class: 'seg lpri', role: 'group', 'aria-label': 'In Latest' });
+    LATEST_PRI_OPTS.forEach(function (o) {
+      var b = el('button', { type: 'button', 'data-lpri': o[0], 'aria-pressed': String(cur === o[0]), text: o[1] });
+      b.addEventListener('click', function () {
+        if (latestPriOf(show.id) === o[0]) return;
+        if (!setLatestPri(show.id, o[0])) return;
+        var bs = g.querySelectorAll('button');
+        for (var k = 0; k < bs.length; k++) bs[k].setAttribute('aria-pressed', String(bs[k].getAttribute('data-lpri') === o[0]));
+        toast('“' + (show.name || 'This podcast') + '”' + LATEST_PRI_SAID[o[0]]);
+      });
+      g.appendChild(b);
+    });
+    return el('div', { class: 'lprirow', id: 'dlpri' }, [el('span', { class: 'lprilbl', 'aria-hidden': 'true', text: 'In Latest' }), g]);
+  }
   function latestItem(x) {
     // v2.11: what the page heard beats a cache up to 12 hours old (v2.14).
     var h = histByUri()[x.uri], c = state.latest.cache;
@@ -2522,7 +2603,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var i = markItem({
       kind: 'episode', id: x.id, name: x.name, uri: x.uri, url: 'https://open.spotify.com/episode/' + x.id, img: x.img,
       sp: !!x.played, spos: x.positionMs || 0, subBase: [x.showName, relDate(x.date)],   // v2.21: this phone's mark on top
-      showName: x.showName || '', date: x.date || '', durMs: x.durMs || 0   // v2.18: for the notes sheet
+      showName: x.showName || '', date: x.date || '', durMs: x.durMs || 0,   // v2.18: for the notes sheet
+      showId: x.showId || ''   // v2.44: for In Latest
     });
     i.fresh = !i.played && !(i.positionMs > 0) && age != null && age < 7;   // released in the last 7 days, not started
     return i;
@@ -2755,8 +2837,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     syncLatest();
     var c = L.cache;
     var all = c ? c.items.map(latestItem) : [];
+    var pri = readLatestPri();
+    var visible = latestOrder(all, pri);   // v2.44: Hidden podcasts out, Priority ones' unplayed episodes first
     var hide = hidePlayed();
-    var newest = all.filter(function (i) { return !i.played; })[0] || null;
+    var newest = visible.filter(function (i) { return !i.played; })[0] || null;
     // Header: Play (newest unplayed), Hide played, then when it was updated.
     var playA = el('a', { class: 'btn small', href: newest ? newest.url : '#', 'aria-label': newest ? 'Play newest unplayed episode: ' + newest.name : 'Play newest unplayed episode' });
     playA.innerHTML = ICON.play;
@@ -2791,11 +2875,17 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     main.appendChild(note);
     if (!c) return;
     // Play newest (above) always uses the newest-first order; the list follows the chosen sort.
-    var shown = sortIsDefault('latest') ? all : sortList('latest', c.items).map(latestItem);
+    // v2.44: Priority on top in Newest first and Oldest first; Show A–Z keeps its A–Z order. Hidden is left out of all three.
+    var shown = visible;
+    if (!sortIsDefault('latest')) {
+      shown = sortList('latest', c.items).map(latestItem);
+      shown = sortMode('latest') === 'show' ? shown.filter(function (i) { return pri[i.showId] !== 'h'; }) : latestOrder(shown, pri);
+    }
     var items = matches(shown.filter(function (i) { return !(hide && i.played); }));
     if (!items.length) {
       main.appendChild(el('p', { class: 'empty', text: state.query.trim() ? 'Nothing matches “' + state.query + '”.'
-        : (all.length ? 'Everything here is played. Turn off Hide played to see it.' : 'No episodes yet.') }));
+        : (visible.length ? 'Everything here is played. Turn off Hide played to see it.'
+          : all.length ? 'Only podcasts set to Hidden have episodes here. Change it on a podcast’s page.' : 'No episodes yet.') }));
       return;
     }
     var ul = el('ul', { class: 'list' });
@@ -3170,7 +3260,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.28 (2026-11-27)';
+  var VERSION = 'v2.44 (2026-11-27)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -3215,6 +3305,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     line('Playlist copies linked: ' + Object.keys(readCopies()).length + (readCopyWatch() ? ' · watching for a new copy' : ''));   // v2.24
     line('Latest episodes: ' + (lc ? lc.items.length + ' cached, updated ' + ago(new Date(lc.at).toISOString()) + (lc.failed ? ', ' + lc.failed + ' show(s) failed' : '') : 'not loaded') +
       ' · Latest: refreshes only when you open it (up to ' + LATEST_SHOWS + ' shows, cache ' + Math.round(LATEST_MS / 3600000) + ' h)');
+    var lpc = latestPriCounts();   // v2.44: how many podcasts have each setting (not listening stats)
+    line('In Latest (set on this phone): ' + lpc.p + ' Priority · ' + lpc.h + ' Hidden');
     var eh = epHistory();
     line(slStatsText() + ' · albums kept until cleared, podcasts re-checked after ' + Math.round(SHOW_STALE_MS / 3600000) + ' h');   // v2.15
     line('Podcast history: ' + eh.length + (eh.length === 1 ? ' episode' : ' episodes') + (eh[0] ? ' (newest: ' + eh[0].name + ', ' + agoAt(eh[0].at) + ')' : '') +
@@ -4694,7 +4786,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       syncLatest();   // v2.14: the cache only; Latest refreshes when you open it
       var c = state.latest.cache;
       var hide = hidePlayed();
-      var eps = c ? matches(c.items.map(latestItem).filter(function (i) { return !(hide && i.played); })) : [];
+      var eps = c ? matches(latestOrder(c.items.map(latestItem)).filter(function (i) { return !(hide && i.played); })) : [];   // v2.44: In Latest
       if (!q) eps = eps.slice(0, HOME_LATEST);
       if (eps.length) {
         main.appendChild(sectHead('hLatest', 'Latest episodes', function () { state.podTab = 'latest'; setFilter('podcasts'); }));
@@ -4874,7 +4966,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         el('div', { class: 'meta' }, [el('h2', { class: 'dname', text: it.name }), detailSub(it), el('div', { class: 'dsum', id: 'dsum' })])
       ]),
       el('div', { class: 'dbtns' }, btns),
-      el('div', { class: 'dbtns', id: 'dcont', hidden: true })   // v2.23: Continue · <song>
+      el('div', { class: 'dbtns', id: 'dcont', hidden: true }),   // v2.23: Continue · <song>
+      it.kind === 'show' && it.id ? latestPriBox(it) : null   // v2.44: In Latest: Priority · Normal · Hidden
     ]));
     main.appendChild(el('p', { class: 'lnote', id: 'dnote', hidden: true }));   // v2.15: saved list / fallback note
     main.appendChild(el('div', { id: 'dedit' }));   // v2.26: Edit (your own and collaborative playlists)
