@@ -4007,7 +4007,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // v2.49: bar swipes. Skips need more than 60px sideways with less than 30px up/down drift; opening needs more
   // than 40px up, mostly upward. Anything else (a tap, a short or diagonal drag, a swipe down) does nothing.
   var BAR_SKIP_PX = 60, BAR_DRIFT_PX = 30, BAR_UP_PX = 40;
-  var barSwipeAt = 0;
+  var BAR_EDGE_PX = 24, BAR_MOVED_PX = 10;   // Safari's back swipe starts at the left edge; a tap moves less than 10px
   function barSwipeKind(dx, dy, drift, sideways) {
     if (drift == null) drift = Math.abs(dy);
     if (sideways == null) sideways = Math.abs(dx);
@@ -4028,7 +4028,6 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     slideCover.t = setTimeout(function () { c.classList.remove('pslide-l', 'pslide-r'); }, 300);
   }
   function barSwipe(kind) {
-    barSwipeAt = Date.now();
     if (kind === 'open') return openNp();
     if (kind !== 'next' && kind !== 'prev') return;
     if (!state.playerIdle && !coolLeft('player')) slideCover(kind);   // no slide when nothing is sent
@@ -6904,12 +6903,15 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // up = open the full Now Playing screen (no request of its own). Starts only on one finger inside .prow and not on
   // its buttons (Up next, heart); the cover/title button counts as the row. A tap still opens Now Playing.
   (function () {
-    var row = document.querySelector('#player .prow'), g = null;
+    var row = document.querySelector('#player .prow'), g = null, guard = false, guardT = null;
+    function unguard() { guard = false; clearTimeout(guardT); guardT = null; }
     row.addEventListener('touchstart', function (e) {
       g = null;
+      unguard();
       if (e.touches.length !== 1 || $('player').hidden || $('player').hasAttribute('inert')) return;
       if (e.target.closest && e.target.closest('.act')) return;
       var t = e.touches[0];
+      if (t.clientX < BAR_EDGE_PX) return;   // leave edge swipes to Safari's back gesture (taps there still click)
       g = { x: t.clientX, y: t.clientY, drift: 0, sideways: 0 };
     }, { passive: true });
     row.addEventListener('touchmove', function (e) {
@@ -6925,15 +6927,18 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       var t = e.changedTouches[0], s = g;
       g = null;
       var dx = t.clientX - s.x, dy = t.clientY - s.y;
-      var kind = barSwipeKind(dx, dy, Math.max(s.drift, Math.abs(dy)), Math.max(s.sideways, Math.abs(dx)));
+      var drift = Math.max(s.drift, Math.abs(dy)), sideways = Math.max(s.sideways, Math.abs(dx));
+      // A moved touch mustn't also count as a tap on the cover/title. iOS usually sends no click then, so the guard
+      // lasts only until the next touch or 250 ms (iOS sends its click right after touchend), whichever comes first.
+      if (Math.max(drift, sideways) > BAR_MOVED_PX) { guard = true; clearTimeout(guardT); guardT = setTimeout(unguard, 250); }
+      var kind = barSwipeKind(dx, dy, drift, sideways);
       if (kind) barSwipe(kind);
     }, { passive: true });
     // A swipe that ends over the cover/title button mustn't also count as a tap on it.
     row.addEventListener('click', function (e) {
-      if (!barSwipeAt || !(e.target.closest && e.target.closest('#pInfo'))) return;
-      var recent = Date.now() - barSwipeAt < 600;
-      barSwipeAt = 0;
-      if (recent) { e.preventDefault(); e.stopPropagation(); }
+      if (!guard || !(e.target.closest && e.target.closest('#pInfo'))) return;
+      unguard();
+      e.preventDefault(); e.stopPropagation();
     }, true);
   })();
   $('npClose').addEventListener('click', function () { closeNp(); });

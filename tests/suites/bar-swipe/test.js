@@ -52,7 +52,7 @@ function touchEv(tab, target, type, pts) {
 // swipe(tab, node, [[dx,dy], ...]): finger down at (150, 700), moves through each offset, lifts at the last one.
 function swipe(tab, node, offs, opts) {
   opts = opts || {};
-  var x = 150, y = 700;
+  var x = opts.x != null ? opts.x : 150, y = 700;
   touchEv(tab, node, 'touchstart', opts.fingers === 2 ? [[x, y], [x + 40, y]] : [[x, y]]);
   offs.forEach(function (o, i) { if (i < offs.length - 1 || opts.cancel) touchEv(tab, node, 'touchmove', [[x + o[0], y + o[1]]]); });
   var last = offs[offs.length - 1];
@@ -379,6 +379,59 @@ tests.push(function () {
     return H.wait(100).then(function () {
       var m = byEp(tab.calls);
       check('17 one request per skip', m['POST /me/player/next'] === 2 && m['POST /me/player/previous'] === 1 && tab.calls.length === 3, m);
+    });
+  });
+});
+
+// 18. The click guard never swallows a real tap: it lasts only until the next touch or 250 ms (v2.49 review fix).
+tests.push(function () {
+  return setup().then(function (tab) {
+    var t = tab.t();
+    check('18 constants', t.BAR_MOVED_PX === 10 && t.BAR_EDGE_PX === 24, [t.BAR_MOVED_PX, t.BAR_EDGE_PX]);
+    left(tab);   // iOS sends no click after a moved touch
+    return H.wait(300).then(function () {
+      click(tab, $(tab, 'pInfo'));
+      check('18 tap 300 ms after a swipe opens Now Playing', npOpen(tab));
+      t.closeNp();
+      left(tab);
+      click(tab, $(tab, 'pInfo'));   // the click fired right after the swipe's touchend
+      check('18 click right after touchend is suppressed', !npOpen(tab));
+      left(tab);
+      swipe(tab, $(tab, 'pTitle'), [[1, 1], [2, 1]]);   // a new tap straight away clears the guard
+      click(tab, $(tab, 'pInfo'));
+      check('18 a tap straight after a swipe (new touch) opens Now Playing', npOpen(tab));
+      t.closeNp();
+      swipe(tab, $(tab, 'pTitle'), [[4, 3], [8, 5]]);   // moved under 10 px: a tap
+      click(tab, $(tab, 'pInfo'));
+      check('18 a slightly moving tap opens Now Playing', npOpen(tab));
+      t.closeNp();
+      swipe(tab, $(tab, 'pTitle'), [[-10, 4], [-30, 6]]);   // moved, but not a swipe: its own click is still ignored
+      click(tab, $(tab, 'pInfo'));
+      check('18 a short drag does not count as a tap', !npOpen(tab));
+      return H.wait(100);
+    }).then(function () {
+      check('18 only the three skips were sent', tab.calls.filter(function (c) { return c.method === 'POST'; }).length === 3, tab.calls);
+    });
+  });
+});
+
+// 19. Swipes that start within 24 px of the left edge are left to Safari's back gesture; taps there still work.
+tests.push(function () {
+  return setup().then(function (tab) {
+    swipe(tab, $(tab, 'pCover'), [[40, 0], [100, 0]], { x: 16 });
+    swipe(tab, $(tab, 'pCover'), [[-1, 0], [-10, 0]], { x: 20 });
+    swipe(tab, $(tab, 'pCover'), [[2, -30], [3, -70]], { x: 23 });
+    check('19 edge swipes do not open Now Playing', !npOpen(tab));
+    swipe(tab, $(tab, 'pCover'), [[0, 0], [1, 1]], { x: 16 });
+    click(tab, $(tab, 'pInfo'));
+    check('19 a tap at the edge still opens Now Playing', npOpen(tab));
+    tab.t().closeNp();
+    return H.wait(100).then(function () {
+      check('19 edge swipes send nothing', tab.calls.length === 0, tab.calls);
+      swipe(tab, $(tab, 'pCover'), [[40, 0], [100, 0]], { x: 24 });
+      return H.wait(100);
+    }).then(function () {
+      check('19 a swipe starting 24 px in still skips', tab.calls.length === 1 && tab.calls[0].path === '/me/player/previous', tab.calls);
     });
   });
 });
