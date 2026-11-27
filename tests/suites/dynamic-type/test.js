@@ -195,11 +195,11 @@ tests.push(function () {
   check('9 bigtype rule is inside the guard', block.indexOf('html.bigtype') > 0);
   var before = i >= 0 ? CSS_TEXT.slice(0, i) : CSS_TEXT;
   check('9 desktop body stays 16px', /body \{[^}]*font-size: 16px;/.test(before));
-  check('9 desktop search stays 16px, .act 40px, cover 56px', /\.search \{[^}]*font-size: 16px;/.test(before) && /\.act \{\s*width: 40px; height: 40px;/.test(before) && /\.cover \{\s*width: 56px; height: 56px;/.test(before));
+  check('9 desktop search stays 16px, .act 44px (v2.29), cover 56px', /\.search \{[^}]*font-size: 16px;/.test(before) && /\.act \{\s*width: 44px; height: 44px;/.test(before) && /\.cover \{\s*width: 56px; height: 56px;/.test(before));
   check('9 nothing outside the guard uses -apple-system-body', before.replace(/\/\*[\s\S]*?\*\//g, '').indexOf('-apple-system-body') < 0);
   check('9 five bar controls keep the 20px gap (fit at 375px: 4 x 48 + 52 + 4 x 20 = 324 <= 343)', 4 * 48 + 52 + 4 * 20 <= 375 - 32 && !/\.pctl \{/.test(block) && /\.pctl \{[^}]*gap: 20px;/.test(before));
-  check('9 row button growth capped at 48px (name keeps room at 375px)', /\.act \{ width: clamp\(44px, 2\.5rem, 48px\)/.test(block));
-  check('9 top row wraps inside the guard, buttons stay right', /\.toprow \{ flex-wrap: wrap;[^}]*\}/.test(block) && /\.topbtns \{ margin-left: auto;[^}]*flex-wrap: wrap;/.test(block));
+  check('9 row button growth capped at 48px (name keeps room at 375px)', /\.act \{ width: clamp\(44px, 2\.75rem, 48px\)/.test(block));
+  check('9 top row wraps inside the guard, buttons stay right', /\.toprow \{ flex-wrap: wrap;[^}]*\}/.test(block) && /\.topbtns \{ margin-left: auto;[^}]*flex-wrap: wrap;[^}]*row-gap: 12px;/.test(block));
   check('9 Play / Shuffle end in an ellipsis', /\.dbtns \.btn \{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; \}/.test(block));
   check('9 no new animation (reduced motion unaffected)', !/animation|transition/.test(block));
   // jsdom's CSSOM still parses the sheet and the rest of the page's rules

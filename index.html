@@ -576,11 +576,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     .search, .field { font-size: max(16px, 1rem); }
     /* Top row (Library + Diagnostics + Refresh) wraps instead of scrolling sideways at big sizes; buttons stay on the right. */
     .toprow { flex-wrap: wrap; row-gap: 6px; }
-    .topbtns { margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
+    .topbtns { margin-left: auto; flex-wrap: wrap; justify-content: flex-end; row-gap: 12px; }   /* 12px: the buttons' 44px hit areas (6px above and below) don't overlap */
     /* Play / Shuffle in a list header: cut off with … rather than spilling into the heart and share buttons. */
     .dbtns .btn { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    /* Row buttons: at least 44px, growing a little (to 48px) so three of them still leave room for the name at 375px. */
-    .act { width: clamp(44px, 2.5rem, 48px); height: clamp(44px, 2.5rem, 48px); }
+    /* Row buttons: 44px at the default size (as v2.29's touch targets), growing a little (to 48px) so three of them
+       still leave room for the name at 375px. */
+    .act { width: clamp(44px, 2.75rem, 48px); height: clamp(44px, 2.75rem, 48px); }
     .act svg { width: clamp(22px, 1.375rem, 26px); height: clamp(22px, 1.375rem, 26px); }
     .act.big { width: clamp(44px, 2.75rem, 52px); height: clamp(44px, 2.75rem, 52px); }
     .cover { width: min(3.5rem, 72px); height: min(3.5rem, 72px); }
