@@ -219,6 +219,16 @@ ul.list.compact .cover.num { width: 28px; }
 .introsel.field { width: auto; flex: 1; min-width: 0; min-height: 44px; }
 .introhint { font-size: 0.85rem; color: var(--muted); margin: 6px 2px 0; }
 .dfoot { padding: 12px 0; display: flex; flex-direction: column; gap: 10px; }
+/* v2.38: disc headers, the album details footer and the explicit badge */
+ul.list li.dischead { border-bottom: 0; }
+li.dischead h3 { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin: 16px 2px 2px; }
+.afoot { display: flex; flex-direction: column; gap: 2px; font-size: 0.8rem; color: var(--muted); padding: 4px 2px 0; overflow-wrap: anywhere; }
+.afoot p { margin: 0; }
+.afoot .awhen { color: var(--fg); font-size: 0.85rem; margin-bottom: 4px; }
+.sub.ex::before {
+  content: "E"; display: inline-block; min-width: 1.15em; padding: 0 3px; margin-right: 5px; border-radius: 3px;
+  background: var(--muted); color: var(--bg); font-size: 0.65rem; font-weight: 700; line-height: 1.5; text-align: center; vertical-align: 0.1em;
+}
 /* v2.16: Spotify's own player for playlists the page can't list (tall enough to scroll the songs at phone width) */
 .sembed, .sembed-box iframe { display: block; width: 100%; max-width: 100%; height: 480px; border: 0; border-radius: 12px; background: var(--chip); }
 .sembed-hold { height: 480px; border-radius: 12px; background: var(--chip); display: flex; align-items: center; justify-content: center; }
@@ -860,7 +870,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
 
   // ---------- storage helpers ----------
   function get(k) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch (e) { return null; } }
-  function set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+  function set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } }   // v2.38: true when stored
   function del(k) { try { localStorage.removeItem(k); } catch (e) {} }
 
   function $(id) { return document.getElementById(id); }
@@ -1453,18 +1463,34 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       artist: by,   // for sorting: the song's artists, or an episode's show
       durMs: t.duration_ms || 0,   // for the total length above a song list
       nope: unplayableWhy(t) || undefined,   // v2.35: why Spotify says it can't play (left out when it says nothing)
-      noPlay: t.is_playable === false || undefined   // v2.35: a tap then plays nothing (restrictions alone only dim)
+      noPlay: t.is_playable === false || undefined,   // v2.35: a tap then plays nothing (restrictions alone only dim)
+      ex: t.explicit ? true : undefined   // v2.38: the "E" badge on song rows (undefined when false: JSON leaves it out)
     };
   }
   function mapAlbum(a) {
     if (!a || !a.id) return null;
-    return {
+    return albumDetails({
       kind: 'album', id: a.id, name: a.name, uri: a.uri, url: 'https://open.spotify.com/album/' + a.id, img: img(a.images), sub: 'Album · ' + names(a.artists),
       artist: names(a.artists), released: a.release_date || '',   // for sorting
       // v2.15: for the search fallback while album details are paused (first artist, song count when known)
       artist1: (a.artists && a.artists[0] && a.artists[0].name) || '', tracks: a.total_tracks || null,
       byArtists: artistRefs(a.artists)   // v2.19: for the tappable artist names in the album's header
-    };
+    }, a);
+  }
+  // v2.38: the album details footer (release date precision, ℗/© lines, label when Spotify still sends it).
+  // Only fields that came are added, each cut short, so the library copy on the phone grows by a few lines per album.
+  var ALBUM_TEXT_MAX = 160;
+  function albumDetails(o, a) {
+    var p = a.release_date_precision;
+    if (p === 'day' || p === 'month' || p === 'year') o.rprec = p;
+    (Array.isArray(a.copyrights) ? a.copyrights : []).forEach(function (c) {
+      var t = c && typeof c.text === 'string' ? c.text.replace(/\s+/g, ' ').trim().slice(0, ALBUM_TEXT_MAX) : '';
+      if (!t) return;
+      if (c.type === 'P') { if (!o.cpP) o.cpP = t; }
+      else if (!o.cpC) o.cpC = t;
+    });
+    if (typeof a.label === 'string' && a.label.trim()) o.label = a.label.trim().slice(0, ALBUM_TEXT_MAX);
+    return o;
   }
   // v2.19: up to 3 artists as {id, name}, for Go to artist (kept small: library albums are cached on the phone).
   function artistRefs(list) {
@@ -2070,7 +2096,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function loadData() {
     var me = api('/me').then(function (r) { return r.ok && r.json ? { id: r.json.id, name: r.json.display_name } : null; });
     var playlists = pages('/me/playlists?limit=50', mapPlaylist);
-    var albums = pages('/me/albums?limit=50', function (it) { return mapAlbum(it && it.album); });
+    var seedSt = { albums: 0, withSongs: 0, whole: 0, cp: 0, label: 0 };   // v2.38: did album songs come with the answer?
+    var albums = pages('/me/albums?limit=50', function (it) { seedAlbum(it && it.album, seedSt); return mapAlbum(it && it.album); });
+    albums.then(function () { seedSt.at = Date.now(); albumSeedStat = seedSt; }, function () {});
     // Artists are optional: an older sign-in without user-follow-read must not break the library.
     // (v2.13: a cool-off isn't a failure; it fails the whole load, so a half-loaded library is never cached.)
     var artists = pages('/me/following?type=artist&limit=50', mapArtist, 'artists').catch(function (e) {
@@ -2092,7 +2120,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       }
       if (v[3] == null && typeof prev.likedTotal === 'number') v[3] = prev.likedTotal;
       var data = { at: Date.now(), me: v[0], playlists: v[1], albums: v[2], likedTotal: v[3], artists: v[4], shows: v[5], episodesTotal: v[6] };
-      set(K.cache, data);
+      libCacheSave = { ok: set(K.cache, data), at: Date.now() };   // v2.38: shown in Diagnostics
       return data;
     });
   }
@@ -3839,7 +3867,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.37 (2026-11-27)';
+  var VERSION = 'v2.38 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -3906,6 +3934,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       ' · Latest: refreshes only when you open it (up to ' + LATEST_SHOWS + ' shows, cache ' + Math.round(LATEST_MS / 3600000) + ' h)');
     var eh = epHistory();
     line(slStatsText() + ' · albums kept until cleared, podcasts re-checked after ' + Math.round(SHOW_STALE_MS / 3600000) + ' h');   // v2.15
+    line('Album songs with the library answer: ' + albumSeedText());   // v2.38
+    if (libCacheSave && !libCacheSave.ok) line('Library copy: couldn’t be saved on this phone at ' + clock(libCacheSave.at) + ' (storage full); the library loads from Spotify each visit');   // v2.38
     line('Podcast history: ' + eh.length + (eh.length === 1 ? ' episode' : ' episodes') + (eh[0] ? ' (newest: ' + eh[0].name + ', ' + agoAt(eh[0].at) + ')' : '') +
       ' · Marked played or unplayed on this phone: ' + markCount());   // v2.21
     line('Resume points: from this page’s own podcast history (no automatic Spotify checks)');
@@ -5011,7 +5041,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!m) return null;
     return el('li', { class: 'row' }, [el('div', { class: 'qitem' }, [
       coverFor(m),
-      el('div', { class: 'meta' }, [el('div', { class: 'name', text: m.name }), el('div', { class: 'sub', text: m.artist })])
+      el('div', { class: 'meta' }, [el('div', { class: 'name', text: m.name }), el('div', { class: m.kind === 'track' && m.ex ? 'sub ex' : 'sub', text: m.artist })])   // v2.38: E badge
     ])]);
   }
   function renderQueue() {
@@ -5192,7 +5222,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // The label replaces the link's text for screen readers, so it carries "playing now" and "new" itself.
   function paintRowLabel(a, playing) {
     var sub = a.getAttribute('data-sub') || '';
-    a.setAttribute('aria-label', a.getAttribute('data-verb') + (playing ? ', playing now' : '') + (a.hasAttribute('data-new') ? ', new' : '') + (sub ? ', ' + sub : ''));
+    a.setAttribute('aria-label', a.getAttribute('data-verb') + (a.hasAttribute('data-ex') ? ', explicit' : '') + (playing ? ', playing now' : '') + (a.hasAttribute('data-new') ? ', new' : '') + (sub ? ', ' + sub : ''));   // v2.38: explicit
   }
   function paintPlaying() {
     var cur = playingUri();
@@ -5204,13 +5234,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var opens = opensOnTap(item);
     var sub = (item.sub || '') + copySub(item);   // v2.24: " · You have a copy" / " · Copy" (shown only, never stored)
     if (item.nope) sub += (sub ? ' · ' : '') + item.nope;   // v2.35
-    var a = el('a', { class: 'item', href: item.url, 'data-verb': (opens ? 'Open “' : 'Play “') + item.name + '”', 'data-sub': sub, 'data-new': item.fresh ? '' : null }, [
+    var ex = item.kind === 'track' && item.ex;   // v2.38: "E" badge (drawn by CSS, so the row's text stays the same)
+    var a = el('a', { class: 'item', href: item.url, 'data-verb': (opens ? 'Open “' : 'Play “') + item.name + '”', 'data-sub': sub, 'data-new': item.fresh ? '' : null, 'data-ex': ex ? '' : null }, [
       coverFor(item),
       el('div', { class: 'meta' }, [
         item.fresh
           ? el('div', { class: 'name' }, [el('span', { class: 'newdot', role: 'img', 'aria-label': 'New' }), document.createTextNode(item.name)])
           : el('div', { class: 'name', text: item.name }),
-        el('div', { class: 'sub', text: sub })
+        el('div', { class: ex ? 'sub ex' : 'sub', text: sub })
       ])
     ]);
     paintRowLabel(a, false);
@@ -5625,7 +5656,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }
     if (parent.kind === 'album') {
       var at = mapTrack(it, { num: it.track_number, noImg: true, sub: names(it.artists), ctx: parent.uri });
-      if (at) at.albumName = parent.name || '';   // v2.22: Find in list matches the album name
+      if (at) { at.albumName = parent.name || ''; at.disc = it.disc_number || 1; }   // v2.22: Find in list matches the album name; v2.38: disc headers
       return at;
     }
     if (parent.kind === 'liked') likedCount(it);   // v2.31: every Liked Songs entry counts (local files too), to know when all are in
@@ -5817,6 +5848,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var ul = $('dlist');
     if (!d || !ul) return;
     ul.textContent = '';
+    ul.removeAttribute('data-disc');   // v2.38
     if (d.editing) return paintEditRows(d);   // v2.26
     var view = detailView(d.item);
     var tok = findTokens(d), list = d.items;
@@ -5825,7 +5857,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       d.findHits = list.length;
     }
     list = view ? sortShown(view, sortList(view, list)) : list;
-    appendDetailRows(tok ? list.slice(0, FIND_SHOW) : list);
+    appendDetailRows(tok ? list.slice(0, FIND_SHOW) : list, true);
   }
   function firstUnplayed(items) {
     for (var i = 0; i < items.length; i++) { if (!markItem(items[i]).played) return items[i]; }   // v2.21: marks count
@@ -5874,12 +5906,65 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     return { kind: 'episode', id: t.id, name: t.name || 'Untitled', uri: t.uri, url: 'https://open.spotify.com/episode/' + t.id, positionMs: pos, played: !!t.played,
       showId: showId, durMs: t.durMs || 0 };   // v2.33: for Skip intro
   }
-  function appendDetailRows(items) {
+  // v2.38: "Disc 1", "Disc 2" headers in an album with more than one disc, in Spotify's order only (not while
+  // sorted or filtered by Find). fresh: the list was just emptied (paintDetailList).
+  function discMode(d) {
+    if (!d || !d.item || d.item.kind !== 'album' || d.editing || findTokens(d) || !sortIsDefault(detailView(d.item))) return false;
+    for (var i = 0; i < d.items.length; i++) { if ((d.items[i].disc || 1) > 1) return true; }
+    return false;
+  }
+  function appendDetailRows(items, fresh) {
     var ul = $('dlist');
     if (!ul) return;
     if (state.detail && state.detail.item.kind === 'liked') items = items.map(withLastPlay);   // v2.30: "Played 3 days ago"
-    items.forEach(function (i) { ul.appendChild(itemRow(i)); });
+    var discs = discMode(state.detail);
+    if (discs && !fresh && ul.children.length && !ul.hasAttribute('data-disc')) { paintDetailList(); return; }   // Load more brought disc 2: redraw from Disc 1
+    items.forEach(function (i) {
+      if (discs) {
+        var n = String(i.disc || 1);
+        if (ul.getAttribute('data-disc') !== n) {
+          ul.appendChild(el('li', { class: 'dischead' }, [el('h3', { text: 'Disc ' + n })]));
+          ul.setAttribute('data-disc', n);
+        }
+      }
+      ul.appendChild(itemRow(i));
+    });
     requestSaved(savableUris(items));
+  }
+  // v2.38: the album details footer under the last song: release date at Spotify's precision, ℗/© lines, label.
+  // Saved albums have them from the library answer; others (search, an artist's releases) have the date only.
+  var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  function fmtRelease(date, prec) {
+    var m = /^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?/.exec(String(date || ''));
+    if (!m || m[1] === '0000') return '';
+    var mo = m[2] ? +m[2] : 0, day = m[3] ? +m[3] : 0;
+    prec = prec || (day ? 'day' : mo ? 'month' : 'year');
+    if (mo < 1 || mo > 12) return m[1];
+    if (prec === 'day' && day) return MONTHS[mo - 1] + ' ' + day + ', ' + m[1];
+    if (prec === 'day' || prec === 'month') return MONTHS[mo - 1] + ' ' + m[1];
+    return m[1];
+  }
+  function cpLine(sym, t) {
+    t = String(t || '').trim();
+    if (!t) return '';
+    return /^(©|℗|\((c|p)\))/i.test(t) ? t : sym + ' ' + t;
+  }
+  function albumInfo(it) {
+    var lib = null;
+    ((state.data && state.data.albums) || []).some(function (a) { if (a && a.id === it.id) { lib = a; return true; } return false; });
+    var o = {};
+    ['released', 'rprec', 'cpC', 'cpP', 'label'].forEach(function (k) { o[k] = it[k] || (lib && lib[k]) || ''; });
+    return o;
+  }
+  function albumFoot(it) {
+    var o = albumInfo(it), lines = [];
+    var when = fmtRelease(o.released, o.rprec);
+    if (when) lines.push('Released ' + when);
+    if (o.cpC) lines.push(cpLine('©', o.cpC));
+    if (o.cpP) lines.push(cpLine('℗', o.cpP));
+    if (o.label) lines.push('Label: ' + o.label);
+    if (!lines.length) return null;
+    return el('div', { class: 'afoot' }, lines.map(function (t, i) { return el('p', { class: i ? '' : 'awhen', text: t }); }));
   }
   // "12 songs · 48 min" once the whole list is loaded; "50 of 230 songs loaded" while more pages remain
   // (no length then, since it would only cover part of the list).
@@ -5942,6 +6027,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     } else if (!d.items.length) {
       f.appendChild(el('p', { class: 'empty', text: d.src === 'search' ? 'Search didn’t find this album’s songs. Try again after Spotify’s pause.'
         : d.src === 'local' ? 'You haven’t saved or played an episode of this show on this phone yet.' : 'No ' + noun + ' here.' }));
+    }
+    if (!d.next && d.items.length && d.item.kind === 'album' && (d.src !== 'search' || (d.total != null && d.raw.length >= d.total))) {   // v2.38 (not under a partial search list)
+      var af = albumFoot(d.item); if (af) f.appendChild(af);
     }
   }
   // ---------- Find in list (v2.22) ----------
@@ -6893,8 +6981,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!id) return false;
     var key = prefix + id;
     var others = slKeys(prefix).filter(function (k) { return k !== key; }).map(function (k) {
-      var v = get(k); return { k: k, at: v && typeof v.at === 'number' ? v.at : 0 };
-    }).sort(function (a, b) { return a.at - b.at; });
+      var v = get(k); return { k: k, at: v && typeof v.at === 'number' ? v.at : 0, lib: !!(v && v.lib) };
+    }).sort(function (a, b) { return (b.lib - a.lib) || a.at - b.at; });   // v2.38: lists from the library answer go first
     var i = 0, txt;
     for (; i < others.length - (max - 1); i++) del(others[i].k);
     try { txt = JSON.stringify(c); } catch (e) { return false; }
@@ -6933,7 +7021,60 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     };
     if (t.is_playable === false) o.is_playable = false;   // v2.35: kept only when Spotify says it can't play
     if (t.restrictions && t.restrictions.reason) o.restrictions = { reason: String(t.restrictions.reason).slice(0, 20) };
+    if (t.explicit) o.explicit = true;   // v2.38: only when true
     return o;
+  }
+  // ---------- album songs from the library answer (v2.38) ----------
+  // GET /me/albums (asked on every library load anyway) can carry each saved album's first page of songs. They're
+  // kept in memory for this visit only (albumSeed, minimal slTrack objects), never in the library copy. Opening a
+  // saved album with no saved list uses them (no request) and saves them as its saved list, as an album from
+  // Spotify would be (same 150-album cap). Albums with more songs than that page get Load more (catalog) as before.
+  // When Spotify leaves the songs out, nothing is seeded and albums open exactly as before (one catalog request).
+  var albumSeed = {};          // album id -> {total, items}
+  var albumSeedStat = null;    // the last library load's count, for Diagnostics
+  var libCacheSave = null;     // {ok, at}: whether the last library load could be kept on the phone
+  function seedAlbum(a, st) {
+    if (!a || !a.id) return;
+    st.albums++;
+    if (a.copyrights && a.copyrights.length) st.cp++;
+    if (typeof a.label === 'string' && a.label) st.label++;
+    var tr = a.tracks;
+    var items = tr && Array.isArray(tr.items) && !tr.offset ? tr.items.filter(function (t) { return t && t.id && t.uri && !t.is_local; }).map(slTrack) : [];
+    if (!items.length) { delete albumSeed[a.id]; return; }
+    var total = typeof tr.total === 'number' ? tr.total : (a.total_tracks || items.length);
+    total = Math.max(total, items.length);
+    st.withSongs++;
+    if (items.length >= total) st.whole++;
+    albumSeed[a.id] = { total: total, items: items };
+  }
+  // Saved as a saved list marked `lib`: the library answer brings it back on every load, so it goes first when the
+  // 150 places are full and lists that cost catalog requests stay. Load more adding a page drops the mark.
+  function useAlbumSeed(d, sd) {
+    d.raw = sd.items.slice();
+    d.total = sd.total;
+    d.checkedAt = Date.now();
+    d.fromLib = true;
+    saveAlbumList(d, true);   // sets d.savedAt when the phone keeps it ("Saved on this phone")
+    d.src = 'cache';    // behaves as a saved list (a pause keeps it on screen)
+    d.next = d.raw.length < d.total ? albumPage(d.item.id, d.raw.length) : null;
+    remapDetail(d);
+  }
+  // A list saved before v2.38 has no `explicit`: the library's songs fill it in (no request), keeping the copy's age.
+  function fillExplicit(id, c) {
+    var sd = albumSeed[id];
+    if (!sd) return;
+    var ex = {}, changed = false;
+    sd.items.forEach(function (x) { if (x.explicit) ex[x.id] = true; });
+    c.items.forEach(function (x) { if (x && ex[x.id] && !x.explicit) { x.explicit = true; changed = true; } });
+    if (changed) slPut(SL_ALBUM, id, c, SL_ALBUM_MAX);
+  }
+  function albumSeedText() {
+    var st = albumSeedStat;
+    if (!st) return 'not checked this visit (the library hasn’t loaded from Spotify yet; Refresh checks)';
+    if (!st.albums) return 'no saved albums';
+    var extra = ' · ℗/© lines for ' + st.cp + ' of ' + st.albums + (st.label ? ' · label for ' + st.label : '');
+    if (!st.withSongs) return 'no (Spotify left them out, so a saved album asks for its songs when first opened, as before)' + extra;
+    return 'yes, for ' + st.withSongs + ' of ' + st.albums + ' saved albums (' + st.whole + ' complete; longer ones use Load more)' + extra;
   }
   function slEpisode(e) {
     var o = {
@@ -6944,11 +7085,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (rp) o.resume_point = { fully_played: !!rp.fully_played, resume_position_ms: rp.resume_position_ms || 0 };
     return o;
   }
-  function saveAlbumList(d) {
+  function saveAlbumList(d, lib) {
     if (!d.raw.length) return;
     var total = typeof d.total === 'number' ? d.total : d.raw.length;
     var at = Date.now();
-    if (slPut(SL_ALBUM, d.item.id, { at: at, total: total, items: d.raw.map(slTrack) }, SL_ALBUM_MAX)) d.savedAt = at;
+    var c = { at: at, total: total, items: d.raw.map(slTrack) };
+    if (lib) c.lib = true;   // v2.38: came with the library answer (first to go when full)
+    if (slPut(SL_ALBUM, d.item.id, c, SL_ALBUM_MAX)) d.savedAt = at;
   }
   // `at` is when page 1 was last asked (older pages don't make the copy newer).
   function saveShowList(d) {
@@ -7005,7 +7148,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (it.kind === 'likedby') { fillLikedBy(d); return; }   // v2.31: from memory, no request
     if (it.kind === 'album' && it.id) {
       var c = slGet(SL_ALBUM, it.id);
-      if (c && c.items.length) { useAlbumCache(d, c); return; }
+      if (c && c.items.length) { fillExplicit(it.id, c); useAlbumCache(d, c); return; }   // v2.38: fillExplicit
+      var sd = albumSeed[it.id];   // v2.38: songs that came with the library answer
+      if (sd && sd.items.length) { useAlbumSeed(d, sd); return; }
     } else if (it.kind === 'show' && it.id) {
       var s = slGet(SL_SHOW, it.id) || seedShowFromLatest(it);
       if (s && s.items.length) { useShowCache(d, s); return; }
@@ -7165,7 +7310,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       else if (d.savedAt) {
         parts.push(el('span', { text: 'Saved on this phone' }));
         if (!d.loading) link('Reload from Spotify', reloadAlbum);
-      }
+      } else if (d.fromLib) parts.push(el('span', { text: 'Came with your library' }));   // v2.38
     } else if (kind === 'show') {
       if (d.src === 'local') parts.push(el('span', { text: 'Your saved and played episodes from this show (Spotify paused the full list' + pausedUntilText(d) + ')' }));
       else if (d.savedAt || d.checkedAt) {
