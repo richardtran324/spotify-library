@@ -570,7 +570,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     <div class="coolbar" id="cool" hidden><span id="coolText"></span><span class="cleft" id="coolLeft" aria-hidden="true"></span></div>
   </header>
   <div class="banner" id="banner" role="status" hidden>
-    <span>New features need one more sign-in</span>
+    <span id="bannerText">New features need one more sign-in</span>   <!-- v2.65: or when Spotify's 6 months run out (updateBanner) -->
     <button class="btn small" id="bannerBtn" type="button">Sign in again</button>
   </div>
 
@@ -782,11 +782,18 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     edit: { name: 'Editing your playlists', scopes: ['playlist-modify-private'], allow: ['Manage your private playlists'] }
   };
   var PERM_ASK = 'lib-perm-ask';   // {feature, at}: a feature sign-in in progress
+  // v2.65: Spotify ends every sign-in 6 months after it was made. Renewing the token doesn't extend it, signing in
+  // again starts a new 6 months, and refresh tokens carry no date, so the page keeps its own
+  // (https://developer.spotify.com/blog/2026-06-18-refresh-token-expiration).
+  var AUTH_LIFE_MS = 180 * 86400000;    // counted as 180 days, so the date shown is never after Spotify's
+  var RENEW_FROM_MS = 165 * 86400000;   // the banner offers Renew now from day 165
+  var RENEW_ASK = 'lib-renew';          // {at, place}: a Renew now / Sign in again in progress (place: a Keep your place snapshot)
   var API = 'https://api.spotify.com/v1';
   var AUTH = 'https://accounts.spotify.com';
   var K = {
     client: 'lib-client-id',
-    token: 'lib-token',        // {access, refresh, expires, scope}
+    token: 'lib-token',        // {access, refresh, expires, scope, authAt | authSeen} (v2.65: authAt, authSeen; see authEnd)
+    signedOut: 'lib-signed-out', // v2.65: {at, authAt}: Spotify ended the sign-in (invalid_grant); cleared by the next sign-in
     verifier: 'lib-verifier',
     state: 'lib-state',
     cache: 'lib-cache',        // {at, me, playlists, albums, artists, likedTotal, shows, episodesTotal}
@@ -1206,14 +1213,49 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function saveToken(j, fresh) {
     var old = get(K.token) || {};
-    set(K.token, {
+    var tok = {
       access: j.access_token,
       refresh: j.refresh_token || old.refresh,   // Spotify may or may not return a new one
       expires: Date.now() + (j.expires_in - 60) * 1000,
       scope: typeof j.scope === 'string' ? j.scope : (fresh ? '' : (old.scope || ''))
-    });
-    if (fresh) state.scopeProblem = false;
+    };
+    // v2.65: a sign-in starts Spotify's 6 months (authAt); a renewal keeps it. A sign-in saved by an older version
+    // has no date: its first renewal here notes authSeen (it was made on or before then).
+    if (fresh) tok.authAt = Date.now();
+    else if (typeof old.authAt === 'number') tok.authAt = old.authAt;
+    else tok.authSeen = typeof old.authSeen === 'number' ? old.authSeen : Date.now();
+    set(K.token, tok);
+    if (fresh) { state.scopeProblem = false; del(K.signedOut); }
     updateBanner();
+  }
+  // v2.65: when this sign-in ends: {at, end, known}. known is false for a sign-in from before v2.65 (at = authSeen),
+  // which ends no later than that. null while unknown (an older sign-in not renewed since the update).
+  function authEnd(t) {
+    t = t === undefined ? get(K.token) : t;
+    if (!t) return null;
+    if (typeof t.authAt === 'number') return { at: t.authAt, end: t.authAt + AUTH_LIFE_MS, known: true };
+    if (typeof t.authSeen === 'number') return { at: t.authSeen, end: t.authSeen + AUTH_LIFE_MS, known: false };
+    return null;
+  }
+  function renewDue() {
+    var a = authEnd();
+    return a && Date.now() >= a.at + RENEW_FROM_MS ? a : null;
+  }
+  function longDay(ms) {
+    try { return new Date(ms).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }); } catch (e) { return new Date(ms).toDateString(); }
+  }
+  function renewText(a) {
+    if (a.end - Date.now() < 86400000) return 'Spotify will sign you out any day now (it does every 6 months)';
+    return 'Spotify will sign you out ' + (a.known ? 'around ' : 'by ') + longDay(a.end) + ' (it does every 6 months)';
+  }
+  // v2.65: Renew now (and Sign in again): the normal sign-in, then the page comes back where you were. The return
+  // is a new page load, so the Keep your place snapshot goes with the sign-in in localStorage (handleCallback, kpTake).
+  // Never automatic: a page that leaves for Spotify by itself could strand you on Spotify's sign-in page.
+  function renew() {
+    var place = null;
+    try { place = state.started ? kpSnapshot() : JSON.parse(sessionStorage.getItem(PLACE_KEY) || 'null'); } catch (e) { place = null; }
+    if (!set(RENEW_ASK, { at: Date.now(), place: place })) set(RENEW_ASK, { at: Date.now(), place: null });
+    login();
   }
   function missingScopes() {
     var t = get(K.token);
@@ -1221,7 +1263,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     return SCOPE_LIST.filter(function (s) { return have.indexOf(s) === -1; });
   }
   function updateBanner() {
-    $('banner').hidden = !(state.started && (state.scopeProblem || missingScopes().length > 0));
+    var scopes = state.scopeProblem || missingScopes().length > 0;
+    var due = renewDue();   // v2.65: from day 165 of Spotify's 6 months, with the date it ends
+    $('banner').hidden = !(state.started && (scopes || due));
+    $('bannerText').textContent = scopes || !due ? 'New features need one more sign-in' : renewText(due);
+    $('bannerBtn').textContent = scopes || !due ? 'Sign in again' : 'Renew now';
   }
   function tokenRequest(body) {
     return fetch(AUTH + '/api/token', {
@@ -1241,6 +1287,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     history.replaceState(null, '', REDIRECT);
     var ask = get(PERM_ASK);
     del(PERM_ASK);
+    var rn = get(RENEW_ASK);   // v2.65: back from Renew now / Sign in again: Keep your place brings back where you were
+    del(RENEW_ASK);
+    if (rn && rn.place && Date.now() - (rn.at || 0) < 30 * 60000) kpBoot.renew = rn.place;
     if (!ask || !FEATURE_SCOPES[ask.feature] || !(Date.now() - (ask.at || 0) < 30 * 60000)) ask = null;
     // audit: a sign-in that was cancelled or failed while the old sign-in still works goes back to the page
     // (and keeps the last playback) instead of the Sign in screen. This covers feature sign-ins and "Sign in again".
@@ -1292,7 +1341,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         return new Promise(function (res) { setTimeout(res, 2000); }).then(function () {
           if (renewed()) return { retry: true };
           var n = get(K.token);
-          if (n && n.refresh === sent) del(K.token);
+          if (n && n.refresh === sent) {
+            del(K.token);
+            set(K.signedOut, { at: Date.now(), authAt: typeof n.authAt === 'number' ? n.authAt : null });   // v2.65: renderSignIn says why
+          }
           throw new Error('signed-out');
         });
       })
@@ -4636,7 +4688,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.45 (2026-11-27)';
+  var VERSION = 'v2.65 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -4688,6 +4740,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     line('Page ' + VERSION);
     line('Address: ' + location.origin + location.pathname);
     line('Signed in: ' + (t.access ? 'yes' : 'no') + (t.expires ? ', token ' + (t.expires > Date.now() ? 'valid ' + Math.round((t.expires - Date.now()) / 60000) + ' min' : 'expired (will renew)') : ''));
+    var ae = t.access ? authEnd(t) : null, so = get(K.signedOut);   // v2.65
+    line('Sign-in made: ' + (ae ? (ae.known ? longDay(ae.at) + ' (Spotify asks again around ' : 'on or before ' + longDay(ae.at) + ' (Spotify asks again by ') + longDay(ae.end) + ')'
+      : t.access ? 'unknown (made before v2.65; noted at the next renewal)' : so ? 'ended by Spotify ' + longDay(so.at) : 'none'));
     var miss = missingScopes();
     line('Permissions missing: ' + (miss.length ? miss.join(', ') : 'none'));
     line('Device picked: ' + (state.device ? state.device.name + ' (' + state.device.type + ')' : 'none') + (state.deviceError ? ' · error: ' + state.deviceError : ''));
@@ -6680,11 +6735,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function kpTake() {
     if (kpBoot.done) return null;
     kpBoot.done = true;
-    var p = null;
-    try { p = JSON.parse(sessionStorage.getItem(PLACE_KEY) || 'null'); } catch (e) { p = null; }
+    var p = null, rn = kpBoot.renew || null;   // v2.65: the place saved by Renew now / Sign in again (handleCallback)
+    if (rn) p = rn;
+    else try { p = JSON.parse(sessionStorage.getItem(PLACE_KEY) || 'null'); } catch (e) { p = null; }
     if (!p || typeof p !== 'object' || p.v !== 1 || typeof p.at !== 'number') { kpInfo = 'nothing saved'; if (p) kpDrop(); return null; }
     var reload = kpBoot.nav === 'reload' || kpBoot.nav === 'back_forward' || kpBoot.hash === '#detail';
-    var why = kpBoot.why || (reload ? '' : 'fresh visit');
+    var why = rn ? '' : kpBoot.why || (reload ? '' : 'fresh visit');
     if (!why && (Date.now() - p.at > PLACE_MS || p.at > Date.now() + 60000)) why = 'saved over 6 h ago';
     if (why) { kpInfo = 'not brought back (' + why + ')'; kpDrop(); return null; }
     if (FILTERS.indexOf(p.filter) !== -1) { state.filter = p.filter; set(K.filter, p.filter); }
@@ -6695,7 +6751,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       var v = +p.ys[k];
       if (FILTERS.indexOf(k.split(':')[0]) !== -1 && v > 0 && v < 1e6) kpY[k] = Math.round(v);
     });
-    kpInfo = 'brought back ' + state.filter + (state.filter === 'podcasts' ? ' (' + state.podTab + ')' : '');
+    kpInfo = 'brought back ' + state.filter + (state.filter === 'podcasts' ? ' (' + state.podTab + ')' : '') + (rn ? ' after signing in' : '');   // v2.65
     return p;
   }
   // The item to reopen: the one in your library now (it may have changed), else the stored copy.
@@ -9386,14 +9442,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- screens ----------
-  function stopApp() {
+  function stopApp(keepLast) {
     state.started = false;
     closeNotes(false);   // v2.18
     clearTimeout(state.pollTimer); state.pollTimer = null;
     stopWake();
     state.player = null;
     state.playerIdle = false;
-    clearLastPlay();   // signed out: the last playback belongs to that sign-in
+    if (!keepLast) clearLastPlay();   // signed out: the last playback belongs to that sign-in (v2.65: kept when Spotify ended it)
     releasePoller();
     paintCool();       // hides the cool-off line (state.started is false now)
     stopFind(state.detail); state.detailStack.forEach(stopFind);   // v2.22
@@ -9437,15 +9493,22 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     ]));
   }
   function renderSignIn(msg) {
-    stopApp();
+    // v2.65: Spotify ended the sign-in (its 6 months ran out, or access was removed): say so, keep the last playback,
+    // and come back where you were after signing in. Change Client ID still forgets it all.
+    var ended = get(K.signedOut);
+    stopApp(!!ended);
     var main = $('main'); main.textContent = '';
     var go = el('button', { class: 'btn', type: 'button', text: 'Sign in with Spotify' });
-    go.addEventListener('click', login);
+    go.addEventListener('click', ended ? renew : login);
     var reset = el('button', { class: 'btn secondary', type: 'button', text: 'Change Client ID' });
-    reset.addEventListener('click', function () { del(K.client); del(K.token); renderSetup(); });
+    reset.addEventListener('click', function () { del(K.client); del(K.token); del(K.signedOut); renderSetup(); });
+    var early = ended && typeof ended.authAt === 'number' && (ended.at || 0) - ended.authAt < RENEW_FROM_MS;
     main.appendChild(el('section', { class: 'card' }, [
       el('h2', { text: 'Sign in' }),
       el('p', { text: 'Sign in once on this phone. You’ll stay signed in until Spotify asks again (about every 6 months).' }),
+      ended ? el('p', { class: 'err', id: 'endedWhy', text: early
+        ? 'Spotify ended this sign-in before its 6 months were up (for example, if the app’s access was removed in your Spotify account). Sign in to carry on where you left off.'
+        : 'Spotify signs you out every 6 months. Sign in to carry on where you left off.' }) : null,
       msg ? el('p', { class: 'err', text: msg }) : null,
       go, reset
     ]));
@@ -9761,7 +9824,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!coolLeft('library')) refresh();
     toast('Refreshing…');
   });
-  $('bannerBtn').addEventListener('click', login);
+  $('bannerBtn').addEventListener('click', renew);   // v2.65: comes back where you were
   $('devBtn').addEventListener('click', openSheet);
   $('sheetClose').addEventListener('click', closeSheet);
   $('sheetBack').addEventListener('click', closeSheet);
