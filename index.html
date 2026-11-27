@@ -992,13 +992,19 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var ask = get(PERM_ASK);
     del(PERM_ASK);
     if (!ask || !FEATURE_SCOPES[ask.feature] || !(Date.now() - (ask.at || 0) < 30 * 60000)) ask = null;
-    if (err && ask && get(K.token)) {
-      // A feature sign-in was cancelled: the old sign-in still works, so go back to the page.
-      toast('Nothing changed. ' + FEATURE_SCOPES[ask.feature].name + ' still needs that permission.');
+    // audit: a sign-in that was cancelled or failed while the old sign-in still works goes back to the page
+    // (and keeps the last playback) instead of the Sign in screen. This covers feature sign-ins and "Sign in again".
+    if (err && get(K.token)) {
+      toast(ask ? 'Nothing changed. ' + FEATURE_SCOPES[ask.feature].name + ' still needs that permission.'
+                : 'Sign-in was cancelled. You’re still signed in.');
       return Promise.resolve(true);
     }
     if (err) { renderSignIn('Spotify sign-in was cancelled or failed (' + err + ').'); return Promise.resolve(false); }
-    if (params.get('state') !== get(K.state)) { renderSignIn('Sign-in check failed. Please try again.'); return Promise.resolve(false); }
+    if (params.get('state') !== get(K.state)) {
+      // audit: lib-state and lib-verifier stay: a mismatch can mean another tab's sign-in is still in progress.
+      if (get(K.token)) { toast('Sign-in check failed. You’re still signed in.'); return Promise.resolve(true); }
+      renderSignIn('Sign-in check failed. Please try again.'); return Promise.resolve(false);
+    }
     return tokenRequest({
       grant_type: 'authorization_code',
       code: code,
@@ -1013,6 +1019,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       }
       return true;
     }).catch(function (e) {
+      if (get(K.token)) { toast('Could not finish sign-in (' + e.message + '). You’re still signed in.'); return true; }   // audit
       renderSignIn('Could not finish sign-in: ' + e.message); return false;
     });
   }
