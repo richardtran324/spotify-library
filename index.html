@@ -310,6 +310,9 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
 .setname { display: block; font-weight: 600; }
 .setnote { display: block; font-size: 0.85rem; color: var(--muted); }
 .setgroup { border: 0; margin: 0; padding: 0; min-width: 0; }
+.wakehelp summary { cursor: pointer; padding: 10px 0; min-height: 44px; box-sizing: border-box; }   /* v2.29 */
+.wakehelp .sethint { margin: 0 0 8px; }
+.wakehelp b { color: var(--fg); font-weight: 600; }
 .setgroup legend { padding: 0; margin-bottom: 2px; font-weight: 600; }
 /* Podcasts: Latest / Shows toggle and the Latest episodes header */
 .seg { display: flex; gap: 3px; padding: 3px; margin-top: 12px; border-radius: 10px; background: var(--chip); }
@@ -636,10 +639,18 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     <h3 class="sheet-sub">Settings</h3>
     <fieldset class="setgroup" id="wakeModes">
       <legend>When Spotify isn’t running</legend>
-      <label class="setrow"><input type="radio" name="wakeMode" value="wait"><span><span class="setname">Wait for me to press play (no app)</span><span class="setnote">Press play in Control Center or on the lock screen. Spotify starts in the background and the page plays what you tapped.</span></span></label>
-      <label class="setrow"><input type="radio" name="wakeMode" value="link"><span><span class="setname">Open the Spotify app</span><span class="setnote">A tap opens the item in Spotify; switch back and the page plays it.</span></span></label>
-      <label class="setrow"><input type="radio" name="wakeMode" value="shortcut"><span><span class="setname">Run my Wake Spotify shortcut</span><span class="setnote">A tap runs your “Wake Spotify” shortcut, which opens Spotify and comes back to the page.</span></span></label>
+      <label class="setrow"><input type="radio" name="wakeMode" value="wait"><span><span class="setname">Wait for me to press play (no app)</span><span class="setnote">Press play in Control Center, on the lock screen or on your headphones. Spotify starts in the background with no screen of its own, and the page plays what you tapped.</span></span></label>
+      <label class="setrow"><input type="radio" name="wakeMode" value="link"><span><span class="setname">Open the Spotify app</span><span class="setnote">A tap opens the item in Spotify; switch back and the page plays it. If Spotify wasn’t running, its Home screen shows first.</span></span></label>
+      <label class="setrow"><input type="radio" name="wakeMode" value="shortcut"><span><span class="setname">Run my Wake Spotify shortcut</span><span class="setnote">A tap runs your “Wake Spotify” shortcut, which starts Spotify and comes back to the page. Built with Play/Pause (below), Spotify’s Home screen doesn’t show; the Shortcuts screen still shows for a moment.</span></span></label>
     </fieldset>
+    <details class="setgroup wakehelp" id="wakeHelp">
+      <summary class="setname">Wake Spotify without its Home screen</summary>
+      <p class="sethint">Opening Spotify while it isn’t running always shows its Home screen first, and no link can skip it. Pressing play instead starts Spotify in the background, the way Control Center does. These work with Wait for me to press play.</p>
+      <p class="sethint"><b>One gesture with Back Tap.</b> In Shortcuts, tap +, add the <b>Play/Pause</b> action, tap its word Play/Pause and choose <b>Play</b>, and name the shortcut <b>Play Spotify</b>. Then in Settings › Accessibility › Touch › Back Tap › Double Tap, choose Play Spotify. When the page says Spotify is asleep, double-tap the back of your phone.</p>
+      <p class="sethint"><b>Action button</b> (iPhone 15 Pro or later): Settings › Action Button › Shortcut › Play Spotify.</p>
+      <p class="sethint"><b>Wake Spotify shortcut</b> (for Run my Wake Spotify shortcut): use <b>Play/Pause</b> set to Play instead of Open App, then <b>Wait</b> 2 seconds, then <b>Open URLs</b> with <span id="wakeHelpUrl"></span>. It comes back in a new Safari tab, which plays your tap.</p>
+      <p class="sethint">A play press resumes whatever Spotify played last for a moment, then the page switches to your tap. It wakes Spotify only if Spotify was the last app to play sound; if another app or a Safari preview played since, open Spotify once.</p>
+    </details>
     <fieldset class="setgroup" id="themeModes">
       <legend>Appearance</legend>
       <label class="setrow"><input type="radio" name="theme" value="auto"><span><span class="setname">Match phone</span></span></label>
@@ -800,6 +811,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   var SHORTCUT_URL = 'shortcuts://run-shortcut?name=' + encodeURIComponent('Wake Spotify');
   var NO_DEVICE = 'Spotify needs to be open on a device first: your phone, computer or speaker.';
   var REDIRECT = location.origin + location.pathname.replace(/index\.html$/, '');
+  var WAKE_RETURN_URL = REDIRECT + '?wake=1';   // v2.29: where the Wake Spotify shortcut comes back to
 
   var state = {
     data: null, filter: 'home', query: '',
@@ -3170,10 +3182,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.28 (2026-11-27)';
+  var VERSION = 'v2.29 (2026-11-27)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
+    var u = $('wakeHelpUrl'); if (u) u.textContent = WAKE_RETURN_URL;   // v2.29: the address the Wake Spotify shortcut opens
   }
   // Appearance: 'auto' follows the phone; Light or Dark sets data-theme on <html> (the CSS has a block for each).
   function themeMode() { var v = get(K.theme); return v === 'light' || v === 'dark' ? v : 'auto'; }
