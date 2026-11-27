@@ -2929,7 +2929,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     return play(item, opts).catch(function (e) {
       if (e.message === 'signed-out') return renderSignIn();
       if (isCool(e)) return coolToast(e.group);   // v2.13: the device is fine; Spotify asked the page to wait
-      state.device = null; state.deviceAt = 0; state.devicesAt = 0; showStatus();   // next tap checks again
+      // audit: only a 404 means the device is gone. A 5xx, a 403 or a network blip leaves the device
+      // (and the header) as it was; the next tap still checks devices first.
+      if (e.status === 404) { state.device = null; state.devicesAt = 0; showStatus(); }
+      state.deviceAt = 0;   // next tap checks again
       // 404: the device went to sleep since the last check (iPhone Spotify drops off after a pause).
       // In 'wait' mode the tap waits for Control Center play instead of failing.
       if (e.status === 404 && wakeMode() === 'wait' && Date.now() - goneWaitAt > WAIT_FOR_MS) {
