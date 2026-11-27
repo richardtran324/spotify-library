@@ -217,9 +217,17 @@ tests.push(function () {
       tab.env.fail = { '/me/tracks': 500 };
       return t.loadData();
     }).then(function (data2) {
-      group('3 a failed Liked Songs total is null and leaves no row');
-      check('3 a failed Liked Songs total is null, not an error', data2.likedTotal === null && data2.playlists.length === 5, data2.likedTotal);
+      // #26 (audit/keep-account-on-failure): a failed Liked Songs total on a reload keeps the last known total.
+      group('3 a failed Liked Songs total keeps the last one; with none known it is null and leaves no row');
+      check('3 a failed Liked Songs total on a reload keeps the last total', data2.likedTotal === 120 && data2.playlists.length === 5, data2.likedTotal);
       t.state.data = data2;
+      t.setFilter('playlists');
+      check('3 Liked Songs row stays after a failed total', mainNames(tab).indexOf('Liked Songs') !== -1, mainNames(tab));
+      t.state.data.likedTotal = null;   // no total known yet
+      return t.loadData();
+    }).then(function (data3) {
+      check('3 a failed Liked Songs total with none known is null, not an error', data3.likedTotal === null && data3.playlists.length === 5, data3.likedTotal);
+      t.state.data = data3;
       t.setFilter('playlists');
       check('3 no Liked Songs row without a total', mainNames(tab).indexOf('Liked Songs') === -1, mainNames(tab));
       t.state.data.artists = [];
