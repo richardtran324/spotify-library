@@ -3078,7 +3078,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function savePending(item, opts, mode) {
     var p = {
-      item: { kind: item.kind, id: item.id, name: item.name, uri: item.uri, url: item.url, ctx: item.ctx, positionMs: item.positionMs, exactPos: !!item.exactPos },   // v2.18: exactPos keeps a "0:00" timestamp at 0
+      item: { kind: item.kind, id: item.id, name: item.name, uri: item.uri, url: item.url, ctx: item.ctx, positionMs: item.positionMs, exactPos: !!item.exactPos, introSecs: item.introSecs || 0 },   // v2.18: exactPos keeps a "0:00" timestamp at 0; v2.30: introSecs for the toast
       opts: { shuffle: !!(opts && opts.shuffle) },
       at: Date.now(),
       mode: mode || 'link'
