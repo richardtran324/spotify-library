@@ -1,5 +1,5 @@
 'use strict';
-// iPhone Text Size / Dynamic Type (v2.47) tests: jsdom, mocked fetch, shared localStorage.
+// iPhone Text Size / Dynamic Type (v2.55) tests: jsdom, mocked fetch, shared localStorage.
 // jsdom has no layout and doesn't know -apple-system-body, so the iPhone is simulated: CSS.supports, matchMedia('(hover: none)')
 // and the <html> computed font size (the system body size while no inline size is set) are stubbed per tab.
 // Run: node tests/run.js dynamic-type  (or, after npm ci in tests/: node test.js [path to index.html])
@@ -82,7 +82,7 @@ tests.push(function () {
     check('1 desktop: no bigtype class', !big(tab));
     check('1 desktop: libTextSize reports 0', lts(tab).px === 0 && lts(tab)() === 0);
     check('1 desktop: Diagnostics says browser default', textLine(tab) === 'Text size: browser default', textLine(tab));
-    check('1 version is v2.47', tab.t().VERSION === 'v2.47 (2026-11-27)' && /Page v2\.47 \(2026-11-27\)/.test(diagText(tab)), tab.t().VERSION);
+    check('1 version is v2.55', tab.t().VERSION === 'v2.55 (2026-11-27)' && /Page v2\.55 \(2026-11-27\)/.test(diagText(tab)), tab.t().VERSION);
     done(tab);
   });
 });
