@@ -246,7 +246,9 @@ tests.push(function () {
   return setup(store, { fail: { '/me/albums': 500 } }).then(function (tab) {
     var e = d(tab).querySelector('#main .err');
     group('4 no cache: the error shows on the page, nothing is cached');
-    check('4 no cache: the error shows on the page', e && e.textContent === 'Couldn’t load your library: Boom /me/albums', e && e.textContent);
+    // #41: a 5xx is said in plain words, with Try again next to it
+    check('4 no cache: the error shows on the page', e && e.textContent === 'Couldn’t load your library. Spotify isn’t answering right now.', e && e.textContent);
+    check('4 no cache: Try again next to the error', !!d(tab).querySelector('#main button.libretry'));
     check('4 a half-loaded library is not cached', store.getItem('lib-cache') === null, store.getItem('lib-cache'));
     finish(tab);
     var store2 = seed();
@@ -256,7 +258,7 @@ tests.push(function () {
     }).then(function (tab3) {
       group('4 with a cache: the list stays and a toast says the refresh failed');
       check('4 with a cache: the cached list is shown', mainNames(tab3).length === 6 && mainNames(tab3)[1] === 'Morning Run', mainNames(tab3));
-      check('4 with a cache: a toast says the refresh failed', tab3.bootToasts.indexOf('Couldn’t refresh: Boom /me/albums') !== -1, tab3.bootToasts);
+      check('4 with a cache: a toast says the refresh failed', tab3.bootToasts.indexOf('Couldn’t refresh. Spotify isn’t answering right now.') !== -1, tab3.bootToasts);   // #41
       finish(tab3);
     });
   });
@@ -389,9 +391,9 @@ tests.push(function () {
       d(tab).querySelector('.filters .chip[data-filter="playlists"]').getAttribute('aria-pressed') === 'false');
     check('10 choice stored', stored(store, 'lib-filter') === 'albums');
     check('10 the list changes', mainNames(tab).join() === 'Blue,apple,Céline', mainNames(tab));
-    check('10 box filters by name', $(tab, 'search').placeholder === 'Filter by name' && $(tab, 'schips').hidden);
+    check('10 box filters by name', $(tab, 'search').placeholder === 'Filter by name or paste a link' && $(tab, 'schips').hidden);   // #52: or paste a link
     tab.t().setFilter('search');
-    check('10 Search Spotify turns the box into a search', $(tab, 'search').placeholder === 'Search all of Spotify' && !$(tab, 'schips').hidden);
+    check('10 Search Spotify turns the box into a search', $(tab, 'search').placeholder === 'Search Spotify or paste a link' && !$(tab, 'schips').hidden);   // #52
     tab.t().setFilter('albums');
     finish(tab);
     return setup(store).then(function (tab2) {
@@ -451,7 +453,7 @@ tests.push(function () {
       check('12 no saved-state check for liked songs', reqs(tab.calls, 'GET', '/me/library/contains').length === 0, tab.calls);
       var labels = qa(tab, '.sortbar[data-view="d-liked"] button.chip').map(function (b) { return b.textContent; });
       group('12 sorting the loaded songs: chips, A–Z, partial note, stored');
-      check('12 song sort options', labels.join() === 'Recently liked,Title A–Z,Artist A–Z,Not played lately', labels);   // #46: Not played lately
+      check('12 song sort options', labels.join() === 'Recently liked,Title A–Z,Artist A–Z,Not played lately,Duration,Album,Release date', labels);   // #46: Not played lately; #50: Duration, Album, Release date
       click(tab, chip(tab, 'd-liked', 'Title A–Z'));
       check('12 A–Z sorts the loaded songs', detailNames(tab)[0] === 'Track 71' && detailNames(tab)[49] === 'Track 120', detailNames(tab).slice(0, 2));
       var note = d(tab).querySelector('#dsort .snote');
@@ -609,7 +611,7 @@ tests.push(function () {
     return H.wait(200).then(function () {
       var e = d(tab).querySelector('#dfoot .err');
       group('15 failed album: error shown, nothing saved');
-      check('15 error shown', e && e.textContent === 'Couldn’t load songs (Boom /albums/A3/tracks).', e && e.textContent);
+      check('15 error shown', e && e.textContent === 'Couldn’t load songs. Spotify isn’t answering right now.', e && e.textContent);   // #41: plain words for a 5xx
       check('15 nothing saved for a failed album', store.getItem('lib-cache-album:A3') === null);
       tab.env.fail = {};
       tab.calls.length = 0;
@@ -733,12 +735,13 @@ tests.push(function () {
       return H.wait(100).then(function () {
         group('17 failed like and unlike roll back with a toast');
         check('17 failed like: heart empties again', h2.getAttribute('aria-pressed') === 'false' && t.state.saved['spotify:track:A3t1'] === false);
-        check('17 failed like: toast says so', lastToast(tab) === 'Couldn’t save (Server error).', tab.toasts());
+        // #41: plain words for a 5xx, and Try again on the toast
+        check('17 failed like: toast says so, with Try again', lastToast(tab) === 'Couldn’t save. Spotify isn’t answering right now.' && !!d(tab).querySelector('#toast .toastbtn[data-retry]'), tab.toasts());
         click(tab, heart);
         return H.wait(100);
       }).then(function () {
         check('17 failed unlike: heart stays filled', heart.getAttribute('aria-pressed') === 'true' && t.state.saved[uri] === true);
-        check('17 failed unlike: toast says so', lastToast(tab) === 'Couldn’t remove (Server error).', tab.toasts());
+        check('17 failed unlike: toast says so, with Try again', lastToast(tab) === 'Couldn’t remove. Spotify isn’t answering right now.' && !!d(tab).querySelector('#toast .toastbtn[data-retry]'), tab.toasts());   // #41
         tab.env.over = null;
         // Library paused: nothing sent, heart unchanged, a toast explains.
         store.setItem('lib-cooloff', JSON.stringify({ library: { until: Date.now() + 600000, reason: 'quota', strikes: 1, quotaAt: Date.now() } }));
@@ -911,11 +914,11 @@ tests.push(function () {
     // Settings sheet: the count, then Clear saved lists.
     t.paintSettings();
     group('21 settings count and Clear saved lists');
-    check('21 settings show the saved lists', /^Saved lists: 0 albums, 1 show \(≈ \d+ KB\)$/.test($(tab, 'slInfo').textContent), $(tab, 'slInfo').textContent);
+    check('21 settings show the saved lists', /^Saved lists: 0 albums, 1 show, 0 playlists \(≈ \d+ KB\)$/.test($(tab, 'slInfo').textContent), $(tab, 'slInfo').textContent);   // #53: playlists counted too
     click(tab, $(tab, 'slClear'));
     check('21 Clear saved lists removes them', t.slKeys(A).length === 0 && t.slKeys(S).length === 0);
     check('21 Clear leaves the library cache and pins alone', store.getItem('lib-cache') !== null && store.getItem('lib-token') !== null);
-    check('21 Clear: count and toast updated', $(tab, 'slInfo').textContent === 'Saved lists: 0 albums, 0 shows (≈ 0 KB)' && lastToast(tab) === 'Saved lists cleared.', [$(tab, 'slInfo').textContent, tab.toasts()]);
+    check('21 Clear: count and toast updated', $(tab, 'slInfo').textContent === 'Saved lists: 0 albums, 0 shows, 0 playlists (≈ 0 KB)' && lastToast(tab) === 'Saved lists cleared.', [$(tab, 'slInfo').textContent, tab.toasts()]);   // #53
     finish(tab);
   });
 });

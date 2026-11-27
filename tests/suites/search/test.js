@@ -106,7 +106,9 @@ tests.push(function () {
     check('1 result-type chips hidden outside search', $(tab, 'schips').hidden === true);
     click(tab, d(tab).querySelector('.filters .chip[data-filter="search"]'));
     check('1 chips shown in search', $(tab, 'schips').hidden === false);
-    check('1 box says Search all of Spotify', box(tab).placeholder === 'Search all of Spotify' && box(tab).getAttribute('aria-label') === 'Search all of Spotify');
+    // #52: the box also takes a pasted Spotify link
+    check('1 box says Search Spotify or paste a link', box(tab).placeholder === 'Search Spotify or paste a link' && box(tab).getAttribute('aria-label') === 'Search all of Spotify or paste a Spotify link',
+      { ph: box(tab).placeholder, label: box(tab).getAttribute('aria-label') });
     check('1 filter remembered', stored(store, 'lib-filter') === 'search', store.getItem('lib-filter'));
     check('1 box focused', d(tab).activeElement === box(tab));
     check('1 All chip pressed by default', chip(tab, 'all').getAttribute('aria-pressed') === 'true' && chip(tab, 'track').getAttribute('aria-pressed') === 'false');
@@ -118,7 +120,7 @@ tests.push(function () {
       check('1 one letter keeps the hint', /Type a song/.test(mainText(tab)));
       check('1 one letter is not a recent search', store.getItem('lib-recent-searches') === null);
       click(tab, d(tab).querySelector('.filters .chip[data-filter="home"]'));
-      check('1 back to Filter by name', box(tab).placeholder === 'Filter by name' && $(tab, 'schips').hidden === true);
+      check('1 back to Filter by name', box(tab).placeholder === 'Filter by name or paste a link' && $(tab, 'schips').hidden === true);   // #52
     });
   });
 });
@@ -648,7 +650,7 @@ tests.push(function () {
       return H.wait(50);
     }).then(function () {
       var f = $(tab, 'dfoot');
-      check('16 error shown', /Couldn’t search for this album’s songs \(Server boom\)\./.test(f.textContent), f.textContent);
+      check('16 error shown', /Couldn’t search for this album’s songs\. Spotify isn’t answering right now\./.test(f.textContent), f.textContent);   // #41: plain words
       check('16 Try again offered', dfootBtn() && dfootBtn().textContent === 'Try again');
       tab.calls.length = 0;
       click(tab, dfootBtn());

@@ -1,5 +1,5 @@
 'use strict';
-// Swipe the Now Playing bar (v2.49) tests: jsdom, mocked fetch, shared localStorage.
+// Swipe the Now Playing bar (v2.57) tests: jsdom, mocked fetch, shared localStorage.
 // Left = Next, right = Previous (the buttons' own command), up = open Now Playing (no request of its own).
 // Run: node tests/run.js bar-swipe  (or, after npm ci in tests/: node test.js [path to index.html])
 if (process.argv[2]) process.env.SRC = process.argv[2];
@@ -364,7 +364,7 @@ tests.push(function () {
       var html = fs.readFileSync(process.env.SRC || path.resolve(__dirname, '..', '..', '..', 'index.html'), 'utf8');
       check('16 row handles its own pans', /\.prow \{ touch-action: none; \}/.test(html));
       check('16 reduced-motion rule for the slide', /prefers-reduced-motion: reduce\) \{ \.pcover\.pslide-l, \.pcover\.pslide-r \{ animation: none; \}/.test(html));
-      check('16 version', /^v2\.49 /.test(t.VERSION), t.VERSION);
+      check('16 version', /^v2\.57 /.test(t.VERSION), t.VERSION);
       check('16 cover/title button stays the tap target', /Open Now Playing$/.test($(tab, 'pInfo').getAttribute('aria-label')), $(tab, 'pInfo').getAttribute('aria-label'));
     });
   });
@@ -382,7 +382,7 @@ tests.push(function () {
   });
 });
 
-// 18. The click guard never swallows a real tap: it lasts only until the next touch or 250 ms (v2.49 review fix).
+// 18. The click guard never swallows a real tap: it lasts only until the next touch or 250 ms (v2.57 review fix).
 tests.push(function () {
   return setup().then(function (tab) {
     var t = tab.t();

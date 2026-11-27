@@ -521,7 +521,8 @@ tests.push(function () {
       click(tab, b);
       return H.wait(150).then(function () {
         check('11 move refused: list unchanged', rowNames(tab).join(',') === before && tab.env.pls.p1.ids.join() === 's0,s1,s2,s0,s3,s4', rowNames(tab));
-        check('11 move refused: toast names the song and the reason', lastToast(tab) === 'Couldn’t move “Alpha” (Server error).', tab.toasts());
+        // #41: a 5xx is said in plain words
+        check('11 move refused: toast names the song and the reason', lastToast(tab) === 'Couldn’t move “Alpha”. Spotify isn’t answering right now.', tab.toasts());
         check('11 move refused: unlocked, focus back on the button, no snapshot kept', !t.plEdit.busy && !editBtn(tab, 0, 'down').disabled && d(tab).activeElement === b && t.editSnap(t.state.detail) === null);
       });
     }).then(function () {
@@ -557,7 +558,7 @@ tests.push(function () {
       tab.env.writes.push({ status: 500, json: { error: { status: 500, message: 'Server error' } } });
       click(tab, plRow(tab, 'p4'));
       return H.wait(150).then(function () {
-        check('11 add refused: toast, sheet stays open and usable', lastToast(tab) === 'Couldn’t add to “Long mix” (Server error).' && plOpen(tab) && !plRow(tab, 'p4').disabled, tab.toasts());
+        check('11 add refused: toast, sheet stays open and usable', lastToast(tab) === 'Couldn’t add to “Long mix”. Spotify isn’t answering right now.' && plOpen(tab) && !plRow(tab, 'p4').disabled, tab.toasts());   // #41
         check('11 add refused: count unchanged', cachePl(s, 'p4').count === count0 && tab.env.pls.p4.ids.length === 60);
         check('11 every refusal logged no snapshot and left Spotify\'s copy alone', tab.env.pls.p1.snap === 'v0' && tab.env.pls.p4.snap === 'v0');
       });
