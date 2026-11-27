@@ -1245,9 +1245,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // (Latest opening on its own, a saved podcast's 12-hour check, the Now Playing playlist name) waits; taps still go.
   // The per-group cool-off (429s) is separate and unchanged.
   var catMem = {};
+  // Stored and in-memory counts merged (the larger per minute): another copy's requests come from storage, and
+  // this copy's own still count when storage refused the last write (full or blocked).
   function catBuckets() {
-    var b = get(K.catMeter);
-    return b && typeof b === 'object' && !Array.isArray(b) ? b : catMem;
+    var b = get(K.catMeter), out = {};
+    if (!b || typeof b !== 'object' || Array.isArray(b)) b = {};
+    Object.keys(b).forEach(function (k) { out[k] = Math.max(0, +b[k] || 0); });
+    Object.keys(catMem).forEach(function (k) { out[k] = Math.max(out[k] || 0, +catMem[k] || 0); });
+    return out;
   }
   function catNote(m) {
     var b = catBuckets();
@@ -2471,8 +2476,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var L = state.latest, sc = get(K.latest);
     if (sc && Array.isArray(sc.items) && typeof sc.at === 'number' && (!L.cache || sc.at > L.cache.at) && sc.at < Date.now() + 60000) { L.cache = sc; setTimeout(rerenderLatest, 0); }
   }
-  // Opening Latest (v2.37): asks the podcasts the library's episode counts say have new episodes (see latestPlan),
-  // and, when the list is over 12 hours old, the ones not asked for 3 days. Never while catalog is paused, never
+  // Opening Latest (v2.37): only when the list is over 12 hours old (as v2.14), and then only the podcasts the
+  // library's episode counts say have new episodes, plus the ones not asked for 3 days (see latestPlan). Never while catalog is paused, never
   // before this visit's library answer (the counts) arrives, at most once per 5 minutes, and never past the
   // automatic part of the hour's catalog budget (catRoom).
   function maybeLoadLatest() {
@@ -2568,9 +2573,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     return { due: ss(more.concat(fresh, unknown)), rose: ss(more), slow: ss(slow), rest: ss(rest), more: more.length };
   }
   // Nothing to ask: the counts say nothing changed, so the list is up to date as of when they were read.
+  // A podcast whose request failed in the last 12 hours still counts as failed (it's asked again after that).
   function latestUpToDate(at) {
-    var L = state.latest, old = L.cache || { items: [], newest: {}, checks: {} };
-    L.cache = Object.assign({}, old, { at: Math.min(Date.now(), Math.max(old.at || 0, at || 0)), failed: 0, quiet: true, left: 0 });
+    var L = state.latest, old = L.cache || { items: [], newest: {}, checks: {} }, chk = old.checks || {}, now = Date.now(), failed = 0;
+    ((state.data && state.data.shows) || []).forEach(function (s) {
+      var r = s && Array.isArray(chk[s.id]) ? chk[s.id] : null;
+      if (r && r[1] === null && typeof s.total === 'number' && now - r[0] < LATEST_MS) failed++;
+    });
+    L.cache = Object.assign({}, old, { at: Math.min(now, Math.max(old.at || 0, at || 0)), failed: failed, quiet: !failed, left: 0 });
     set(K.latest, L.cache);
     setTimeout(rerenderLatest, 0);
   }
@@ -2582,15 +2592,16 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (L.loading || !all || !all.length || document.hidden || coolLeft('catalog')) return;
     var plan = latestPlan(all);
     var stale = !latestFresh(L.cache);
-    // A list under 12 hours old opening on its own asks only podcasts whose count went up; a Refresh, or a list
-    // over 12 hours old, also asks the ones never asked (or with no count) and the ones not asked for 3 days.
-    var ask = manual || stale ? plan.due.concat(plan.slow) : plan.rose;
+    // A list under 12 hours old opening on its own asks nothing (as v2.14); a Refresh, or a list over 12 hours old,
+    // asks only podcasts whose count went up, never asked (or with no count), or not asked for 3 days.
+    if (!manual && !stale) return;
+    var ask = plan.due.concat(plan.slow);
     if (!state.libAt && (manual || stale)) {
       // This visit hasn't read the counts (library paused or failed): the podcasts asked longest ago fill up.
       ask = ask.concat(plan.rest.filter(function (s) { return ask.indexOf(s) === -1; }));
     }
     if (!ask.length) {
-      if (manual || stale) { L.triedAt = Date.now(); L.held = false; latestUpToDate(manual ? Date.now() : state.libAt); }
+      if (manual || stale) { L.triedAt = Date.now(); L.held = false; L.error = ''; latestUpToDate(manual ? Date.now() : state.libAt); }
       return;
     }
     var room = catRoom(manual);
@@ -2621,7 +2632,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       failed += shows.length - next;   // not asked (paused or hidden): they keep what the cache had
       if (!Object.keys(done).length) {
         if (!stopped) L.error = 'Couldn’t load the latest episodes.';
-        if (L.cache && Object.keys(bad).length) { L.cache = Object.assign({}, L.cache, { checks: checksNow() }); set(K.latest, L.cache); }
+        if (L.cache && Object.keys(bad).length) { L.cache = Object.assign({}, L.cache, { checks: checksNow(), quiet: false }); set(K.latest, L.cache); }
       } else {
         // Episodes of the shows not asked this time (or that failed) stay as the cache had them.
         var old = L.cache && Array.isArray(L.cache.items) ? L.cache.items : [];
@@ -2681,15 +2692,19 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // as of the last time you opened that podcast ('lib-show-seen', saved podcasts only). When the count is higher,
   // its row and cards say "2 new" until you open it. The first time the page sees a podcast, its count is the
   // starting point (no marker). Not a stat, and nothing is asked for it.
-  var seenMem = null, seenRaw = null, seenVal = {};
+  var seenMem = null, seenRaw = null, seenVal = {}, seenUnsaved = false;
   function readSeen() {
+    if (seenUnsaved && seenMem) return seenMem;   // storage refused the last write: this copy's answer wins
     var raw = null;
     try { raw = localStorage.getItem(K.showSeen); } catch (e) { return seenMem || {}; }
     if (raw == null) return seenMem || {};
     if (raw !== seenRaw) { var v = null; try { v = JSON.parse(raw); } catch (e) {} seenRaw = raw; seenVal = v && typeof v === 'object' && !Array.isArray(v) ? v : {}; }
     return seenVal;
   }
-  function writeSeen(v) { seenMem = v; set(K.showSeen, v); }
+  function writeSeen(v) {
+    seenMem = v;
+    try { localStorage.setItem(K.showSeen, JSON.stringify(v)); seenUnsaved = false; } catch (e) { seenUnsaved = true; }
+  }
   var libTotMemo = { list: null, map: {} };
   function libShowTotals() {
     var list = state.data && state.data.shows;
@@ -5712,7 +5727,6 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         if (kind === 'show') (r.json.items || []).forEach(function (x) { keepNotes(x); });   // v2.18: notes stay in memory, not in the saved copy
         var raws = (r.json.items || []).filter(function (x) { return x && x.id && x.uri; }).map(kind === 'album' ? slTrack : slEpisode);
         if (first) d.checkedAt = Date.now();
-        if (first && kind === 'show') { var ln = libShowTotals()[d.item.id]; d.libN = typeof ln === 'number' ? ln : null; }   // v2.37
         if (kind === 'album' && first) d.raw = raws;   // the first page (or Reload from Spotify) starts the list over
         else if (kind === 'show' && first && d.raw.length) {
           // Page 1 over a saved copy: Spotify's newest episodes first, then the saved ones it didn't include.
@@ -6247,7 +6261,6 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function saveShowList(d) {
     if (!d.raw.length) return;
     var c = { at: d.checkedAt || Date.now(), total: typeof d.total === 'number' ? d.total : null, items: d.raw.slice(0, SL_SHOW_EPS) };
-    if (typeof d.libN === 'number') c.lib = d.libN;   // v2.37: the library's episode count when page 1 was asked
     if (d.seed) c.seed = true;
     if (slPut(SL_SHOW, d.item.id, c, SL_SHOW_MAX)) d.savedAt = Date.now();
   }
@@ -6263,11 +6276,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var ids = {};
     raws.forEach(function (x) { ids[x.id] = true; });
     c.items = raws.concat(c.items.filter(function (x) { return !ids[x.id]; })).slice(0, SL_SHOW_EPS);
-    if (overlap) {
-      c.at = Date.now();
-      var lt = libShowTotals()[showId];   // v2.37: nothing missing in between, so the copy is as new as this count
-      if (typeof lt === 'number') c.lib = lt;
-    }
+    if (overlap) c.at = Date.now();
     slPut(SL_SHOW, showId, c, SL_SHOW_MAX);
   }
   // A podcast with no saved copy that Latest episodes knows: those episodes become its copy (no request).
@@ -6326,12 +6335,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     d.total = typeof c.total === 'number' ? c.total : null;
     d.next = d.seed ? showPage(d.item.id, 0) : (d.total == null || d.raw.length < d.total) ? showPage(d.item.id, d.raw.length) : null;
     remapDetail(d);
-    // v2.37: the library's episode count went up since this copy was checked: check now. Otherwise the 12-hour
-    // check, unless the hour's catalog budget is nearly used (Check for new episodes still works).
-    var lt = libShowTotals()[d.item.id], base = typeof c.lib === 'number' ? c.lib : c.total;
-    d.libN = typeof c.lib === 'number' ? c.lib : null;
-    var rose = typeof lt === 'number' && typeof base === 'number' && lt > base;
-    if ((rose || (!showFresh(c.at) && !catHeld())) && !coolLeft('catalog')) checkNewEpisodes(d, true);   // one request: page 1
+    // v2.37: the 12-hour check waits while the hour's catalog budget is nearly used (Check for new episodes still works).
+    if (!showFresh(c.at) && !coolLeft('catalog') && !catHeld()) checkNewEpisodes(d, true);   // one request: page 1
   }
   function checkNewEpisodes(d, auto) {
     if (!d || d.loading || state.detail !== d) return;
