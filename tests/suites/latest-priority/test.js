@@ -171,7 +171,7 @@ tests.push(function () {
       check('3 Priority stored', JSON.stringify(stored(store)) === '{"s2":"p"}', stored(store));
       check('3 Priority selected', pressed(tab) === 'p', pressed(tab));
       check('3 same button keeps focus', priBtn(tab, 'p') === b && d(tab).activeElement === b);
-      check('3 toast', lastToast(tab) === '“Show 2” goes to the top of Latest.', tab.toasts());
+      check('3 toast says it applies now and how to get missing episodes', lastToast(tab) === '“Show 2” now comes first in Latest. If its newest episodes aren’t there yet, tap Refresh in Latest.', tab.toasts());
       click(tab, priBtn(tab, 'p'));
       check('3 tapping the selected one again does nothing', tab.toasts().length === 1, tab.toasts());
       click(tab, priBtn(tab, 'h'));
@@ -275,7 +275,8 @@ tests.push(function () {
   });
 });
 
-// 8. Without settings the reload asks the usual 12 (no change); with 13 Priority shows still only 12.
+// 8. Without settings the reload asks the usual 12 (no change). Priority takes at most 8 of the 12 while 4 or more
+//    Normal shows exist; with fewer Normal shows they're all asked and Priority fills the rest.
 tests.push(function () {
   var many = {}; for (var k = 1; k <= 13; k++) many['s' + k] = 'p';
   var store = store0({ latest: null });
@@ -283,7 +284,24 @@ tests.push(function () {
     check('8 no settings: 12 requests as before', latestReqs(tab.boot).length === 12, latestReqs(tab.boot).map(showIdOf));
     var t = tab.t();
     store.setItem(KEY, JSON.stringify(many));
-    check('8 13 Priority shows: still 12 asked', t.latestShows(t.state.data.shows).length === 12);
+    var set = t.latestShows(t.state.data.shows).map(function (s) { return s.id; });
+    check('8 13 Priority, 1 Normal: 11 Priority + the Normal one = 12', set.length === 12 && set.indexOf('s14') !== -1 &&
+      set.filter(function (id) { return many[id]; }).length === 11, set);
+    var three = {}; for (var j = 1; j <= 3; j++) three['s' + j] = 'p';
+    store.setItem(KEY, JSON.stringify(three));
+    set = t.latestShows(t.state.data.shows).map(function (s) { return s.id; });
+    check('8 3 Priority: all 3 first, then 9 Normal', set.length === 12 && set.slice(0, 3).sort().join() === 's1,s2,s3' && set.slice(3).every(function (id) { return !three[id]; }), set);
+  });
+});
+tests.push(function () {
+  var many = {}; for (var k = 1; k <= 13; k++) many['s' + k] = 'p';
+  var store = store0({ latest: null, pri: many });
+  return setup(store, { shows: shows(20) }).then(function (tab) {
+    var lr = latestReqs(tab.boot).map(showIdOf);
+    check('8b 13 Priority of 20: 12 requests', lr.length === 12, lr);
+    check('8b Priority capped at 8: s1–s8', lr.filter(function (id) { return many[id]; }).sort().join() === 's1,s2,s3,s4,s5,s6,s7,s8', lr);
+    check('8b 4 slots go to Normal shows: s14–s17', lr.filter(function (id) { return !many[id]; }).sort().join() === 's14,s15,s16,s17', lr);
+    check('8b never more than 12 catalog requests', catalog(tab.boot).length === 12, catalog(tab.boot).length);
   });
 });
 
@@ -326,31 +344,66 @@ tests.push(function () {
   });
 });
 
-// 11. Cap: 100 settings. Settings of podcasts no longer saved make room; otherwise a toast and nothing changes.
+// 11. Cap: 100 settings, with real-length (22-character) show ids. After this visit's library load, settings of
+//     podcasts no longer followed make room, otherwise a toast refuses; before it, the setting made longest ago goes.
+var B62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+function rid(n, tag) { var x = 'X' + (tag || 'a'); var v = n * 7919 + 13; while (x.length < 22) { x += B62[v % 62]; v = Math.floor(v / 62) * 31 + 17 + x.length; } return x; }
 tests.push(function () {
-  var gone = {}; for (var i = 0; i < 100; i++) gone['x' + i] = i % 2 ? 'p' : 'h';
+  var gone = {}; for (var i = 0; i < 100; i++) gone[rid(i, 'g')] = i % 2 ? 'p' : 'h';
   var store = store0({ filter: 'home', pri: gone });
   return setup(store).then(function (tab) {
     var t = tab.t();
+    check('11 ids are 22 characters and distinct', Object.keys(gone).length === 100 && Object.keys(gone).every(function (id) { return id.length === 22; }));
     check('11 LATEST_PRI_MAX is 100', t.LATEST_PRI_MAX === 100);
-    check('11 setting a 101st drops ones for podcasts no longer saved', t.setLatestPri('s1', 'p') === true && JSON.stringify(stored(store)) === '{"s1":"p"}', stored(store));
-    var big = shows(101);
+    check('11 after the library load: a 101st drops ones for podcasts no longer followed', t.setLatestPri('s1', 'p') === true && JSON.stringify(stored(store)) === '{"s1":"p"}', stored(store));
+    var big = []; for (var k = 0; k < 101; k++) big.push({ id: rid(k, 'f'), name: 'Pod ' + k, uri: 'spotify:show:' + rid(k, 'f'), kind: 'show' });
     var full = {}; big.slice(0, 100).forEach(function (s) { full[s.id] = 'h'; });
     store.setItem(KEY, JSON.stringify(full));
-    t.state.data.shows = big.map(function (s) { return { id: s.id, name: s.name, uri: s.uri, kind: 'show' }; });
+    var bytes = store.getItem(KEY).length;
+    check('11 100 settings stay under 3 KB', bytes < 3072, bytes);
+    t.state.data.shows = big;
     tab.w.__toasts = [];
-    t.openDetail(showItem('s101'));
+    t.openDetail({ kind: 'show', id: big[100].id, uri: big[100].uri, name: 'Pod 100', url: 'https://open.spotify.com/show/' + big[100].id, img: '', sub: 'Podcast' });
     return settle(80).then(function () {
       click(tab, priBtn(tab, 'p'));
-      check('11 all 100 saved: refused with a toast', lastToast(tab) === 'You can set up to 100 podcasts. Set one back to Normal first.', tab.toasts());
-      check('11 refused: nothing stored, Normal still selected', !stored(store).s101 && Object.keys(stored(store)).length === 100 && pressed(tab) === 'n', pressed(tab));
-      check('11 changing an existing one is allowed at the cap', t.setLatestPri('s5', 'p') === true && stored(store).s5 === 'p');
-      check('11 Normal is allowed at the cap', t.setLatestPri('s6', 'n') === true && !('s6' in stored(store)));
-      var over = {}; for (var j = 0; j < 130; j++) over['y' + j] = 'p';
+      check('11 all 100 followed: refused with a toast', lastToast(tab) === 'You can set up to 100 podcasts. Set one back to Normal first.', tab.toasts());
+      check('11 refused: nothing stored, Normal still selected', !stored(store)[big[100].id] && Object.keys(stored(store)).length === 100 && pressed(tab) === 'n', pressed(tab));
+      check('11 changing an existing one is allowed at the cap', t.setLatestPri(big[5].id, 'p') === true && stored(store)[big[5].id] === 'p');
+      check('11 a changed setting counts as set last', Object.keys(stored(store))[99] === big[5].id, Object.keys(stored(store)).slice(-2));
+      check('11 Normal is allowed at the cap', t.setLatestPri(big[6].id, 'n') === true && !(big[6].id in stored(store)));
+      var over = {}; for (var j = 0; j < 130; j++) over[rid(j, 'o')] = 'p';
       store.setItem(KEY, JSON.stringify(over));
       check('11 reading caps at 100', Object.keys(t.readLatestPri()).length === 100);
-      var len = store.getItem(KEY).length;
-      check('11 100 settings stay small (under 2.5 KB)', JSON.stringify(full).length < 2500, JSON.stringify(full).length + ' / ' + len);
+    });
+  });
+});
+// 11b. Before this visit's library load has finished, the old saved list isn't trusted: at the cap the setting made
+//      longest ago is cleared instead (with a note in the toast), and nothing else is dropped.
+tests.push(function () {
+  var full = {}; for (var i = 0; i < 100; i++) full[rid(i, 'g')] = 'h';
+  var store = store0({ filter: 'home', pri: full });
+  store.setItem('lib-cache', JSON.stringify({ at: Date.now() - HOUR, me: { id: 'me1', name: 'R' }, playlists: [], albums: [], artists: [], likedTotal: 0,
+    shows: [{ kind: 'show', id: 's1', name: 'Show 1', uri: 'spotify:show:s1', url: 'https://open.spotify.com/show/s1', img: '', sub: 'Podcast' }], episodesTotal: 0 }));
+  var tab = H.makeTab(store, function (method, path) {
+    if (path === '/me/player') return { status: 204 };
+    if (path === '/me/shows') return { status: 200, json: { items: SHOWS.map(function (s) { return { show: s }; }), next: null, total: SHOWS.length }, delay: 2500 };
+  });
+  var first = Object.keys(full)[0], second = Object.keys(full)[1];
+  return H.wait(500).then(function () {
+    var t = tab.t();
+    check('11b library still loading (old list in use)', t.state.data && t.state.data.shows && t.state.data.shows.length === 1, t.state.data && t.state.data.shows && t.state.data.shows.length);
+    check('11b at the cap before the load: stored, oldest cleared', t.setLatestPri('s2', 'p') === 'cleared', stored(store) && Object.keys(stored(store)).length);
+    var st = stored(store);
+    check('11b only the oldest went', Object.keys(st).length === 100 && !(first in st) && st[second] === 'h' && st.s2 === 'p', Object.keys(st).slice(0, 2));
+    t.openDetail({ kind: 'show', id: 's3', uri: 'spotify:show:s3', name: 'Show 3', url: 'https://open.spotify.com/show/s3', img: '', sub: 'Podcast' });
+    return H.wait(100).then(function () {
+      tab.w.__toasts = [];
+      click(tab, priBtn(tab, 'h'));
+      check('11b toast says the oldest was cleared', /^“Show 3” is hidden from Latest and Home\. The setting made longest ago was cleared to make room\.$/.test(lastToast(tab)), tab.toasts());
+      return H.wait(3200);
+    }).then(function () {
+      check('11b after the load: unfollowed settings make room', t.setLatestPri('s4', 'p') === true && Object.keys(stored(store)).sort().join() === 's2,s3,s4', Object.keys(stored(store)).length);
+      tab.w.close();
     });
   });
 });
@@ -453,6 +506,29 @@ tests.push(function () {
     check('17 second copy asked no Latest', latestReqs(tab2.boot).length === 0);
     close(tab2);
     close(tab1);
+  });
+});
+
+// 18. A reload drops Hidden shows' rows before keeping 50 (each keeps its newest row), so the visible list stays at 50.
+tests.push(function () {
+  var old = [];
+  ['s13', 's14'].forEach(function (sid) { for (var j = 0; j < 5; j++) old.push(lrow('h' + sid + '-' + j, sid, j)); });
+  var store = store0({ pri: { s13: 'h', s14: 'h' }, latest: { at: Date.now() - 20 * HOUR, items: old, failed: 0, newest: { s13: dayIso(0), s14: dayIso(0) }, asked: 2 } });
+  return setup(store).then(function (tab) {
+    var lr = latestReqs(tab.boot).map(showIdOf);
+    check('18 reload asked 12 shows, no Hidden ones', lr.length === 12 && lr.indexOf('s13') === -1 && lr.indexOf('s14') === -1, lr);
+    var c = JSON.parse(store.getItem('lib-latest'));
+    var vis = c.items.filter(function (x) { return x.showId !== 's13' && x.showId !== 's14'; });
+    var hid = c.items.filter(function (x) { return x.showId === 's13' || x.showId === 's14'; }).map(function (x) { return x.id; });
+    check('18 cache keeps 50 visible rows', vis.length === 50, vis.length);
+    check('18 Hidden shows keep only their newest row', hid.sort().join() === 'hs13-0,hs14-0', hid);
+    check('18 cache still newest first', c.items.every(function (x, i) { return !i || c.items[i - 1].date >= x.date; }));
+    check('18 Latest shows 50 rows', ids(tab).length === 50 && !ids(tab).some(function (id) { return id[0] === 'h'; }), ids(tab).length);
+    var h = tab.t().heldShowEpisode('s13');
+    check('18 Hidden show’s pin play still finds its newest episode', h && h.id === 'hs13-0', h);
+    store.removeItem(KEY);
+    tab.t().renderList();
+    check('18 un-hiding shows the kept rows at once', ids(tab).indexOf('hs13-0') !== -1 && ids(tab).length === 52, ids(tab).length);
   });
 });
 
