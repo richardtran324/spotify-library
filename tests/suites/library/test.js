@@ -217,9 +217,17 @@ tests.push(function () {
       tab.env.fail = { '/me/tracks': 500 };
       return t.loadData();
     }).then(function (data2) {
-      group('3 a failed Liked Songs total is null and leaves no row');
-      check('3 a failed Liked Songs total is null, not an error', data2.likedTotal === null && data2.playlists.length === 5, data2.likedTotal);
+      // #26 (audit/keep-account-on-failure): a failed Liked Songs total on a reload keeps the last known total.
+      group('3 a failed Liked Songs total keeps the last one; with none known it is null and leaves no row');
+      check('3 a failed Liked Songs total on a reload keeps the last total', data2.likedTotal === 120 && data2.playlists.length === 5, data2.likedTotal);
       t.state.data = data2;
+      t.setFilter('playlists');
+      check('3 Liked Songs row stays after a failed total', mainNames(tab).indexOf('Liked Songs') !== -1, mainNames(tab));
+      t.state.data.likedTotal = null;   // no total known yet
+      return t.loadData();
+    }).then(function (data3) {
+      check('3 a failed Liked Songs total with none known is null, not an error', data3.likedTotal === null && data3.playlists.length === 5, data3.likedTotal);
+      t.state.data = data3;
       t.setFilter('playlists');
       check('3 no Liked Songs row without a total', mainNames(tab).indexOf('Liked Songs') === -1, mainNames(tab));
       t.state.data.artists = [];
@@ -443,7 +451,7 @@ tests.push(function () {
       check('12 no saved-state check for liked songs', reqs(tab.calls, 'GET', '/me/library/contains').length === 0, tab.calls);
       var labels = qa(tab, '.sortbar[data-view="d-liked"] button.chip').map(function (b) { return b.textContent; });
       group('12 sorting the loaded songs: chips, A–Z, partial note, stored');
-      check('12 song sort options', labels.join() === 'Recently liked,Title A–Z,Artist A–Z', labels);
+      check('12 song sort options', labels.join() === 'Recently liked,Title A–Z,Artist A–Z,Not played lately,Duration,Album,Release date', labels);   // #46: Not played lately; #50: Duration, Album, Release date
       click(tab, chip(tab, 'd-liked', 'Title A–Z'));
       check('12 A–Z sorts the loaded songs', detailNames(tab)[0] === 'Track 71' && detailNames(tab)[49] === 'Track 120', detailNames(tab).slice(0, 2));
       var note = d(tab).querySelector('#dsort .snote');

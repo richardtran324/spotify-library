@@ -209,7 +209,8 @@ tests.push(function () {
     var s12 = stored(store1, 'lib-cache-show:s12'), s11 = stored(store1, 'lib-cache-show:s11');
     check('1 saved podcast copy gets the new episodes on top', s12 && JSON.stringify(s12.items.map(function (x) { return x.id; })) === JSON.stringify(['e12-0', 'e12-1', 'e12-2', 'e12-3', 'e12-4', 'old12x']), s12 && s12.items.map(function (x) { return x.id; }));
     check('1 overlapping copy counts as checked now', s12.at >= t0, s12.at - t0);
-    check('1 copy without overlap keeps its age', s11 && s11.items[0].id === 'e11-0' && s11.items[5].id === 'old11x' && s11.at === at11, s11 && { at: s11.at, ids: s11.items.map(function (x) { return x.id; }) });
+    // #39 (audit/list-paging-fixes): no overlap would leave a gap under the new episodes, so that copy is left as it was.
+    check('1 copy without overlap stays as it was and keeps its age', s11 && JSON.stringify(s11.items.map(function (x) { return x.id; })) === '["old11x"]' && s11.at === at11, s11 && { at: s11.at, ids: s11.items.map(function (x) { return x.id; }) });
     check('1 no copies made for other shows; no notes in them', store1.getItem('lib-cache-show:s1') === null && store1.getItem('lib-cache-show:s12').indexOf('Notes for') === -1);
   });
 });
@@ -257,7 +258,10 @@ tests.push(function () {
       var lr = latestReqs(tab.calls);
       check('3 after 5 minutes: 12 requests', lr.length === 12, lr.map(showIdOf));
       check('3 most recently updated shows first, ties in saved order', showIdOf(lr[0]) === 's12' && showIdOf(lr[1]) === 's13' && showIdOf(lr[2]) === 's11', lr.map(showIdOf));
-      check('3 the oldest show is left out', lr.map(showIdOf).indexOf('s1') === -1, lr.map(showIdOf));
+      // #30 (audit/latest-episodes-fixes): with more than 12 saved shows and one never asked (s14), the last 6 of the 12
+      // places go to the shows asked longest ago: s14 first, then the rest (all asked at once in 1) in saved order.
+      check('3 six newest-updated shows, then the never-asked show and the longest-asked in saved order',
+        JSON.stringify(lr.map(showIdOf)) === JSON.stringify(['s12', 's13', 's11', 's10', 's9', 's8', 's14', 's1', 's2', 's3', 's4', 's5']), lr.map(showIdOf));
       check('3 cache newer, note back to Updated just now', t.state.latest.cache.at > before && /Updated just now/.test(noteText(tab)) && !/Updating/.test(noteText(tab)), noteText(tab));
       close(tab);
     });

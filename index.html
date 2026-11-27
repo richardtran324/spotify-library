@@ -119,8 +119,10 @@ h1 { font-size: 1.5rem; margin: 0; letter-spacing: -0.01em; }
 button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .iconbtn {
   font: inherit; font-size: 0.85rem; background: none; border: 1px solid var(--line);
-  color: var(--muted); border-radius: 8px; padding: 6px 10px; cursor: pointer;
+  color: var(--muted); border-radius: 8px; padding: 6px 10px; cursor: pointer; position: relative;
 }
+/* audit: A11Y-8: a 44px-tall hit area without a taller box (up and down only, so neighbours 8px apart don't overlap) */
+.iconbtn::after { content: ''; position: absolute; inset: -6px 0; }
 .permlist { margin: 6px 0 10px; padding-left: 20px; font-weight: 600; }
 /* v2.26: editing your playlists */
 .editbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -143,7 +145,7 @@ a.item {
 a.item:active { opacity: 0.6; }
 .acts { display: flex; gap: 2px; flex: none; }
 .act {
-  width: 40px; height: 40px; flex: none; padding: 0; border: 0; border-radius: 50%;
+  width: 44px; height: 44px; flex: none; padding: 0; border: 0; border-radius: 50%;   /* audit: A11Y-8: 44x44 touch target (was 40) */
   display: inline-grid; place-items: center; background: none; color: var(--muted); cursor: pointer;
 }
 .act svg { width: 22px; height: 22px; display: block; }
@@ -151,6 +153,10 @@ a.item:active { opacity: 0.6; }
 @media (hover: hover) { .act:hover { background: var(--chip); } }
 .act[aria-pressed="true"] { color: var(--accent); }
 .act[disabled] { opacity: 0.5; cursor: default; }
+/* v2.35: controls Spotify doesn't allow right now (still focusable, so a tap or VoiceOver can give the reason) */
+.act[aria-disabled="true"], .slider[aria-disabled="true"] { opacity: 0.5; cursor: default; }
+.slider[aria-disabled="true"] .sfill, .slider[aria-disabled="true"] .sthumb { background: var(--muted); }
+.row.nope a.item { opacity: 0.55; }   /* v2.35: a song Spotify says can't play */
 .cover {
   width: 56px; height: 56px; border-radius: 6px; flex: none;
   background: var(--chip); object-fit: cover;
@@ -208,6 +214,10 @@ ul.list.compact .cover.num { width: 28px; }
 .dbtns { display: flex; gap: 10px; align-items: center; }
 .dbtns .btn { flex: 1; min-width: 0; }
 .btn.cont { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }   /* v2.23: Continue · <song> */
+.introrow { display: flex; align-items: center; gap: 10px; }   /* v2.33: Skip intro */
+.introlab { font-size: 0.95rem; white-space: nowrap; }
+.introsel.field { width: auto; flex: 1; min-width: 0; min-height: 44px; }
+.introhint { font-size: 0.85rem; color: var(--muted); margin: 6px 2px 0; }
 .dfoot { padding: 12px 0; display: flex; flex-direction: column; gap: 10px; }
 /* v2.16: Spotify's own player for playlists the page can't list (tall enough to scroll the songs at phone width) */
 .sembed, .sembed-box iframe { display: block; width: 100%; max-width: 100%; height: 480px; border: 0; border-radius: 12px; background: var(--chip); }
@@ -237,9 +247,10 @@ ul.list.compact .cover.num { width: 28px; }
 }
 /* Device sheet */
 .sheet { position: fixed; inset: 0; z-index: 20; display: flex; align-items: flex-end; justify-content: center; }
-.sheet-back { position: absolute; inset: 0; background: var(--scrim); }
+.sheet-back { position: absolute; inset: 0; background: var(--scrim); touch-action: none; }   /* audit: a pan on the scrim doesn't scroll the page behind */
 .sheet-panel {
   position: relative; width: 100%; max-width: 640px; max-height: 80vh; overflow: auto;
+  overscroll-behavior: contain;   /* audit: scrolling past the panel's end doesn't move the page behind */
   background: var(--surface); border-radius: 16px 16px 0 0;
   padding: 16px max(16px, env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
   display: flex; flex-direction: column; gap: 10px;
@@ -288,6 +299,8 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
   border: 1px solid currentColor; border-radius: 8px; padding: 6px 12px; min-height: 40px; cursor: pointer; flex: none;
 }
 .toast .toastbtn:focus-visible { outline-color: var(--bg); }
+/* audit: on screen for VoiceOver only (#announce, the live region that speaks toasts, cool-off and wake lines) */
+.vh { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .err { color: var(--warn); font-size: 0.9rem; }
 /* Podcasts */
 .cover.eps {
@@ -326,7 +339,7 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
 /* v2.24: Make a copy (playlists you don't own) */
 .dcopy { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 0 0 12px; overflow-wrap: anywhere; }
 .dcopy p { margin: 0; }
-.dcopy [tabindex="-1"]:focus, .dname[tabindex="-1"]:focus { outline: none; }
+.dcopy [tabindex="-1"]:focus, .dname[tabindex="-1"]:focus, #notesBody:focus { outline: none; }
 .copysteps { margin: 0; padding-left: 1.4em; display: flex; flex-direction: column; gap: 4px; }
 .copynote { font-size: 0.85rem; color: var(--muted); }
 .lnote .copyline { min-width: 0; overflow-wrap: anywhere; }
@@ -363,8 +376,10 @@ header.top.detail .schips { display: none; }
 .sortlbl { font-size: 0.8rem; font-weight: 600; color: var(--muted); margin-right: 2px; }
 .sortbar .chip { font-size: 0.85rem; padding: 5px 11px; min-height: 34px; }
 .snote { font-size: 0.8rem; color: var(--muted); margin: 6px 2px 0; }
+.sortdir { margin-left: 4px; }   /* v2.34: ↑ or ↓ on a chosen sort that turns around */
 /* Full Now Playing screen: slides up over everything except the sheets (device picker, Up next) and the toast */
 body.npopen { overflow: hidden; }
+body.sheetopen { overflow: hidden; }   /* audit: the page stays still behind an open sheet (own class, so NP's lock is never touched) */
 .npfull {
   position: fixed; inset: 0; z-index: 15; background: var(--bg); color: var(--fg);
   overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
@@ -462,6 +477,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
 }
 .clmark svg { width: 18px; height: 18px; display: block; }
+.clmark::after { content: ''; position: absolute; inset: -6px; }   /* audit: A11Y-8: 44px hit area, same 32px circle */
 .clmark:active { opacity: 0.7; }
 .acover { flex: none; display: flex; }   /* artist view: holds the picture, which arrives a moment later */
 .cover.round.dcover { border-radius: 50%; }
@@ -484,7 +500,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       </span>
     </div>
     <div class="status" id="status"><span class="dot" id="dot"></span><span class="stext"><span id="statusText">Checking for Spotify on your devices…</span> <button class="linkbtn" id="devBtn" type="button" hidden></button></span></div>
-    <div class="wake" id="wake" role="status" hidden><span class="dot pulse" id="wakeDot"></span><span class="stext" id="wakeText"></span><span class="wakebtns"><button class="linkbtn" id="wakeRetry" type="button" hidden>Try again</button><button class="linkbtn" id="wakeOpen" type="button" hidden>Open Spotify instead</button><button class="linkbtn" id="wakeCancel" type="button">Cancel</button></span></div>
+    <div class="wake" id="wake" hidden><span class="dot pulse" id="wakeDot"></span><span class="stext" id="wakeText"></span><span class="wakebtns"><button class="linkbtn" id="wakeRetry" type="button" hidden>Try again</button><button class="linkbtn" id="wakeOpen" type="button" hidden>Open Spotify instead</button><button class="linkbtn" id="wakeCancel" type="button">Cancel</button></span></div>
     <input class="search" id="search" type="search" placeholder="Filter by name" autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Filter by name">
     <div class="filters" role="group" aria-label="Show">
       <button class="chip" type="button" data-filter="home" aria-pressed="true">Home</button>
@@ -505,7 +521,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       <button class="schip" type="button" data-stype="show" aria-pressed="false">Podcasts</button>
       <button class="schip" type="button" data-stype="episode" aria-pressed="false">Episodes</button>
     </div>
-    <div class="coolbar" id="cool" hidden><span id="coolText" role="status"></span><span class="cleft" id="coolLeft" aria-hidden="true"></span></div>
+    <div class="coolbar" id="cool" hidden><span id="coolText"></span><span class="cleft" id="coolLeft" aria-hidden="true"></span></div>
   </header>
   <div class="banner" id="banner" role="status" hidden>
     <span>New features need one more sign-in</span>
@@ -545,6 +561,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     <img class="npf-cover" id="npCover" alt="">
     <div class="npf-row">
       <div class="meta"><div class="npf-title" id="npName"></div><div class="sub" id="npBy"></div><div class="idleline" id="npIdle" role="status" hidden></div><div class="idleline" id="npCool" hidden></div></div>
+      <button class="act" id="npBm" type="button" aria-label="Bookmark this spot"></button>
       <button class="act heart" id="npHeart" type="button" data-uri="" data-name="" data-kind="track" aria-pressed="false" aria-label="Like this song"></button>
     </div>
     <div class="slider" id="npSeek" role="slider" tabindex="0" aria-label="Position" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"><div class="strack"><div class="sfill"></div><div class="sthumb"></div></div></div>
@@ -560,6 +577,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       <button class="act" id="npBack15" type="button" aria-label="Back 15 seconds"></button>
       <button class="act" id="npFwd30" type="button" aria-label="Forward 30 seconds"></button>
     </div>
+    <div class="idleline" id="npAllow" hidden></div>
     <div class="npf-vol" id="npVolRow" hidden>
       <span id="npVolIcon"></span>
       <div class="slider" id="npVol" role="slider" tabindex="0" aria-label="Volume" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="strack"><div class="sfill"></div><div class="sthumb"></div></div></div>
@@ -599,7 +617,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   <div class="sheet-panel">
     <h2 id="notesTitle">Episode notes</h2>
     <div class="notes-meta" id="notesMeta"></div>
-    <div class="notes-body" id="notesBody"></div>
+    <div class="notes-body" id="notesBody" tabindex="-1"></div>
     <p class="notes-note" id="notesMarkNote">Only on this phone. The Spotify app won’t see it.</p>
     <div class="sheet-btns">
       <button class="btn secondary" id="notesMark" type="button">Mark as played</button>
@@ -671,7 +689,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   </div>
 </div>
 
-<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<div class="toast" id="toast" hidden></div>
+<div class="vh" id="announce" role="status" aria-live="polite"></div>
 
 <script>
 (function () {
@@ -727,7 +746,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     epHistory: 'lib-ep-history', // v2.11: [{uri, id, name, show:{id, name, images}, duration_ms, positionMs, played, at[, checkedAt]}], newest first
     epNotes: 'lib-ep-notes',     // v2.18: [{id, t, at[, cut]}], newest first: notes of episodes you opened or played (40, 4,000 characters each)
     epMarks: 'lib-ep-marks',     // v2.21: {uri: {played, at, pos}}: Mark as played / unplayed, this phone only (400, 180 days)
+    playLog: 'lib-play-log',     // v2.30: {e: [[playedAt ms, track id], …] newest first, t: {track id: [name, artists, album, cover]}}: songs from Recently played, kept past its last 50 (1,500 plays, 90 days; names cut at 80 characters with …; covers without the i.scdn.co prefix)
     ctxLast: 'lib-ctx-last',     // v2.23: {album or playlist URI | 'liked': {uri, id, name, positionMs, durMs, at}}: the last song heard in each list (40, 30 days)
+    bookmarks: 'lib-bookmarks',  // v2.32: [{uri, id, kind: 'track'|'episode', name, by, img, url, pos, at}], newest first: Bookmarks saved on Now Playing (200, 2 years); local only
+    introSkip: 'lib-intro-skip', // v2.33: {show URI: {s, at}}: Skip intro per podcast, s = 15|30|45|60|90|120 seconds, at = last set or used (100 shows, 365 days)
     // v2.13 rate limits. Shared by every copy of the page that shares this storage (Safari tabs on one origin).
     cool: 'lib-cooloff',         // v2.14: {group: {until, reason, strikes, quotaAt, retryAfter, last429:{at, reason, retryAfter, what}}}
     poller: 'lib-poller',        // {id, at, every}: the one visible copy that runs the player check
@@ -756,6 +778,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   var EP_PLAYED_TAIL_MS = 60000;             // within the last minute counts as played
   var MARKS_MAX = 400;                        // v2.21: played marks kept…
   var MARKS_MS = 180 * 24 * 60 * 60 * 1000;   // …for at most 180 days
+  var BM_MAX = 200;                           // v2.32: bookmarks kept…
+  var BM_MS = 730 * 24 * 60 * 60 * 1000;      // …for at most 2 years
+  var HOME_BM = 5;                            // v2.32: bookmarks shown on Home before "Show all"
   var MARK_MOVED_MS = 30000;                  // seen playing this far from where it was marked: played again, the mark goes
   // v2.14: no automatic resume-point checks (GET /episodes/{id}); Continue listening uses the page's own history.
   var LASTPLAY_MS = 6 * 60 * 60 * 1000;   // the last playback stays on screen (as paused) this long after Spotify goes idle
@@ -772,7 +797,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // Search Spotify result types. key: the page object in the /search answer; map: row mapper.
   var SEARCH_TYPES = ['all', 'track', 'artist', 'album', 'playlist', 'show', 'episode'];
   var STYPE = {
-    track: { key: 'tracks', label: 'Songs', map: function (t) { return mapTrack(t); } },
+    track: { key: 'tracks', label: 'Songs', map: function (t) { var m = mapTrack(t); if (m && t.album) { m.albumName = t.album.name || ''; m.released = relDay(t.album.release_date); } return m; } },   // v2.34: album and date for sorting
     artist: { key: 'artists', label: 'Artists', map: function (a) { var m = mapArtist(a); if (m) m.sub = 'Artist'; return m; } },
     album: { key: 'albums', label: 'Albums', map: function (a) { return mapAlbum(a); } },
     playlist: { key: 'playlists', label: 'Playlists', map: function (p) { return mapPlaylist(p); } },
@@ -794,6 +819,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   var WAIT_FOR_MS = 60000;        // …for this long per window (at most 20 checks)
   var LATEST_MS = 12 * 60 * 60 * 1000; // v2.14: Latest episodes cache; opening Latest refetches only when it's older (was 2 h, automatic)
   var LATEST_SHOWS = 12;          // v2.14: shows asked per refresh: the 12 most recently updated (was every saved show)
+  var LATEST_ROTATE = 3;          // audit: of those 12, the shows not asked for longest (with more than 12 saved shows)
+  var LATEST_ROTATE_NEW = 6;      // audit: ... while some saved show has never been asked
   var LATEST_PER_SHOW = 5;
   var LATEST_KEEP = 50;
   var LATEST_PARALLEL = 2;        // show requests in flight at once (v2.13: was 4)
@@ -809,6 +836,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     search: { q: '' }, stype: 'all',   // results live in searchCache, per type and query
     recent: { items: null, jump: null, loading: false, error: '' }, recentSeq: 0, recentTriedAt: 0,
     saved: {}, busy: {}, containsOff: false, checking: {}, checkQueue: [], checkTimer: null,
+    checkFailedAt: {},   // audit: uri -> when its heart check last failed (not 403/404); asked again after 60 s
     // detail: the open song list or artist view; detailStack: the views under it (v2.12: an album opened from an artist).
     // Each view keeps returnScroll (where the view under it was scrolled) and pushed (it has its own history entry).
     detail: null, detailStack: [],
@@ -816,11 +844,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     sheetLoading: false, sheetError: '', sheetReturn: null,
     wake: { running: false, timer: null, gen: 0 },
     podTab: 'latest',
-    latest: { cache: null, loading: false, error: '', triedAt: 0, seq: 0 },
+    latest: { cache: null, loading: false, error: '', triedAt: 0, seq: 0, stoppedHidden: false },
     // v2.13: request budget
     lastActiveAt: 0,   // last time something was seen playing (or a control was used): the player check slows after 10 min
     lastPollAt: 0,     // last /me/player request from this copy
     pollForce: false,  // the next check follows your own command, so it runs even if another copy is the poller
+    pollExpect: null,  // audit: {test, left} what that check should show once Spotify has carried the command out (see expectAfter)
     bgHoldUntil: 0     // background extras (recently played, resume points, Latest) wait until then, so they don't burst
   };
   var searchTimer = null;
@@ -860,6 +889,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     pause: svg('<path fill="currentColor" d="M6 5h4v14H6zM14 5h4v14h-4z"/>'),
     shuffle: svg('<path fill="currentColor" d="M10.6 9.2L5.4 4 4 5.4l5.2 5.2 1.4-1.4zM14.5 4l2 2L4 18.6 5.4 20 18 7.5l2 2V4h-5.5zm.3 9.4l-1.4 1.4 3.1 3.1-2 2.1H20v-5.5l-2 2-3.2-3.1z"/>'),
     bookmark: svg('<path fill="currentColor" d="M6 3h12v18l-6-4.5L6 21z"/>'),
+    bmAdd: svg('<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M6 3h12v18l-6-4.5L6 21z"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M12 7.5v6M9 10.5h6"/>'),   // v2.32
+    cross: svg('<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M7 7l10 10M17 7L7 17"/>'),   // v2.32
     repeat: svg('<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M17 2l3 3-3 3M4 11V9a4 4 0 0 1 4-4h12M7 22l-3-3 3-3M20 13v2a4 4 0 0 1-4 4H4"/>'),
     repeatOne: svg('<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M17 2l3 3-3 3M4 11V9a4 4 0 0 1 4-4h12M7 22l-3-3 3-3M20 13v2a4 4 0 0 1-4 4H4"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M10.8 10.4L12.4 9v6"/>'),
     queue: svg('<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M3 6h13M3 11h13M3 16h8"/><path fill="currentColor" d="M15 14v7l6-3.5z"/>'),
@@ -874,20 +905,59 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     volume: svg('<path fill="currentColor" d="M4 9h4l5-4v14l-5-4H4z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12"/>')
   };
 
-  var toastTimer = null;
+  // audit: #announce is always rendered, so VoiceOver speaks what lands in it; a status region that is
+  // display:none until its text arrives (the toast, the cool-off line, the wake line) may never be spoken.
+  // The text goes in a moment after the region is emptied, so the same message twice is spoken twice.
+  var announceTimer = null, announceText = '';
+  function announce(msg) {
+    if (!msg) return;
+    var a = $('announce');
+    if (!(announceTimer && announceText)) announceText = msg;
+    else if (announceText.indexOf(msg) === -1) announceText += ' ' + msg;   // two at once (a pause line and its toast): both
+    a.textContent = '';
+    clearTimeout(announceTimer);
+    announceTimer = setTimeout(function () { announceTimer = null; a.textContent = announceText; }, 100);
+  }
+  // audit: the toast waits while focus is in it (Undo, a link, Close) and closes toastMs after focus leaves;
+  // when it closes with focus inside, focus goes back to the control you were on (never to body).
+  var toastTimer = null, toastMs = 3000, toastReturn = null;
+  function toastFocused() {
+    var a = document.activeElement;
+    return !!(a && a !== document.body && $('toast').contains(a));
+  }
+  function toastGiveBack(a) {
+    var r = toastReturn;
+    toastReturn = null;
+    if (r && r !== document.body && document.body.contains(r) && !$('toast').contains(r)) r.focus();
+    else if (a && a.blur) a.blur();
+  }
+  function hideToast() {
+    var t = $('toast'), a = toastFocused() ? document.activeElement : null;
+    clearTimeout(toastTimer); toastTimer = null;
+    t.hidden = true;
+    if (a) toastGiveBack(a);
+  }
+  function toastTimeout() {
+    clearTimeout(toastTimer); toastTimer = null;
+    if (!toastFocused()) toastTimer = setTimeout(hideToast, toastMs);
+  }
   function toast(msg, link, action) {
-    var t = $('toast');
+    var t = $('toast'), inside = toastFocused();
+    if (!inside) toastReturn = document.activeElement;
     t.textContent = '';
     t.appendChild(el('span', { text: msg }));
     if (link) t.appendChild(el('a', { href: link.href, text: link.text }));
     if (action) {
       var b = el('button', { class: 'toastbtn', type: 'button', text: action.text });
-      b.addEventListener('click', function () { t.hidden = true; clearTimeout(toastTimer); action.fn(); });
+      b.addEventListener('click', function () { hideToast(); action.fn(); });
       t.appendChild(b);
     }
     t.hidden = false;
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { t.hidden = true; }, (link || action) ? 8000 : 3000);
+    // A new toast over one you were on: stay in it (its link or button), else back to where you were.
+    if (inside && !toastFocused()) { var nb = t.querySelector('a, button'); if (nb) nb.focus(); else toastGiveBack(null); }
+    toastMs = (link || action) ? 8000 : 3000;
+    toastTimeout();
+    announce(msg + (link ? ' ' + link.text : '') + (action ? ' ' + action.text : ''));   // as the old region read it
   }
   function errMsg(r) {
     var e = r && r.json && r.json.error;
@@ -992,13 +1062,19 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var ask = get(PERM_ASK);
     del(PERM_ASK);
     if (!ask || !FEATURE_SCOPES[ask.feature] || !(Date.now() - (ask.at || 0) < 30 * 60000)) ask = null;
-    if (err && ask && get(K.token)) {
-      // A feature sign-in was cancelled: the old sign-in still works, so go back to the page.
-      toast('Nothing changed. ' + FEATURE_SCOPES[ask.feature].name + ' still needs that permission.');
+    // audit: a sign-in that was cancelled or failed while the old sign-in still works goes back to the page
+    // (and keeps the last playback) instead of the Sign in screen. This covers feature sign-ins and "Sign in again".
+    if (err && get(K.token)) {
+      toast(ask ? 'Nothing changed. ' + FEATURE_SCOPES[ask.feature].name + ' still needs that permission.'
+                : 'Sign-in was cancelled. You’re still signed in.');
       return Promise.resolve(true);
     }
     if (err) { renderSignIn('Spotify sign-in was cancelled or failed (' + err + ').'); return Promise.resolve(false); }
-    if (params.get('state') !== get(K.state)) { renderSignIn('Sign-in check failed. Please try again.'); return Promise.resolve(false); }
+    if (params.get('state') !== get(K.state)) {
+      // audit: lib-state and lib-verifier stay: a mismatch can mean another tab's sign-in is still in progress.
+      if (get(K.token)) { toast('Sign-in check failed. You’re still signed in.'); return Promise.resolve(true); }
+      renderSignIn('Sign-in check failed. Please try again.'); return Promise.resolve(false);
+    }
     return tokenRequest({
       grant_type: 'authorization_code',
       code: code,
@@ -1013,6 +1089,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       }
       return true;
     }).catch(function (e) {
+      if (get(K.token)) { toast('Could not finish sign-in (' + e.message + '). You’re still signed in.'); return true; }   // audit
       renderSignIn('Could not finish sign-in: ' + e.message); return false;
     });
   }
@@ -1022,12 +1099,25 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (t.access && Date.now() < t.expires) return Promise.resolve(t.access);
     if (!t.refresh) return Promise.reject(new Error('signed-out'));
     if (refreshing) return refreshing;   // several calls at once share one refresh
-    refreshing = tokenRequest({ grant_type: 'refresh_token', refresh_token: t.refresh, client_id: get(K.client) })
-      .then(function (j) { refreshing = null; saveToken(j, false); return j.access_token; }, function (e) {
-        refreshing = null;
-        if (e.code === 'invalid_grant') { del(K.token); throw new Error('signed-out'); }
-        throw e;
-      });
+    var sent = t.refresh;
+    // audit: another copy (tab or window) may renew with the same refresh token at the same time. Spotify can
+    // take a refresh token only once, so the loser gets invalid_grant. Before signing out, check whether
+    // storage now holds a newer refresh token (now, or after 2 s if the winner hasn't saved yet) and use it.
+    // refreshing stays set until this settles, so other calls in this copy don't send the old token again.
+    refreshing = tokenRequest({ grant_type: 'refresh_token', refresh_token: sent, client_id: get(K.client) })
+      .then(function (j) { saveToken(j, false); return { access: j.access_token }; }, function (e) {
+        if (e.code !== 'invalid_grant') throw e;
+        var renewed = function () { var n = get(K.token); return !!(n && n.refresh && n.refresh !== sent); };
+        if (renewed()) return { retry: true };
+        return new Promise(function (res) { setTimeout(res, 2000); }).then(function () {
+          if (renewed()) return { retry: true };
+          var n = get(K.token);
+          if (n && n.refresh === sent) del(K.token);
+          throw new Error('signed-out');
+        });
+      })
+      .then(function (r) { refreshing = null; return r.retry ? accessToken() : r.access; },
+        function (e) { refreshing = null; throw e; });
     return refreshing;
   }
   // ---------- rate limits (v2.13; per group since v2.14) ----------
@@ -1163,6 +1253,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     paused.forEach(function (g) { left = Math.max(left, coolLeft(g)); });
     if (paused.length) {
       var t = pausedText(paused);
+      if ($('coolText').textContent !== t || $('cool').hidden) announce(t);   // audit: the line's own region was hidden
       if ($('coolText').textContent !== t) $('coolText').textContent = t;
       $('coolLeft').textContent = fmtLeft(left);
       $('cool').hidden = false;
@@ -1290,9 +1381,24 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // this visit, so opening the same view again sends nothing. Refresh (top right) forgets them.
   // v2.15: album and podcast lists are also saved on the phone (see "saved lists"); Refresh leaves those.
   var catMemo = {};
+  // audit: kept pages are keyed by memoKey, not the URL as spelled. Load more uses Spotify's `next`
+  // (https://api.spotify.com/v1/…?offset=50&limit=50), Search all builds /…?limit=50&offset=50: same page, one key.
+  function memoKey(url) {
+    var s = String(url || '').replace(API, ''), i = s.indexOf('?');
+    if (i < 0) return s;
+    var off = '0', lim = '20', rest = [];
+    s.slice(i + 1).split('&').forEach(function (kv) {
+      var k = kv.split('=')[0], v = kv.slice(k.length + 1);
+      if (k === 'offset') off = v || '0';
+      else if (k === 'limit') lim = v || '20';
+      else if (kv) rest.push(kv);
+    });
+    return s.slice(0, i) + '?offset=' + off + '&limit=' + lim + (rest.length ? '&' + rest.sort().join('&') : '');
+  }
   function apiCached(url) {
-    if (catMemo[url]) return Promise.resolve(catMemo[url]);
-    return api(url).then(function (r) { if (r.ok && r.json && coolGroup(url) === 'catalog') catMemo[url] = r; return r; });
+    var k = memoKey(url);
+    if (catMemo[k]) return Promise.resolve(catMemo[k]);
+    return api(url).then(function (r) { if (r.ok && r.json && coolGroup(url) === 'catalog') { r.at = Date.now(); catMemo[k] = r; } return r; });   // audit: at = when Spotify sent it (editStale)
   }
   // Kept in localStorage too, so errors survive a reload and show up in Diagnostics.
   var errorLog = (function () { var v = get('lib-errors'); return Array.isArray(v) ? v.slice(-12) : []; })();
@@ -1344,7 +1450,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       img: o.noImg ? '' : img(ep ? (t.images || (t.show && t.show.images)) : (t.album && t.album.images)),
       sub: sub, num: o.num, ctx: o.ctx,
       artist: by,   // for sorting: the song's artists, or an episode's show
-      durMs: t.duration_ms || 0   // for the total length above a song list
+      durMs: t.duration_ms || 0,   // for the total length above a song list
+      nope: unplayableWhy(t) || undefined,   // v2.35: why Spotify says it can't play (left out when it says nothing)
+      noPlay: t.is_playable === false || undefined   // v2.35: a tap then plays nothing (restrictions alone only dim)
     };
   }
   function mapAlbum(a) {
@@ -1417,6 +1525,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // ---------- sorting: one chip row per view, the choice stored per view ('lib-sort-<view>') ----------
   // The first option of each view is its default, which is always the order the page used before sorting existed.
   // Detail views (song and episode lists) start with 'd-'. They sort only the rows loaded so far.
+  // v2.34: a sort in SORT_FLIP turns around when its chip is tapped again; the reversed choice is stored as '<option>:rev'.
   var SORTS = {
     playlists: [['default', 'Default'], ['az', 'A–Z'], ['songs', 'Most songs']],
     albums: [['saved', 'Recently saved'], ['az', 'A–Z'], ['artist', 'Artist A–Z'], ['released', 'Release date']],
@@ -1424,13 +1533,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     all: [['default', 'Default'], ['az', 'A–Z']],
     shows: [['updated', 'Recently updated'], ['az', 'A–Z'], ['saved', 'Recently saved']],
     latest: [['newest', 'Newest first'], ['oldest', 'Oldest first'], ['show', 'Show A–Z']],
-    'd-album': [['track', 'Track order'], ['az', 'A–Z'], ['artist', 'Artist A–Z']],
-    'd-playlist': [['default', 'Default'], ['az', 'Title A–Z'], ['artist', 'Artist A–Z'], ['added', 'Recently added']],
-    'd-liked': [['default', 'Recently liked'], ['az', 'Title A–Z'], ['artist', 'Artist A–Z']],
+    'd-album': [['track', 'Track order'], ['az', 'A–Z'], ['artist', 'Artist A–Z'], ['dur', 'Duration']],
+    'd-playlist': [['default', 'Default'], ['az', 'Title A–Z'], ['artist', 'Artist A–Z'], ['added', 'Recently added'], ['dur', 'Duration'], ['album', 'Album'], ['rel', 'Release date']],
+    'd-liked': [['default', 'Recently liked'], ['az', 'Title A–Z'], ['artist', 'Artist A–Z'], ['lastplay', 'Not played lately'], ['dur', 'Duration'], ['album', 'Album'], ['rel', 'Release date']],   // v2.30: Not played lately
     'd-show': [['newest', 'Newest'], ['oldest', 'Oldest']],
     'd-episodes': [['saved', 'Recently saved'], ['newest', 'Newest'], ['oldest', 'Oldest']],
     // Search Spotify with one result type: 's-<type>'. Best match is Spotify's own order.
-    's-track': [['best', 'Best match'], ['az', 'A–Z']],
+    's-track': [['best', 'Best match'], ['az', 'A–Z'], ['dur', 'Duration'], ['album', 'Album'], ['rel', 'Release date']],
     's-artist': [['best', 'Best match'], ['az', 'A–Z']],
     's-album': [['best', 'Best match'], ['az', 'A–Z'], ['newest', 'Newest']],
     's-playlist': [['best', 'Best match'], ['az', 'A–Z'], ['songs', 'Most songs']],
@@ -1441,9 +1550,34 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function sortText(s) { return String(s || '').replace(/^the\s+/i, ''); }
   function cmpText(a, b) { return sortText(a).localeCompare(sortText(b), undefined, { sensitivity: 'base', numeric: true }); }
   function byName(a, b) { return cmpText(a.name, b.name); }
+  // v2.34: a release date as YYYY, YYYY-MM or YYYY-MM-DD (month 01–12, day 01–31); anything else (Spotify's "0000"
+  // for unknown, a zero month or day) is ''.
+  function relDay(s) { return /^\d{4}(-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?)?$/.test(s || '') && !/^0000/.test(s) ? s : ''; }
   // Dates and times as strings (ISO or YYYY[-MM[-DD]]); a missing value always goes last.
   function cmpDesc(x, y) { if (x === y) return 0; if (!x) return 1; if (!y) return -1; return x < y ? 1 : -1; }
   function cmpAsc(x, y) { if (x === y) return 0; if (!x) return 1; if (!y) return -1; return x < y ? -1 : 1; }
+  // v2.34: song sorts that turn around: [first tap, tap again], each [how the chip's label says the order, arrow].
+  var SORT_FLIP = {
+    dur: [['shortest first', '↑'], ['longest first', '↓']],
+    album: [['A–Z', '↑'], ['Z–A', '↓']],
+    rel: [['newest first', '↓'], ['oldest first', '↑']]
+  };
+  // v2.34: rev turns the order around; a missing value (no length, album or date) still goes last, and ties keep the default order.
+  function cmpDur(a, b, rev) { var x = a.durMs || 0, y = b.durMs || 0; if (x === y) return 0; if (!x) return 1; if (!y) return -1; return rev ? y - x : x - y; }
+  function cmpAlbum(a, b, rev) { var x = a.albumName || '', y = b.albumName || ''; if (!x || !y) return (!x) - (!y); var r = cmpText(x, y); return rev ? -r : r; }
+  // Release dates come as YYYY, YYYY-MM or YYYY-MM-DD. Compared part by part: newest first (rev: oldest first), and
+  // within a year (or month) a date given only that far goes after the more exact ones, either way.
+  function cmpRel(a, b, rev) {
+    var x = (a.released || '').split('-'), y = (b.released || '').split('-');
+    for (var i = 0; i < 3; i++) {
+      var p = x[i] || '', q = y[i] || '';
+      if (p === q) { if (!p) return 0; continue; }
+      if (!p) return 1;
+      if (!q) return -1;
+      return (p < q ? 1 : -1) * (rev ? -1 : 1);
+    }
+    return 0;
+  }
   // Comparators per view and option; a default option has none and keeps the list as it came.
   // Sorting is stable, so ties keep that original order.
   var SORT_CMP = {
@@ -1460,12 +1594,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       oldest: function (a, b) { return cmpAsc(a.date, b.date); },
       show: function (a, b) { return cmpText(a.showName, b.showName); }   // ties stay newest first
     },
-    'd-album': { az: byName, artist: function (a, b) { return cmpText(a.artist, b.artist); } },
-    'd-playlist': { az: byName, artist: function (a, b) { return cmpText(a.artist, b.artist); }, added: function (a, b) { return cmpDesc(a.added, b.added); } },
-    'd-liked': { az: byName, artist: function (a, b) { return cmpText(a.artist, b.artist); } },
+    'd-album': { az: byName, artist: function (a, b) { return cmpText(a.artist, b.artist); }, dur: cmpDur },
+    'd-playlist': { az: byName, artist: function (a, b) { return cmpText(a.artist, b.artist); }, added: function (a, b) { return cmpDesc(a.added, b.added); }, dur: cmpDur, album: cmpAlbum, rel: cmpRel },
+    'd-liked': { az: byName, artist: function (a, b) { return cmpText(a.artist, b.artist); }, lastplay: function (a, b) { return cmpLastPlay(a, b); }, dur: cmpDur, album: cmpAlbum, rel: cmpRel },   // v2.30
     'd-show': { oldest: function (a, b) { return cmpAsc(a.date, b.date); } },
     'd-episodes': { newest: function (a, b) { return cmpDesc(a.date, b.date); }, oldest: function (a, b) { return cmpAsc(a.date, b.date); } },
-    's-track': { az: byName },
+    's-track': { az: byName, dur: cmpDur, album: cmpAlbum, rel: cmpRel },
     's-artist': { az: byName },
     's-album': { az: byName, newest: function (a, b) { return cmpDesc(a.released, b.released); } },
     's-playlist': { az: byName, songs: function (a, b) { return (b.count || 0) - (a.count || 0); } },
@@ -1477,17 +1611,20 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!opts) return '';
     var v = get('lib-sort-' + view);
     if (v == null && view === 'shows') v = get(K.showSort);   // the Shows choice from v2.7
+    if (typeof v === 'string' && SORT_FLIP[v.replace(/:rev$/, '')]) v = v.replace(/:rev$/, '');   // v2.34
     for (var i = 0; i < opts.length; i++) { if (opts[i][0] === v) return v; }
     return opts[0][0];
   }
+  // v2.34: true when the chosen sort was tapped again ('dur:rev' stored).
+  function sortRev(view) { var m = sortMode(view); return !!SORT_FLIP[m] && get('lib-sort-' + view) === m + ':rev'; }
   function sortIsDefault(view) { return !SORTS[view] || sortMode(view) === SORTS[view][0][0]; }
   function sortList(view, list) {
-    var m = sortMode(view);
+    var m = sortMode(view), rev = sortRev(view);
     if (view === 'shows' && m === 'updated') return showsByNewest(list);
     var cmp = SORT_CMP[view] && SORT_CMP[view][m];
     if (!cmp) return list.slice();
     return list.map(function (x, i) { return { x: x, i: i }; })
-      .sort(function (a, b) { return cmp(a.x, b.x) || a.i - b.i; })
+      .sort(function (a, b) { return cmp(a.x, b.x, rev) || a.i - b.i; })
       .map(function (w) { return w.x; });
   }
   // The chip row. rerender() repaints whatever the row sorts; focus then returns to the chip just pressed.
@@ -1498,9 +1635,16 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     ]);
     SORTS[view].forEach(function (s) {
       var b = el('button', { class: 'chip', type: 'button', 'data-sort': s[0], 'aria-pressed': String(cur === s[0]), text: s[1] });
+      var flip = SORT_FLIP[s[0]];
+      if (flip && cur === s[0]) {   // v2.34: the chosen one shows its direction: "Duration ↑", read as "Duration, shortest first"
+        var f = flip[sortRev(view) ? 1 : 0];
+        b.setAttribute('aria-label', s[1] + ', ' + f[0]);
+        b.appendChild(el('span', { class: 'sortdir', 'aria-hidden': 'true', text: f[1] }));
+      }
       b.addEventListener('click', function () {
-        if (sortMode(view) === s[0]) return;
-        set('lib-sort-' + view, s[0]);
+        var same = sortMode(view) === s[0];
+        if (same && !flip) return;
+        set('lib-sort-' + view, same && !sortRev(view) ? s[0] + ':rev' : s[0]);   // v2.34: tapped again, it turns around
         rerender();
         var nb = document.querySelector('.sortbar[data-view="' + view + '"] [data-sort="' + s[0] + '"]');
         if (nb) nb.focus();
@@ -1508,6 +1652,16 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       g.appendChild(b);
     });
     return g;
+  }
+  // v2.34: while a Duration or Release date sort is on, each row's second line ends with that value ("· 3:45",
+  // "· May 1999"). Drawn on copies, so nothing stored or matched changes.
+  function sortShown(view, list) {
+    var m = sortMode(view);
+    if (m !== 'dur' && m !== 'rel') return list;
+    return list.map(function (i) {
+      var x = m === 'dur' ? (i.durMs ? fmtTime(i.durMs) : '') : fmtDate(i.released);
+      return x ? Object.assign({}, i, { sub: (i.sub || '') + ' · ' + x }) : i;
+    });
   }
   function savedEpisodesItem(d) {
     return { kind: 'episodes', name: 'Saved episodes', uri: null, url: 'https://open.spotify.com/collection/your-episodes', sub: 'Podcast · ' + d.episodesTotal + (d.episodesTotal === 1 ? ' episode' : ' episodes') };
@@ -1618,7 +1772,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       img: img(e.images && e.images.length ? e.images : (e.show && e.show.images)),
       sp: rs.played, spos: rs.pos, subBase: ['Episode', by],   // v2.21: sub, positionMs and played come from markItem
       date: e.release_date || '',   // for sorting
-      durMs: dur, showName: (e.show && e.show.name) || ''   // for the total length and Continue listening
+      durMs: dur, showName: (e.show && e.show.name) || '',   // for the total length and Continue listening
+      showId: (e.show && e.show.id) || ''   // v2.33: for Skip intro
     });
   }
   // ---------- episode notes (v2.18) ----------
@@ -1750,15 +1905,17 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       sp: typeof x.sp === 'boolean' ? x.sp : !!x.played };
   }
   var notesView = null;      // {ep, loading, error} while the notes sheet is open
-  var notesReturn = null, notesSeq = 0;
+  var notesReturn = null, notesReturnLabel = '', notesSeq = 0;
   function openNotes(ep, from) {
     if (!ep || !ep.id) return;
     notesReturn = (from && from.nodeType === 1) ? from : document.activeElement;
+    notesReturnLabel = (notesReturn && notesReturn.getAttribute && notesReturn.getAttribute('aria-label')) || '';   // audit: A11Y-6c
     notesView = { ep: ep, loading: false, error: '' };
     notesSeq++;
     var mem = memNotes(ep.id);
     if (mem != null) saveNotes(ep.id, mem);   // opened: kept on the phone for next time
     $('notes').hidden = false;
+    syncSheetLock();
     renderNotes();
     $('notesBody').scrollTop = 0;
     $('notesClose').focus();
@@ -1766,11 +1923,17 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function closeNotes(restore) {
     if ($('notes').hidden) return;
     $('notes').hidden = true;
+    syncSheetLock();
     notesSeq++;
     notesView = null;
-    var r = notesReturn;
-    notesReturn = null;
-    if (restore !== false && r && r.focus && document.body.contains(r)) r.focus();
+    var r = notesReturn, lab = notesReturnLabel;
+    notesReturn = null; notesReturnLabel = '';
+    if (restore === false || !r || !r.focus) return;
+    if (document.body.contains(r)) { r.focus(); return; }
+    // audit: A11Y-6c the list was redrawn meanwhile (Mark as played): focus the redrawn row's button
+    if (!lab) return;
+    var bs = document.querySelectorAll('#main button');
+    for (var i = 0; i < bs.length; i++) { if (bs[i].getAttribute('aria-label') === lab) { bs[i].focus({ preventScroll: true }); return; } }
   }
   // Load notes: one GET /episodes/{id} (podcast and album details), only on that tap, kept for the visit.
   function loadNotes() {
@@ -1779,7 +1942,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var have = notesFor(v.ep.id);
     if (have && !have.cut) { renderNotes(); return; }   // the Now Playing check brought them meanwhile
     var url = '/episodes/' + encodeURIComponent(v.ep.id);
-    if (!catMemo[url] && coolLeft('catalog')) { v.error = coolText('catalog'); renderNotes(); coolToast('catalog'); return; }
+    if (!catMemo[memoKey(url)] && coolLeft('catalog')) { v.error = coolText('catalog'); renderNotes(); coolToast('catalog'); return; }
     var seq = notesSeq;
     v.loading = true; v.error = '';
     renderNotes();
@@ -1810,6 +1973,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     mb.textContent = shownPlayed(ep) ? 'Mark as unplayed' : 'Mark as played';
     var body = $('notesBody');
     var y = body.scrollTop;
+    var ae = document.activeElement, refocus = body.contains(ae) || !ae || ae === document.body;   // audit: A11Y-6b
     body.textContent = '';
     var n = notesFor(ep.id);
     function loadBtn(label) {
@@ -1832,6 +1996,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }
     if (v.error) body.appendChild(el('p', { class: 'err', text: v.error }));
     body.scrollTop = y;
+    if (refocus) {   // the focused control was just replaced: its replacement, else the notes box, keeps focus in the sheet
+      var nb = body.querySelector('button.btn:not([disabled])');
+      (nb || body).focus({ preventScroll: true });
+    }
   }
   function notesNode(text, ep) {
     var box = el('p', { class: 'notes-text' });
@@ -1855,8 +2023,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var p = state.player;
     if (p && p.item && p.item.uri === ep.uri && p.is_playing && !state.playerIdle) {
       if (coolBlocked('player')) return;
-      seekTo(ms);
-      toast('Jumped to ' + fmtTime(ms));
+      if (seekTo(ms) !== false) toast('Jumped to ' + fmtTime(ms));   // v2.35: not when Spotify doesn't allow seeking
       return;
     }
     // Without a device known to be open, Spotify may have to wake first: the sheet closes so its instructions show.
@@ -1915,19 +2082,44 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var shows = pages('/me/shows?limit=50', function (it) { return mapShow(it && it.show); }).catch(optional);
     var episodes = api('/me/episodes?limit=1').then(function (r) { return r.ok && r.json && typeof r.json.total === 'number' ? r.json.total : null; }).catch(optional);
     return Promise.all([me, playlists, albums, liked, artists, shows, episodes]).then(function (v) {
+      // audit: a failed /me or /me/tracks answer keeps what the last load had, so your own playlists
+      // stay yours and the Liked Songs row stays. With no account known yet, the load fails and nothing is cached.
+      var prev = state.data || {};
+      if (!v[0]) {
+        if (prev.me && prev.me.id) v[0] = prev.me;
+        else throw new Error('your account details didn’t load');
+      }
+      if (v[3] == null && typeof prev.likedTotal === 'number') v[3] = prev.likedTotal;
       var data = { at: Date.now(), me: v[0], playlists: v[1], albums: v[2], likedTotal: v[3], artists: v[4], shows: v[5], episodesTotal: v[6] };
       set(K.cache, data);
       return data;
     });
   }
   // Library albums and other people's playlists in your list are saved by definition.
-  function seedSaved(d, force) {
-    if (!d) return;
+  // audit: seededUris lists exactly what seedSaved marks (refresh uses it to unmark what left the library).
+  function seededUris(d, noShows) {
+    var out = [];
+    if (!d) return out;
     var me = d.me && d.me.id;
-    function mark(uri) { if (uri && (force || state.saved[uri] === undefined)) state.saved[uri] = true; }
-    (d.albums || []).forEach(function (a) { mark(a.uri); });
-    (d.shows || []).forEach(function (s) { mark(s.uri); });
-    (d.playlists || []).forEach(function (p) { if (p.ownerId && p.ownerId !== me) mark(p.uri); });
+    (d.albums || []).forEach(function (a) { if (a.uri) out.push(a.uri); });
+    if (!noShows) (d.shows || []).forEach(function (s) { if (s.uri) out.push(s.uri); });
+    (d.playlists || []).forEach(function (p) { if (p.uri && p.ownerId && p.ownerId !== me) out.push(p.uri); });
+    return out;
+  }
+  function seedSaved(d, force) {
+    seededUris(d).forEach(function (uri) { if (force || state.saved[uri] === undefined) state.saved[uri] = true; });
+  }
+  // audit: an album, podcast or other person's playlist that was in the old library and isn't in the new one
+  // (removed in the Spotify app) loses its seeded heart; the next heart check asks Spotify. A false (the page's
+  // own tap or a contains answer) and a heart tap in flight are left alone. Podcasts are skipped when the new
+  // shows list failed to load (null), since then nothing is known about them.
+  function unseedRemoved(old, d) {
+    var now = {}, dropped = 0;
+    seededUris(d).forEach(function (u) { now[u] = true; });
+    seededUris(old, !Array.isArray(d && d.shows)).forEach(function (u) {
+      if (!now[u] && state.saved[u] === true && !state.busy[u]) { delete state.saved[u]; dropped++; }
+    });
+    if (dropped) saveSavedSession();
   }
 
   // ---------- saved state (hearts) ----------
@@ -1966,7 +2158,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function requestSaved(uris) {
     if (state.containsOff) return;
     uris.forEach(function (u) {
-      if (u && state.saved[u] === undefined && !state.checking[u]) { state.checking[u] = true; state.checkQueue.push(u); }
+      if (u && state.saved[u] === undefined && !state.checking[u] &&
+          // audit: only Spotify items (not spotify:local: files), and not within 60 s of a failed check
+          /^spotify:(track|episode|album|show|playlist|artist):/.test(u) &&
+          Date.now() - (state.checkFailedAt[u] || 0) >= 60000) { state.checking[u] = true; state.checkQueue.push(u); }
     });
     // While cooling off the queue just waits; afterCool() sends it.
     if (state.checkQueue.length && !state.checkTimer && !coolLeft('library')) state.checkTimer = setTimeout(flushChecks, 60);
@@ -1981,7 +2176,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function checkBatch(batch) {
     api('/me/library/contains?uris=' + encodeURIComponent(batch.join(','))).then(function (r) {
-      if (!r.ok || !Array.isArray(r.json)) throw new Error(errMsg(r));
+      if (!r.ok || !Array.isArray(r.json)) throw httpError(r);
       batch.forEach(function (u, i) {
         if (state.saved[u] === undefined) state.saved[u] = r.json[i] === true;
         delete state.checking[u];
@@ -1994,9 +2189,16 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         batch.forEach(function (u) { if (state.saved[u] === undefined) state.checkQueue.push(u); else delete state.checking[u]; });
         return;
       }
+      batch.forEach(function (u) { delete state.checking[u]; });
+      // audit: a network error, 5xx, 401 or unreadable answer is a blip, not "unavailable":
+      // leave these unchecked and let a later render ask again, at most once a minute per item.
+      if (e.status !== 403 && e.status !== 404) {
+        var now = Date.now();
+        batch.forEach(function (u) { state.checkFailedAt[u] = now; });
+        return;
+      }
       // Unavailable (e.g. not offered to Development Mode apps): stop asking this session.
       // Hearts stay outlined and a tap saves unless we already know it's saved.
-      batch.forEach(function (u) { delete state.checking[u]; });
       state.containsOff = true;
       state.checkQueue = [];
     });
@@ -2015,6 +2217,15 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var bs = document.querySelectorAll('.heart');
     for (var i = 0; i < bs.length; i++) paintHeart(bs[i]);
   }
+  // audit: an unlike (unsave) moves every later row of Liked Songs (Saved episodes) up one place on Spotify, so an
+  // open list's next page starts one earlier. At worst that page repeats a row, and dropShown skips it. A save isn't
+  // shifted: the row it pushes down comes back once and is dropped the same way (and a save that changed nothing
+  // would otherwise skip a row).
+  function shiftNext(listKind) {
+    [state.detail].concat(state.detailStack).forEach(function (v) {
+      if (v && v.item && v.item.kind === listKind && v.next) v.next = String(v.next).replace(/([?&]offset=)(\d+)/, function (m, a, n) { return a + Math.max(0, +n - 1); });
+    });
+  }
   function toggleSave(uri, name, kind, forceSave) {
     if (!uri || state.busy[uri]) return;
     if (coolBlocked('library')) return;   // v2.13
@@ -2026,7 +2237,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     api('/me/library?uris=' + encodeURIComponent(uri), { method: save ? 'PUT' : 'DELETE' }).then(function (r) {
       delete state.busy[uri];
       if (!r.ok) throw new Error(errMsg(r));
+      if (!save && (kind === 'track' || kind === 'episode')) shiftNext(kind === 'track' ? 'liked' : 'episodes');   // audit
       saveSavedSession();
+      if (save && /^spotify:track:/.test(uri)) likedSince(uri);   // v2.31: Liked songs on the artist page is no longer complete
       if (!save) toast('Removed “' + name + '”', null, { text: 'Undo', fn: function () { toggleSave(uri, name, kind, true); } });
       else if (forceSave) toast('Saved “' + name + '” again');
       else toast(kind === 'track' ? 'Added to Liked Songs' : 'Saved to your library');
@@ -2235,6 +2448,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function loadRecent() {
     var seq = ++state.recentSeq;
     state.recentTriedAt = Date.now();
+    logShow = LOG_ROWS;   // v2.30: the log opens at its newest rows again
     state.recent = { items: state.recent.items, jump: state.recent.jump, loading: true, error: '' };
     renderIfRecent();
     api('/me/player/recently-played?limit=50').then(function (r) {
@@ -2243,6 +2457,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       var seen = {}, out = [], seenAlbum = {}, seenList = {}, jump = [];
       var rItems = (r.json && r.json.items) || [];
       ctxFromRecent(rItems);   // v2.23: fills gaps in the last song heard per album or playlist
+      logMerge(rItems);        // v2.30: keeps these plays in the listening log
       rItems.forEach(function (it) {
         var t = it && it.track;
         if (!t || !t.id) return;
@@ -2290,6 +2505,251 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (Date.now() - state.recentTriedAt < HOME_RECENT_MS && state.recentTriedAt <= Date.now()) return;
     if (!bgReady()) return;
     loadRecent();
+  }
+
+  // ---------- listening log (v2.30) ----------
+  // Spotify's recently played answer holds only the last 50 songs, so the page keeps what it already gets: each
+  // answer (Recent, or Home's at most once per 15 minutes) is merged into a log on this phone, one entry per play
+  // (played_at + song), newest first, at most 1,500 plays and 90 days, with each song's name, artists, album (each cut to 80
+  // characters) and cover once. No request of its own. Plays are missed when more than 50 songs play between two answers. Recent
+  // shows it under day headings, each song once per day; Liked Songs can sort by it (Not played lately). No counts.
+  var LOG_MAX = 1500, LOG_MS = 90 * 24 * 60 * 60 * 1000, LOG_ROWS = 150, LOG_IMG = 'https://i.scdn.co/image/';
+  var playLogMem = null, logVer = 0, logLastVer = -1, logLastMap = {};
+  var logFull = {};   // song id -> [name, artists, album] uncut, from Spotify's latest answer (this visit only)
+  var logShow = LOG_ROWS, logKind = 'all';   // Recent: rows drawn so far, and the Show chip (this visit only)
+  function logOk(x, now) {
+    return Array.isArray(x) && typeof x[0] === 'number' && typeof x[1] === 'string' && !!x[1] && now - x[0] < LOG_MS && x[0] < now + 24 * 60 * 60 * 1000;   // a day of slack for a slow phone clock
+  }
+  // Drops bad, old and repeated entries, keeps the newest LOG_MAX, and keeps song details only for songs still in it.
+  function logPrune(L) {
+    var now = Date.now(), seen = {}, e = [], t = {};
+    L.e.forEach(function (x) {
+      if (!logOk(x, now) || !Array.isArray(L.t[x[1]])) return;
+      var k = x[0] + ' ' + x[1];
+      if (seen[k]) return;
+      seen[k] = true;
+      e.push(x);
+    });
+    e.sort(function (a, b) { return b[0] - a[0]; });
+    if (e.length > LOG_MAX) e.length = LOG_MAX;
+    e.forEach(function (x) { t[x[1]] = L.t[x[1]]; });
+    L.e = e; L.t = t;
+  }
+  function playLog() {
+    if (!playLogMem) {
+      var v = get(K.playLog);
+      playLogMem = { e: v && Array.isArray(v.e) ? v.e : [], t: v && v.t && typeof v.t === 'object' && !Array.isArray(v.t) ? v.t : {} };
+      logPrune(playLogMem);
+      logVer++;
+    } else if (playLogMem.e.length && Date.now() - playLogMem.e[playLogMem.e.length - 1][0] >= LOG_MS) {
+      logPrune(playLogMem);   // the oldest plays aged out while the page stayed open
+      logVer++;
+    }
+    return playLogMem;
+  }
+  // Storage full: saves the newer half instead (memory keeps every play for this visit); blocked: memory only.
+  function logSave(L) {
+    try { localStorage.setItem(K.playLog, JSON.stringify(L)); }
+    catch (err) {
+      var h = { e: L.e.slice(0, Math.floor(L.e.length / 2)), t: L.t };
+      logPrune(h);
+      try { localStorage.setItem(K.playLog, JSON.stringify(h)); } catch (e2) {}
+    }
+  }
+  // rItems: the items of a GET /me/player/recently-played answer the page already asked for.
+  function logMerge(rItems) {
+    var L = playLog(), have = {}, changed = false, fresh = {};
+    L.e.forEach(function (x) { have[x[0] + ' ' + x[1]] = true; });
+    (rItems || []).forEach(function (it) {
+      var t = it && it.track;
+      if (!t || !t.id || (t.type && t.type !== 'track')) return;
+      var at = Date.parse(it.played_at) || 0;
+      if (!at) return;
+      var cover = img(t.album && t.album.images);
+      var full = [String(t.name || 'Untitled'), names(t.artists), String((t.album && t.album.name) || '')];
+      fresh[t.id] = full;
+      var meta = full.map(logCut).concat(cover.indexOf(LOG_IMG) === 0 ? cover.slice(LOG_IMG.length) : cover);
+      var old = L.t[t.id];
+      if (!Array.isArray(old) || old.join('\n') !== meta.join('\n')) { L.t[t.id] = meta; changed = true; }
+      var k = at + ' ' + t.id;
+      if (have[k]) return;
+      have[k] = true;
+      L.e.push([at, t.id]);
+      changed = true;
+    });
+    logFull = fresh;
+    if (!changed) return;
+    logPrune(L);
+    logVer++;
+    logSave(L);
+  }
+  function logCut(v) { return v.length > 80 ? v.slice(0, 79) + '…' : v; }   // stored names: 80 characters at most
+  // A log entry as a song row, like Recent's rows before: "Song · artists · album · 3 h ago". Songs in Spotify's
+  // latest answer use their uncut names; older ones the stored names (ending in … when cut).
+  function logItem(x) {
+    var id = x[1], s = playLogMem.t[id] || [], m = logFull[id] || s, c = String(s[3] || ''), when = agoAt(x[0]);
+    var sub = 'Song · ' + (m[1] || '') + (m[2] ? ' · ' + m[2] : '') + (when ? ' · ' + when : '');
+    return {
+      kind: 'track', id: id, name: m[0] || 'Untitled', uri: 'spotify:track:' + id, url: 'https://open.spotify.com/track/' + id,
+      img: c ? (/^https?:\/\//.test(c) ? c : LOG_IMG + c) : '', sub: sub, artist: m[1] || '', durMs: 0, at: x[0]
+    };
+  }
+  // Recent's song rows: one per song per day (its newest play that day), newest first.
+  function logRows() {
+    var L = playLog(), seen = {}, out = [];
+    L.e.forEach(function (x) {
+      var k = dayKey(x[0]) + ' ' + x[1];
+      if (seen[k]) return;
+      seen[k] = true;
+      out.push(logItem(x));
+    });
+    return out;
+  }
+  // Song id -> its newest logged play (ms), for Not played lately.
+  function logLast() {
+    var L = playLog();
+    if (logLastVer !== logVer) {
+      logLastMap = {};
+      L.e.forEach(function (x) { if (!logLastMap[x[1]]) logLastMap[x[1]] = x[0]; });
+      logLastVer = logVer;
+    }
+    return logLastMap;
+  }
+  function dayKey(ms) { var d = new Date(ms); return d.getFullYear() + '-' + d.getMonth() + '-' + d.getDate(); }
+  function daysBefore(ms) {   // whole calendar days from that day to today (0 = today)
+    var d = new Date(ms), t = new Date();
+    d.setHours(0, 0, 0, 0); t.setHours(0, 0, 0, 0);
+    return Math.round((t - d) / 86400000);
+  }
+  // "Today", "Yesterday", the weekday this past week, then the date ("Mon, Nov 3"; the year when it isn't this year).
+  function dayLabel(ms) {
+    var n = daysBefore(ms);
+    if (n <= 0) return 'Today';
+    if (n === 1) return 'Yesterday';
+    var d = new Date(ms), o = n < 7 ? { weekday: 'long' } : { weekday: 'short', month: 'short', day: 'numeric' };
+    if (n >= 7 && d.getFullYear() !== new Date().getFullYear()) o.year = 'numeric';
+    try { return d.toLocaleDateString(undefined, o); } catch (e) { return d.toDateString(); }
+  }
+  function playedAgo(ms) {
+    var n = daysBefore(ms);
+    if (n <= 0) return 'Played today';
+    if (n === 1) return 'Played yesterday';
+    return n < 14 ? 'Played ' + n + ' days ago' : 'Played ' + Math.round(n / 7) + ' weeks ago';
+  }
+  // Liked Songs → Not played lately: songs the log never saw first, in Recently liked order (the order they came in;
+  // the log only covers 90 days, so it can't tell which of them you heard longest ago), then the oldest last play.
+  function cmpLastPlay(a, b) {
+    var m = logLast();
+    return (m[a.id] || 0) - (m[b.id] || 0);
+  }
+  // A Liked Songs row with " · Played 3 days ago" added, in every order (drawn only; the list keeps its own rows).
+  function withLastPlay(i) {
+    var at = i && i.kind === 'track' && logLast()[i.id];
+    return at ? Object.assign({}, i, { sub: (i.sub ? i.sub + ' · ' : '') + playedAgo(at) }) : i;
+  }
+  // Recent's Show chips: All, Songs, Episodes.
+  function logKindBar(cur) {
+    var g = el('div', { class: 'sortbar', role: 'group', 'aria-label': 'Show', 'data-view': 'recent-kind' }, [
+      el('span', { class: 'sortlbl', 'aria-hidden': 'true', text: 'Show' })
+    ]);
+    [['all', 'All'], ['track', 'Songs'], ['episode', 'Episodes']].forEach(function (s) {
+      var b = el('button', { class: 'chip', type: 'button', 'data-kind': s[0], 'aria-pressed': String(cur === s[0]), text: s[1] });
+      b.addEventListener('click', function () {
+        if (logKind === s[0]) return;
+        logKind = s[0];
+        logShow = LOG_ROWS;
+        renderList();
+        var nb = document.querySelector('.sortbar[data-view="recent-kind"] [data-kind="' + s[0] + '"]');
+        if (nb) nb.focus();
+      });
+      g.appendChild(b);
+    });
+    return g;
+  }
+  // ---------- Skip intro per podcast (v2.33) ----------
+  // A setting on a podcast's page: an episode of that show that the page starts from the very beginning (a row,
+  // the podcast's Play, Play newest, a Home card) starts at N seconds instead. The start is position_ms in the
+  // same play request, so it costs no request. Never for a resume (a saved position above 0), a timestamp in the
+  // episode notes, an episode played inside a list (Show songs), or an episode no longer than the skip or of
+  // unknown length. Kept on this phone per show URI: 100 shows at most, dropped a year after it was last set or used.
+  // No "skip outro": iPhone stops a page's scripts in the background, so nothing could watch for an episode's end.
+  var INTRO_STEPS = [15, 30, 45, 60, 90, 120];
+  var INTRO_MAX = 100, INTRO_MS = 365 * 24 * 60 * 60 * 1000, INTRO_TOUCH_MS = 24 * 60 * 60 * 1000;
+  var introMap = null;   // memory copy, used when storage can't be read
+  function introOk(k, e, now) {
+    return /^spotify:show:[A-Za-z0-9]+$/.test(k) && !!e && typeof e === 'object' && INTRO_STEPS.indexOf(e.s) !== -1 &&
+      typeof e.at === 'number' && now - e.at < INTRO_MS && e.at < now + 60000;
+  }
+  // Keeps the 100 most recently set or used valid entries.
+  function introPrune(m) {
+    var now = Date.now(), keys = Object.keys(m || {}).filter(function (k) { return introOk(k, m[k], now); });
+    keys.sort(function (a, b) { return m[b].at - m[a].at; });
+    var out = {};
+    keys.slice(0, INTRO_MAX).forEach(function (k) { out[k] = { s: m[k].s, at: m[k].at }; });
+    return out;
+  }
+  // Storage first (another copy of the page may have changed it), memory if storage can't be read.
+  function readIntro() {
+    var st = get(K.introSkip);
+    introMap = introPrune(st && typeof st === 'object' && !Array.isArray(st) ? st : (introMap || {}));
+    return introMap;
+  }
+  function saveIntro(m) { introMap = introPrune(m); set(K.introSkip, introMap); }
+  function showKey(id) { return id ? 'spotify:show:' + id : ''; }
+  function introSecs(key) { var e = key ? readIntro()[key] : null; return e ? e.s : 0; }
+  function setIntro(key, s) {
+    if (!key) return;
+    var m = readIntro();
+    if (INTRO_STEPS.indexOf(s) !== -1) m[key] = { s: s, at: Date.now() };
+    else delete m[key];
+    saveIntro(m);
+  }
+  // An episode's show and length, from the item or what the page already holds (no request).
+  function introFacts(item) {
+    var show = showKey(item.showId), dur = item.durMs || 0;
+    var d = state.detail;
+    if (d && d.item && d.item.kind === 'show' && Array.isArray(d.items)) {
+      var r = d.items.filter(function (x) { return x && x.uri === item.uri; })[0];
+      if (r) { show = show || showKey(d.item.id); dur = dur || r.durMs || 0; }
+    }
+    var h = histByUri()[item.uri];
+    if (h) { show = show || showKey(h.show && h.show.id); dur = dur || h.duration_ms || 0; }
+    var c = state.latest.cache, x = c && Array.isArray(c.items) ? c.items.filter(function (y) { return y && y.uri === item.uri; })[0] : null;
+    if (x) { show = show || showKey(x.showId); dur = dur || x.durMs || 0; }
+    var s = epSeen[item.uri] && epSeen[item.uri].x;
+    if (s) { show = show || showKey(s.showId); dur = dur || s.durMs || 0; }
+    return { show: show, dur: dur };
+  }
+  // The item to play: unchanged, or a copy that starts at the show's skip (exactPos keeps it through a wake).
+  function introStart(item) {
+    if (!item || item.kind !== 'episode' || item.ctx || item.exactPos || item.positionMs > 0) return item;
+    var f = introFacts(item), s = introSecs(f.show);
+    if (!s || !(f.dur > s * 1000)) return item;
+    var m = readIntro();
+    if (m[f.show] && Date.now() - m[f.show].at > INTRO_TOUCH_MS) { m[f.show].at = Date.now(); saveIntro(m); }   // in use: keep it
+    return Object.assign({}, item, { positionMs: s * 1000, exactPos: true, introSecs: s });
+  }
+  function introHint(s) { return 'Episodes you start from the beginning start at ' + fmtTime(s * 1000) + '. Only on this phone.'; }
+  // The podcast page's "Skip intro" picker and its hint (shown only when on).
+  function introBox(it) {
+    var key = showKey(it.id), s = introSecs(key);
+    var sel = el('select', { class: 'field introsel', id: 'dintro', 'aria-describedby': 'dintroHint' });
+    [0].concat(INTRO_STEPS).forEach(function (n) {
+      sel.appendChild(el('option', { value: String(n), text: n ? 'Start at ' + fmtTime(n * 1000) : 'Off' }));
+    });
+    sel.value = String(s);
+    var hint = el('p', { class: 'introhint', id: 'dintroHint', text: s ? introHint(s) : '', hidden: s ? null : '' });
+    sel.addEventListener('change', function () {
+      var n = +sel.value;
+      setIntro(key, n);
+      hint.textContent = n ? introHint(n) : '';
+      hint.hidden = !n;
+      toast(n ? 'Skip intro: episodes of “' + it.name + '” start at ' + fmtTime(n * 1000) : 'Skip intro is off for “' + it.name + '”');
+    });
+    return el('div', { class: 'introbox' }, [
+      el('div', { class: 'introrow' }, [el('label', { class: 'introlab', for: 'dintro', text: 'Skip intro' }), sel]),
+      hint
+    ]);
   }
 
   // ---------- Continue in an album, playlist or Liked Songs (v2.23) ----------
@@ -2404,10 +2864,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // v2.14: only when you open Podcasts → Latest (and the cache is over 12 hours old) or tap its Refresh, never
   // in the background; only the 12 most recently updated shows (by the cache; saved order before the first
   // load), 2 at a time. The answers are merged into the cache, so the other shows keep what they had.
+  // audit: with more than 12 saved shows, 3 of the 12 (6 while some show was never asked) go to the shows asked
+  // longest ago, so a show past the first 12, a newly followed one, or one that starts publishing again is reached.
   // Home's "Latest episodes" and the Shows order read the cache only.
   function onLatestView() { return state.started && !state.detail && state.filter === 'podcasts' && state.podTab === 'latest'; }
   function onHome() { return state.started && !state.detail && state.filter === 'home'; }
-  function latestFresh(c) { return !!c && typeof c.at === 'number' && Date.now() - c.at < LATEST_MS && c.at < Date.now() + 60000; }
+  function latestFresh(c) { return !!c && !c.partial && typeof c.at === 'number' && Date.now() - c.at < LATEST_MS && c.at < Date.now() + 60000; }   // audit: partial = cut short by leaving the page
   function hidePlayed() { return get(K.hidePlayed) === true; }
   function rerenderLatest() {
     var onShows = state.started && !state.detail && state.filter === 'podcasts' && state.podTab === 'shows';
@@ -2432,7 +2894,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function refreshLatest() {
     var L = state.latest;
     if (coolBlocked('catalog')) return;
-    var last = Math.max(L.triedAt || 0, (L.cache && L.cache.at) || 0);
+    var last = Math.max(L.triedAt || 0, (L.cache && !L.cache.partial && L.cache.at) || 0);
     var wait = last + LATEST_MANUAL_MS - Date.now();
     if (wait > 0 && last <= Date.now()) {
       var m = Math.max(1, Math.ceil(wait / 60000));
@@ -2452,27 +2914,33 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     };
   }
   // The 12 shows most recently updated per the cache (newest episode date), then saved order for the rest.
+  // audit: with more than 12, the last 3 (or 6) places go to the other shows asked longest ago (never asked first).
   function latestShows(all) {
-    var newest = (state.latest.cache && state.latest.cache.newest) || {};
-    return all.map(function (s, i) { return { s: s, i: i, d: newest[s.id] || '' }; })
-      .sort(function (a, b) { return cmpDesc(a.d, b.d) || a.i - b.i; })
-      .slice(0, LATEST_SHOWS).map(function (w) { return w.s; });
+    var c = state.latest.cache || {}, newest = c.newest || {}, askedAt = c.askedAt || {};
+    var w = all.map(function (s, i) { return { s: s, i: i, d: newest[s.id] || '', a: +askedAt[s.id] || 0 }; })
+      .sort(function (a, b) { return cmpDesc(a.d, b.d) || a.i - b.i; });
+    var rot = w.length <= LATEST_SHOWS ? 0 : w.some(function (x) { return !x.a && !x.d; }) ? LATEST_ROTATE_NEW : LATEST_ROTATE;
+    var rest = w.slice(LATEST_SHOWS - rot).sort(function (a, b) { return (a.a - b.a) || a.i - b.i; }).slice(0, rot);
+    return w.slice(0, LATEST_SHOWS - rot).concat(rest).map(function (x) { return x.s; });
   }
   function loadLatest() {
     var L = state.latest;
     var all = state.data && state.data.shows;
     if (L.loading || !all || !all.length || document.hidden || coolLeft('catalog')) return;
     var shows = latestShows(all);
-    L.loading = true; L.error = ''; L.triedAt = Date.now();
+    L.loading = true; L.error = ''; L.triedAt = Date.now(); L.stoppedHidden = false;
     var seq = ++L.seq;
-    var found = [], done = {}, failed = 0, next = 0, running = 0, stopped = false, signedOut = false, finished = false;
+    var found = [], done = {}, failed = 0, next = 0, running = 0, stopped = false, hiddenStop = false, signedOut = false, finished = false;
     function finish() {
       if (finished) return;
       finished = true;
       if (seq !== L.seq) return;
       L.loading = false;
       if (signedOut) { renderSignIn(); return; }
-      failed += shows.length - next;   // not asked (paused or hidden): they keep what the cache had
+      // audit: shows not asked because the page was hidden haven't failed: no note, and the list counts as not fresh,
+      // so the next open of Latest (or coming back to it) reloads it.
+      if (hiddenStop) { L.triedAt = 0; L.stoppedHidden = true; }
+      else failed += shows.length - next;   // not asked (paused): they keep what the cache had
       if (!Object.keys(done).length) {
         if (!stopped) L.error = 'Couldn’t load the latest episodes.';
       } else {
@@ -2480,19 +2948,30 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         var old = L.cache && Array.isArray(L.cache.items) ? L.cache.items : [];
         var order = {};
         all.forEach(function (s, i) { order[s.id] = i; });
-        old.forEach(function (x, k) { if (!done[x.showId]) found.push({ x: x, si: order[x.showId] != null ? order[x.showId] : all.length, k: k }); });
+        // audit: the new `at` below also dates their positions, so what the page heard since the old one goes in first.
+        var oldAt = (L.cache && L.cache.at) || 0, hist = histByUri();
+        old.forEach(function (x, k) {
+          if (done[x.showId] || order[x.showId] == null) return;   // audit: a podcast no longer saved drops out
+          var h = hist[x.uri];
+          if (h && histSnap(h) > oldAt) x = Object.assign({}, x, { positionMs: h.played ? 0 : (h.positionMs || 0), played: !!h.played });
+          found.push({ x: x, si: order[x.showId], k: k });
+        });
         // Newest first; same date keeps the order of your shows, then each show's own order.
         found.sort(function (a, b) { return a.x.date < b.x.date ? 1 : a.x.date > b.x.date ? -1 : (a.si - b.si) || (a.k - b.k); });
         var newestByShow = Object.assign({}, (L.cache && L.cache.newest) || {});   // every show's newest episode date
         found.forEach(function (f) { var x = f.x; if (x.showId && x.date && (!newestByShow[x.showId] || x.date > newestByShow[x.showId])) newestByShow[x.showId] = x.date; });
-        L.cache = { at: Date.now(), items: found.slice(0, LATEST_KEEP).map(function (f) { return f.x; }), failed: failed, newest: newestByShow, asked: shows.length };
+        // audit: when each saved show was last answered (failed or unsent ones keep theirs, so they come back first)
+        var askedAt = {}, prevAsked = (L.cache && L.cache.askedAt) || {}, now = Date.now();
+        all.forEach(function (s) { if (done[s.id]) askedAt[s.id] = now; else if (+prevAsked[s.id]) askedAt[s.id] = +prevAsked[s.id]; });
+        L.cache = { at: now, items: found.slice(0, LATEST_KEEP).map(function (f) { return f.x; }), failed: failed, newest: newestByShow, asked: shows.length, askedAt: askedAt };
+        if (hiddenStop) L.cache.partial = true;
         set(K.latest, L.cache);
       }
       setTimeout(rerenderLatest, 0);
     }
     function launch() {
       while (running < LATEST_PARALLEL && next < shows.length && !stopped) {
-        if (document.hidden || signedOut || coolLeft('catalog')) { stopped = true; break; }   // nothing while hidden or paused
+        if (document.hidden || signedOut || coolLeft('catalog')) { stopped = true; hiddenStop = document.hidden && !signedOut && !coolLeft('catalog'); break; }   // nothing while hidden or paused
         one(next++);
       }
       if (running === 0) finish();
@@ -2513,6 +2992,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }
     launch();
     setTimeout(rerenderLatest, 0);   // shows "Updating…"
+  }
+  // audit: Latest rows of saved podcasts only (a heart removal takes effect at once; Undo brings them back).
+  function latestVisible(items) {
+    var shows = state.data && state.data.shows, ids = {};
+    if (!Array.isArray(shows)) return items;
+    shows.forEach(function (s) { ids[s.id] = true; });
+    return items.filter(function (x) { return !!ids[x.showId] && state.saved['spotify:show:' + x.showId] !== false; });
   }
   function latestItem(x) {
     // v2.11: what the page heard beats a cache up to 12 hours old (v2.14).
@@ -2723,10 +3209,156 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       a.addEventListener('click', function (ev) { onItemClick(i, ev); });   // plays from positionMs
       var mb = el('button', { class: 'clmark', type: 'button', 'aria-label': 'Mark “' + i.name + '” as played' });   // v2.21
       mb.innerHTML = ICON.check;
-      mb.addEventListener('click', function () { toggleMark({ uri: i.uri, name: i.name, sp: false }); });
+      mb.addEventListener('click', function () {
+        var at = [].indexOf.call(document.querySelectorAll('.cl .clmark'), mb);
+        toggleMark({ uri: i.uri, name: i.name, sp: false });
+        if (document.body.contains(mb)) return;
+        // audit: A11Y-6a the card went away with the redraw: the next card's button, else the last, else the active filter
+        var ms = document.querySelectorAll('.cl .clmark');
+        var nb = ms[at] || ms[ms.length - 1] || document.querySelector('.filters .chip[aria-pressed="true"]');
+        if (nb) nb.focus({ preventScroll: true });
+      });
       ul.appendChild(el('li', { 'data-puri': i.uri, class: cur && cur === i.uri ? 'playing' : null }, [a, mb]));
     });
     main.appendChild(ul);
+  }
+  // ---------- Bookmarks (v2.32) ----------
+  // The bookmark button on Now Playing saves the song or episode and the spot it's at (the page's own estimate,
+  // as the progress bar shows it), on this phone only; saving sends nothing to Spotify. Home lists them newest
+  // first; a tap plays that item from that spot with one play request (uris + position_ms), through the usual
+  // device, wait and wake handling. Several bookmarks per item are fine. Kept: 200 at most, for up to 2 years.
+  var bmAll = false;   // Home shows every bookmark instead of the newest few (Show all); this visit only
+  var BM_URI = /^spotify:(track|episode):[A-Za-z0-9]+$/;
+  // Songs and episodes with a Spotify link; ads, local files and anything else have no bookmark button.
+  function bmOk(it) {
+    return !!(it && (it.type === 'track' || it.type === 'episode') && it.id && !it.is_local && BM_URI.test(it.uri || '') && it.uri.split(':')[1] === it.type);
+  }
+  function readBookmarks() {
+    var a = get(K.bookmarks);
+    if (!Array.isArray(a)) return [];
+    var now = Date.now();
+    return a.filter(function (b) {
+      return b && typeof b.uri === 'string' && BM_URI.test(b.uri) && typeof b.name === 'string' && typeof b.pos === 'number' && b.pos >= 0 &&
+        typeof b.at === 'number' && now - b.at < BM_MS && b.at < now + 60000;
+    }).sort(function (x, y) { return y.at - x.at; }).slice(0, BM_MAX);
+  }
+  function writeBookmarks(a) {
+    a.sort(function (x, y) { return y.at - x.at; });
+    set(K.bookmarks, a.slice(0, BM_MAX));
+  }
+  function addBookmark() {
+    var p = state.player, it = p && p.item;
+    if (!bmOk(it)) return;
+    var ep = it.type === 'episode';
+    var a = readBookmarks();
+    var at = Date.now();
+    if (a.length && a[0].at >= at) at = a[0].at + 1;   // each bookmark has its own time; Remove finds it by that
+    var b = {
+      uri: it.uri, id: it.id, kind: it.type, name: it.name || 'Untitled',
+      by: ep ? ((it.show && it.show.name) || 'Podcast') : names(it.artists),
+      img: img(ep ? (it.images || (it.show && it.show.images)) : (it.album && it.album.images)),
+      url: spotifyUrl(it), pos: bmPos(it), at: at
+    };
+    a.unshift(b);
+    writeBookmarks(a);
+    toast('Bookmarked “' + b.name + '” at ' + fmtTime(b.pos));
+    bmChanged();
+  }
+  // The spot to save: where the progress bar is, but at least 5 s before the end (a spot at the very end would just
+  // start the next song), or 0:00 for anything shorter.
+  function bmPos(it) {
+    var pos = Math.round(curPos()), dur = it.duration_ms || 0;
+    return dur ? Math.min(pos, Math.max(0, dur - 5000)) : pos;
+  }
+  // Removals since the Undo toast appeared: one Undo brings them all back.
+  var bmRemoved = [], bmToastMsg = null;
+  function removeBookmark(b) {
+    writeBookmarks(readBookmarks().filter(function (x) { return !(x.at === b.at && x.uri === b.uri); }));
+    var t = $('toast');
+    if (t.hidden || !bmToastMsg || t.firstChild !== bmToastMsg) bmRemoved = [];   // a new toast: a new Undo list
+    bmRemoved.push(b);
+    var gone = bmRemoved.slice();
+    toast(gone.length > 1 ? gone.length + ' bookmarks removed' : 'Bookmark removed', null, { text: 'Undo', fn: function () {
+      bmRemoved = []; bmToastMsg = null;
+      var a = readBookmarks();
+      gone.forEach(function (g) { if (!a.some(function (x) { return x.at === g.at && x.uri === g.uri; })) a.push(g); });
+      writeBookmarks(a);
+      bmChanged();
+      // Focus the × of the newest bookmark brought back (Show all if it's past the first few).
+      var top = gone.slice().sort(function (x, y) { return y.at - x.at; })[0];
+      function find() { return document.querySelector('[data-bmat="' + top.at + '"]'); }
+      if (!find() && !bmAll && $('bmMore')) { bmAll = true; bmChanged(); }
+      var nb = find() || document.querySelector('.filters .chip[aria-pressed="true"]');
+      if (nb) nb.focus({ preventScroll: true });
+    } });
+    bmToastMsg = t.firstChild;
+  }
+  // A bookmark as a row item: kind 'track' or 'episode' plays just that item (uris) from positionMs.
+  function bmItem(b) {
+    return {
+      kind: b.kind === 'episode' ? 'episode' : 'track', id: b.id, name: b.name, uri: b.uri,
+      url: b.url || ('https://open.spotify.com/' + b.uri.split(':')[1] + '/' + b.uri.split(':')[2]), img: b.img || '',
+      positionMs: b.pos, exactPos: true, bm: b, sub: (b.by ? b.by + ' · ' : '') + 'at ' + fmtTime(b.pos)
+    };
+  }
+  // Redraw only Home's Bookmarks section (if Home is on screen), so nothing else on Home reloads.
+  function bmChanged() {
+    var box = $('bmSect'), main = $('main');
+    if (!state.started || state.detail || state.filter !== 'home' || !box) return;
+    var n = paintBookmarks(box, state.query.trim());
+    var lone = !n && main.children.length === 1;
+    if (lone || main.querySelector(':scope > p.empty')) {   // Home's "nothing here" line needs a full redraw
+      var y = window.pageYOffset || document.documentElement.scrollTop || 0;
+      renderList();
+      window.scrollTo(0, y);
+    }
+  }
+  // Home: the newest 5 (all of them with Show all, or while the name box filters). Returns how many match.
+  function renderBookmarks(main, q) {
+    var box = el('div', { id: 'bmSect' });
+    main.appendChild(box);
+    return paintBookmarks(box, q);
+  }
+  function paintBookmarks(main, q) {
+    main.textContent = '';
+    var all = matches(readBookmarks().map(bmItem));
+    if (!all.length) return 0;
+    var rows = (q || bmAll) ? all : all.slice(0, HOME_BM);
+    main.appendChild(sectHead('hBm', 'Bookmarks', null));
+    var ul = el('ul', { class: 'list', 'aria-labelledby': 'hBm' });
+    var cur = playingUri();
+    rows.forEach(function (i, n) {
+      var a = el('a', { class: 'item', href: i.url, 'data-verb': 'Play “' + i.name + '”', 'data-sub': i.sub }, [   // the sub line says where
+        coverFor(i),
+        el('div', { class: 'meta' }, [el('div', { class: 'name', text: i.name }), el('div', { class: 'sub', text: i.sub })])
+      ]);
+      paintRowLabel(a, false);
+      a.addEventListener('click', function (ev) { onItemClick(i, ev); });
+      var rm = iconBtn(ICON.cross, 'Remove bookmark “' + i.name + '” at ' + fmtTime(i.positionMs), function () {
+        removeBookmark(i.bm);
+        bmChanged();
+        var nb = document.querySelector('[data-bmrm="' + n + '"]') || document.querySelector('[data-bmrm="' + (n - 1) + '"]') ||
+          document.querySelector('.filters .chip[aria-pressed="true"]');
+        if (nb) nb.focus({ preventScroll: true });
+      });
+      rm.setAttribute('data-bmrm', String(n));
+      rm.setAttribute('data-bmat', String(i.bm.at));
+      var li = el('li', { class: 'row', 'data-puri': i.uri }, [a, el('div', { class: 'acts' }, [rm])]);
+      if (cur && cur === i.uri) markPlaying(li, true);
+      ul.appendChild(li);
+    });
+    main.appendChild(ul);
+    if (!q && all.length > HOME_BM) {
+      var more = el('button', { class: 'linkbtn seeall', type: 'button', id: 'bmMore', 'aria-expanded': String(bmAll), text: bmAll ? 'Show fewer' : 'Show all ' + all.length });
+      more.addEventListener('click', function () {
+        bmAll = !bmAll;
+        bmChanged();
+        var nb = $('bmMore');
+        if (nb) nb.focus({ preventScroll: true });
+      });
+      main.appendChild(more);
+    }
+    return all.length;
   }
   function podSeg() {
     var g = el('div', { class: 'seg', role: 'group', 'aria-label': 'Podcasts view' });
@@ -2754,7 +3386,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!d.shows.length) { main.appendChild(el('p', { class: 'empty', text: 'You haven’t saved any podcasts yet.' })); return; }
     syncLatest();
     var c = L.cache;
-    var all = c ? c.items.map(latestItem) : [];
+    var all = c ? latestVisible(c.items).map(latestItem) : [];
     var hide = hidePlayed();
     var newest = all.filter(function (i) { return !i.played; })[0] || null;
     // Header: Play (newest unplayed), Hide played, then when it was updated.
@@ -2791,7 +3423,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     main.appendChild(note);
     if (!c) return;
     // Play newest (above) always uses the newest-first order; the list follows the chosen sort.
-    var shown = sortIsDefault('latest') ? all : sortList('latest', c.items).map(latestItem);
+    var shown = sortIsDefault('latest') ? all : sortList('latest', latestVisible(c.items)).map(latestItem);
     var items = matches(shown.filter(function (i) { return !(hide && i.played); }));
     if (!items.length) {
       main.appendChild(el('p', { class: 'empty', text: state.query.trim() ? 'Nothing matches “' + state.query + '”.'
@@ -2806,9 +3438,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
 
   // ---------- devices + playback ----------
   function recomputeDevice() {
-    var list = state.devices || [];
+    // audit: Spotify accepts no commands on a device marked is_restricted, and one with a null id can't be
+    // named in device_id; the device sheet already greys these out, so the automatic pick skips them too.
+    // state.active itself stays as it is: the Now Playing bar still shows where it really plays.
+    function ok(x) { return !!(x && x.id && !x.is_restricted); }
+    var list = (state.devices || []).filter(ok);
     var pref = get(K.device);
-    var act = state.active;
+    var act = ok(state.active) ? state.active : null;
     var d = null;
     if (pref) {
       d = list.filter(function (x) { return x.id === pref; })[0] || null;
@@ -2879,6 +3515,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // positionMs starts there: an episode's resume point, or where a resumed song had got to.
   function playBody(item) {
     if (item.kind === 'liked') return likedCtx() ? { context_uri: likedCtx() } : null;
+    if (item.uris) return item.uris.length ? { uris: item.uris.slice(0, LIKEDBY_PLAY) } : null;   // v2.31: a list of songs, no context
     var b;
     if (item.ctx) b = { context_uri: item.ctx, offset: { uri: item.uri } };
     else if (item.kind === 'track' || item.kind === 'episode' || item.kind === 'resume') b = { uris: [item.uri] };
@@ -2891,11 +3528,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var d = state.device;
     var body = playBody(item);
     if (!body) return Promise.reject(new Error('your account details haven’t loaded yet'));
+    if (opts.shuffle && item.uris && body.uris.length > 1) shuffleList(body.uris);   // v2.31: a song list is shuffled here too
     var q = '?device_id=' + encodeURIComponent(d.id);
     function send(b) { return api('/me/player/play' + q, { method: 'PUT', body: b }); }
     // Play on a whole list (no song picked) starts it in order, so it turns Spotify's Shuffle off
     // when the last check saw it on; Shuffle turns it on. A song tap or Continue keeps Spotify's setting.
-    var shuffleOff = !opts.shuffle && !!body.context_uri && !body.offset && !!(state.player && state.player.shuffle_state);
+    var wholeList = !body.offset && (!!body.context_uri || item.kind === 'likedby');   // likedby: Liked songs by an artist, played as a song list
+    var shuffleOff = !opts.shuffle && wholeList && !!(state.player && state.player.shuffle_state);
     var wantShuffle = opts.shuffle ? true : shuffleOff ? false : null;
     function shuffle() {
       return api('/me/player/shuffle?state=' + wantShuffle + '&device_id=' + encodeURIComponent(d.id), { method: 'PUT' }).then(function (r) {
@@ -2904,28 +3543,41 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       });
     }
     var shuffleOk = true;
+    state.pollSeq++;   // audit: ignore any check that started before this play (it would repaint the old song and cancel the check below)
+    state.pollExpect = null;
+    // audit: the check after the play waits for this to show: the song, or the album or playlist (or something new) playing.
+    var uriBefore = state.player && state.player.item && state.player.item.uri;
+    function started(b) {
+      return function (x) {
+        if (!x.is_playing) return false;
+        if (b.uris) return b.uris.indexOf(x.item.uri) !== -1 || !!(x.item.linked_from && b.uris.indexOf(x.item.linked_from.uri) !== -1);   // #47: a list of songs (maybe shuffled)
+        if (b.offset) return x.item.uri === item.uri || !!(x.item.linked_from && x.item.linked_from.uri === item.uri);
+        return !!(x.context && x.context.uri === b.context_uri) || x.item.uri !== uriBefore;
+      };
+    }
     var pre = wantShuffle !== null ? shuffle().then(function (r) { shuffleOk = r.ok; }, function () { shuffleOk = false; }) : Promise.resolve();
-    function done() {
-      toast((opts.shuffle ? 'Shuffling “' : 'Playing “') + item.name + '” on ' + d.name);
+    function done(sent) {
+      toast((opts.shuffle ? 'Shuffling “' : 'Playing “') + item.name + '” on ' + d.name + (item.introSecs ? ' from ' + fmtTime(item.introSecs * 1000) : ''));   // v2.33
       // Shuffle on a device that wasn't active yet can fail; try again now that it plays.
       if (wantShuffle !== null && !shuffleOk) shuffle().catch(function () {});
       noteStarted(item);   // v2.11: an episode goes into the podcast history right away
       state.lastActiveAt = Date.now();
+      expectAfter(started(sent));
       schedulePoll(600, true);   // v2.13: this copy checks once even if another copy is the poller
     }
     return pre.then(function () { return send(body); }).then(function (r) {
-      if (r.ok) return done();
+      if (r.ok) return done(body);
       // Context play (e.g. Liked Songs collection) can be refused; retry once with just the song.
       if (body.offset && [401, 404, 429].indexOf(r.status) === -1) {
         var solo = { uris: [item.uri] };
         if (body.position_ms != null) solo.position_ms = body.position_ms;
         return send(solo).then(function (r2) {
-          if (r2.ok) return done();
+          if (r2.ok) return done(solo);
           throw httpError(r2);
         });
       }
       throw httpError(r);
-    });
+    }).catch(function (e) { schedulePoll(pollEvery()); throw e; });   // audit: a failed play still leaves the regular check running
   }
   function httpError(r) { var e = new Error(errMsg(r)); e.status = r.status; return e; }
   function deviceFresh() { return state.device && (Date.now() - state.deviceAt < FRESH_MS); }
@@ -2934,11 +3586,15 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     return state.deviceChecked && !state.device && !state.deviceError && (Date.now() - state.devicesAt < NO_DEVICE_MS);
   }
   var goneWaitAt = 0;   // last time a 404 (device gone) turned a tap into a wait; once a minute at most, so it can't loop
+  var tapSeq = 0;   // audit: newest tap wins; a tap still waiting on the device check plays only if no tap came after it
   function playNow(item, opts) {
     return play(item, opts).catch(function (e) {
       if (e.message === 'signed-out') return renderSignIn();
       if (isCool(e)) return coolToast(e.group);   // v2.13: the device is fine; Spotify asked the page to wait
-      state.device = null; state.deviceAt = 0; state.devicesAt = 0; showStatus();   // next tap checks again
+      // audit: only a 404 means the device is gone. A 5xx, a 403 or a network blip leaves the device
+      // (and the header) as it was; the next tap still checks devices first.
+      if (e.status === 404) { state.device = null; state.devicesAt = 0; showStatus(); }
+      state.deviceAt = 0;   // next tap checks again
       // 404: the device went to sleep since the last check (iPhone Spotify drops off after a pause).
       // In 'wait' mode the tap waits for Control Center play instead of failing.
       if (e.status === 404 && wakeMode() === 'wait' && Date.now() - goneWaitAt > WAIT_FOR_MS) {
@@ -2955,10 +3611,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     // Not sure: check first, as before, and if nothing is open offer a button that wakes Spotify.
     // In 'wait' mode nothing opens at all: the page waits for you to press play in Control Center.
     ev.preventDefault();
+    item = introStart(item);   // v2.33: Skip intro (a start from 0:00 begins at the show's setting instead)
     if (coolBlocked('player')) return;   // v2.13: nothing is sent while playback is paused by Spotify
+    var mine = ++tapSeq;
     if (deviceFresh()) { playNow(item, opts); return; }
     if (noDeviceKnown()) { wakeSpotify(item, opts); return; }
     checkDevice().then(function () {
+      if (mine !== tapSeq) return;   // audit: a newer tap came during the check; it plays instead
       if (!state.started) return;
       if (coolLeft('player')) { coolToast('player'); return; }   // the check itself hit the limit: nothing more is sent
       if (state.device) return playNow(item, opts);
@@ -2977,10 +3636,17 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- auto-wake: start Spotify, then play the tapped item when it shows up ----------
+  // audit: IPHONE-1. The Home Screen icon runs as a standalone web app (manifest "display": "standalone").
+  // A link opened from Shortcuts goes to Safari, which keeps its own storage, so the shortcut's ?wake=1
+  // can never find a tap saved here. matchMedia is guarded (jsdom and old browsers lack it).
+  function isStandalone() {
+    try { return navigator.standalone === true || !!(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches); } catch (e) { return false; }
+  }
   function wakeMode() {
     var v = null;
     try { v = localStorage.getItem(K.wake); } catch (e) {}
-    if (v === 'shortcut' || v === '"shortcut"') return 'shortcut';
+    // audit: IPHONE-1. From the Home Screen icon a saved 'shortcut' acts as 'wait'; the stored choice is kept for a Safari tab.
+    if (v === 'shortcut' || v === '"shortcut"') return isStandalone() ? 'wait' : 'shortcut';
     if (v === 'link' || v === '"link"') return 'link';
     return 'wait';   // default: wait for a press of play in Control Center or on the lock screen
   }
@@ -2994,11 +3660,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function savePending(item, opts, mode) {
     var p = {
-      item: { kind: item.kind, id: item.id, name: item.name, uri: item.uri, url: item.url, ctx: item.ctx, positionMs: item.positionMs, exactPos: !!item.exactPos },   // v2.18: exactPos keeps a "0:00" timestamp at 0
+      item: { kind: item.kind, id: item.id, name: item.name, uri: item.uri, url: item.url, ctx: item.ctx, positionMs: item.positionMs, exactPos: !!item.exactPos, introSecs: item.introSecs || 0 },   // v2.18: exactPos keeps a "0:00" timestamp at 0; v2.33: introSecs for the toast
       opts: { shuffle: !!(opts && opts.shuffle) },
       at: Date.now(),
       mode: mode || 'link'
     };
+    if (item.uris) p.item.uris = item.uris.slice(0, LIKEDBY_PLAY);   // v2.31: a song list (Liked songs by an artist), 100 at most
     set(K.pending, p);
     return p;
   }
@@ -3029,6 +3696,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // text: the status line, or null to hide it. o: {pulse, retry, open} picks the dot and buttons.
   function showWake(text, o) {
     o = o || {};
+    if (text && (text !== $('wakeText').textContent || $('wake').hidden)) announce(text);   // audit: #wake starts hidden
     $('wake').hidden = !text;
     $('wakeText').textContent = text || '';
     $('wakeDot').className = 'dot' + (o.pulse ? ' pulse' : ' off');
@@ -3130,7 +3798,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var until = Date.now() + WAIT_FOR_MS;
     showWake('Press play in Control Center or on the lock screen. “' + p.item.name + '” starts as soon as Spotify wakes.', { pulse: true, open: true });
     function mine() { var cur = readPending(); return !!cur && cur.at === p.at; }
-    var n = 0;
+    // audit: if the device list is under one wait step old (the tap's own check just came back empty),
+    // start with the player check instead of asking for the same list again ~100 ms later.
+    var n = (Date.now() - (state.devicesAt || 0) < WAIT_POLL_MS) ? 1 : 0;
     function tick() {
       w.timer = null;
       if (!w.running || w.gen !== gen) return;
@@ -3179,10 +3849,20 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.28 (2026-11-27)';
+  var VERSION = 'v2.35 (2026-11-27)';
+  var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
-    var m = wakeMode();
-    document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
+    var m = wakeMode(), sa = isStandalone();
+    document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) {
+      r.checked = r.value === m;
+      if (r.value !== 'shortcut') return;
+      // audit: IPHONE-1. Greyed out with a note in the Home Screen icon; the original note comes back in a tab.
+      r.disabled = sa;
+      var note = r.parentNode.querySelector('.setnote');
+      if (!note) return;
+      if (note.getAttribute('data-note') === null) note.setAttribute('data-note', note.textContent);
+      note.textContent = sa ? SHORTCUT_STANDALONE_NOTE : note.getAttribute('data-note');
+    });
   }
   // Appearance: 'auto' follows the phone; Light or Dark sets data-theme on <html> (the CSS has a block for each).
   function themeMode() { var v = get(K.theme); return v === 'light' || v === 'dark' ? v : 'auto'; }
@@ -3198,8 +3878,18 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     $('searchFirst').value = searchFirst();
     $('slInfo').textContent = slStatsText();   // v2.15
   }
-  function openDiag() { $('diag').hidden = false; paintWakeModes(); paintSettings(); $('diagClose').focus(); runDiag(); }
-  function closeDiag() { $('diag').hidden = true; }
+  var diagReturn = null;   // audit: A11Y-5 focus goes back to the opener on close
+  function openDiag() { diagReturn = document.activeElement; $('diag').hidden = false; syncSheetLock(); paintWakeModes(); paintSettings(); $('diagClose').focus(); runDiag(); }
+  function closeDiag() {
+    var had = $('diag').contains(document.activeElement);
+    $('diag').hidden = true;
+    syncSheetLock();
+    var r = diagReturn;
+    diagReturn = null;
+    if (!had) return;
+    if (r && r !== document.body && r.focus && document.body.contains(r)) r.focus();
+    else $('diagBtn').focus();
+  }
   function runDiag() {
     var out = [];
     var pre = $('diagOut');
@@ -3212,7 +3902,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var miss = missingScopes();
     line('Permissions missing: ' + (miss.length ? miss.join(', ') : 'none'));
     line('Device picked: ' + (state.device ? state.device.name + ' (' + state.device.type + ')' : 'none') + (state.deviceError ? ' · error: ' + state.deviceError : ''));
-    line('Wake mode: ' + wakeMode());
+    line('Wake mode: ' + wakeMode() + (isStandalone() ? ' (Home Screen icon)' : ''));   // audit: IPHONE-1
     var pend = readPending();
     line('Pending: ' + (pend ? pend.item.name + ' (' + (pend.mode || 'link') + ', ' + Math.round((Date.now() - pend.at) / 1000) + 's ago' + (pend.manual ? ', waiting for Try again' : '') + (pend.item.kind === 'resume' ? ', resume at ' + fmtTime(pend.item.positionMs || 0) : '') + ')' : 'none'));
     var pl = state.player, lp = readLastPlay();
@@ -3319,6 +4009,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // ---------- Now Playing bar ----------
   // force: the check follows your own command (play, a control, a device switch), so it runs once even if
   // another copy of the page is the poller.
+  // audit: Spotify can take a moment to show a command it has accepted. If the check after the command doesn't show
+  // it yet (test(answer) is false), pollPlayer keeps what's on screen and asks again at about +1.5 s and +3 s:
+  // 2 extra checks at most, and a newer command replaces the chain. A 204 or an answer with no item counts as shown.
+  // An expectation older than 8 s (the page was hidden meanwhile, say) no longer applies.
+  function expectAfter(test) { state.pollExpect = test ? { test: test, left: 2, at: Date.now() } : null; }
   function schedulePoll(ms, force) {
     clearTimeout(state.pollTimer);
     state.pollTimer = null;
@@ -3371,6 +4066,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!state.started || document.hidden) return;
     var force = state.pollForce;
     state.pollForce = false;
+    var exp = force && state.pollExpect && Date.now() - state.pollExpect.at < 8000 ? state.pollExpect : null;   // audit
+    if (force) state.pollExpect = null;
     var next = pollEvery();
     if (coolLeft('player')) return;   // nothing is sent; afterCool() starts the checks again
     if (!force && state.wake.running) { holdPoller(next); schedulePoll(next); return; }   // the wake check asks Spotify itself meanwhile (the lock stays renewed)
@@ -3382,6 +4079,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var seq = ++state.pollSeq;
     fetchPlayer().then(function (res) {
       if (seq !== state.pollSeq) return 'stale';
+      if (exp && exp.left > 0 && res.p && res.p.item && !exp.test(res.p)) {   // audit: not shown yet; ask again shortly
+        exp.left--;
+        state.pollExpect = exp;
+        state.pollFailed = false;
+        schedulePoll(exp.left ? 1000 : 1500, true);
+        return 'retry';
+      }
       setPlayer(res.p);
       state.pollFailed = false;
     }).catch(function (e) {
@@ -3391,7 +4095,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       state.pollFailed = true;
     }).then(function (how) {
       // A command made this answer stale and scheduled its own check; don't override it.
-      if (how !== 'stale' && how !== 'stop') schedulePoll(pollEvery());
+      if (how !== 'stale' && how !== 'stop' && how !== 'retry') schedulePoll(pollEvery());
     });
   }
   // ---------- Spotify asleep: keep the last playback on screen, paused (v2.10) ----------
@@ -3492,6 +4196,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var s = $('pSub');
     s.classList.toggle('idle', idle);
     if (idle && s.textContent !== t) s.textContent = t;
+    // audit: the bar's name starts with what it shows (song, artist and device, or the asleep line), then what it does
+    var ttl = $('pTitle').textContent, sub = s.textContent;
+    var lab = (ttl ? ttl + (sub ? ', ' + sub : '') + '. ' : '') + 'Open Now Playing';
+    var pi = $('pInfo');
+    if (pi.getAttribute('aria-label') !== lab) pi.setAttribute('aria-label', lab);
   }
   // Play while asleep: the last song or episode, at the saved position, through the usual tap path, so it
   // plays at once when a device is open and otherwise follows the wake mode ('wait' saves it as pending).
@@ -3583,7 +4292,17 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (item.uri) requestSaved([item.uri]);
     bar.hidden = false;
     document.body.classList.add('has-player');
+    paintAllowed();   // v2.35
     paintNp();
+  }
+  // audit: what the check after Next, Previous or Play should show once Spotify has done it. Other controls
+  // (seek, volume, repeat, shuffle) return null and keep the single check.
+  function cmdExpect(path, p) {
+    var uri = p && p.item && p.item.uri, pos = curPos();
+    if (path === '/me/player/next') return function (x) { return x.item.uri !== uri; };
+    if (path === '/me/player/previous') return function (x) { return x.item.uri !== uri || (x.progress_ms || 0) < pos; };   // Previous may restart the same song
+    if (path === '/me/player/play') return function (x) { return !!x.is_playing; };
+    return null;
   }
   function command(method, path, optimistic) {
     // Asleep: Spotify has no device to send this to (it would answer 404), so nothing is sent.
@@ -3593,10 +4312,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var p = state.player;
     var dev = p && p.device && p.device.id;
     var url = path + (dev ? (path.indexOf('?') === -1 ? '?' : '&') + 'device_id=' + encodeURIComponent(dev) : '');
+    var exp = cmdExpect(path, p);   // audit: read before the optimistic paint
     if (optimistic && p) { optimistic(p); paintPlayer(); showStatus(); }
     state.pollSeq++;   // ignore any check that started before this command
+    state.pollExpect = null;
     return api(url, { method: method }).then(function (r) {
-      if (r.ok) return;
+      if (r.ok) { expectAfter(exp); return; }
       if (r.status === 404) {
         // The device went to sleep: show the last playback as asleep. Play goes straight on to wake it.
         goIdle();
@@ -3625,7 +4346,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var pos = curPos();
     if (p) { p.progress_ms = pos; state.playerAt = Date.now(); p.is_playing = false; paintPlayer(); showStatus(); }
     state.pollSeq++;   // ignore any check that started before this command
+    state.pollExpect = null;
     var nextIn = 500, force = true;
+    function accepted() { expectAfter(function (x) { return !x.is_playing; }); }   // audit
     function asleep() {
       goIdle(pos);
       playerSeenAt = Date.now();
@@ -3633,11 +4356,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       nextIn = pollEvery(); force = false;
     }
     return api('/me/player/pause' + (dev ? '?device_id=' + encodeURIComponent(dev) : ''), { method: 'PUT' }).then(function (r) {
-      if (r.ok || pausedAlready(r)) return;
+      if (r.ok || pausedAlready(r)) return accepted();
       if (r.status !== 404) throw new Error(errMsg(r));
       if (!dev) return asleep();
       return api('/me/player/pause', { method: 'PUT' }).then(function (r2) {
-        if (r2.ok || pausedAlready(r2)) return;   // it was playing under another id: the check below finds it
+        if (r2.ok || pausedAlready(r2)) return accepted();   // it was playing under another id: the check below finds it
         if (r2.status === 404) return asleep();
         throw new Error(errMsg(r2));
       });
@@ -3666,11 +4389,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     body.appendChild(el('ul', { class: 'permlist' }, fs.allow.map(function (a) { return el('li', { text: a }); })));
     body.appendChild(el('p', { class: 'sethint', text: 'You come back here afterwards. If you cancel, nothing changes.' }));
     $('perm').hidden = false;
+    syncSheetLock();
     $('permGo').focus();
   }
   function closePerm() {
     if ($('perm').hidden) return;
     $('perm').hidden = true;
+    syncSheetLock();
     permView = null;
     var r = permReturn;
     permReturn = null;
@@ -3687,10 +4412,15 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     return !!(r && r.status === 403 && /scope|permission/i.test(JSON.stringify(r.json || '')) && FEATURE_SCOPES[f]);
   }
 
+  // audit: body.sheetopen locks the page behind while any sheet is open. Recomputed from the DOM after every open/close,
+  // so stacked sheets and every close path stay right; it never touches Now Playing's npopen.
+  function syncSheetLock() { document.body.classList.toggle('sheetopen', !!document.querySelector('.sheet:not([hidden])')); }
+
   // ---------- device sheet ----------
   function openSheet(from) {   // from: optional opener to return focus to (an event object is ignored)
     state.sheetReturn = (from && from.nodeType === 1) ? from : document.activeElement;
     $('sheet').hidden = false;
+    syncSheetLock();
     renderSheet();
     loadSheetDevices();
     $('sheetClose').focus();
@@ -3698,6 +4428,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function closeSheet() {
     if ($('sheet').hidden) return;
     $('sheet').hidden = true;
+    syncSheetLock();
     var r = state.sheetReturn;
     state.sheetReturn = null;
     if (r && r.focus && document.body.contains(r)) r.focus();
@@ -3842,8 +4573,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       toast('Copy this link:', null, { text: 'Close', fn: function () {} });
       var t = $('toast');
       t.insertBefore(el('span', { class: 'tsel', text: url }), t.querySelector('.toastbtn'));
-      clearTimeout(toastTimer);
-      toastTimer = setTimeout(function () { t.hidden = true; }, 15000);
+      toastMs = 15000;   // audit: and not while focus is in it
+      toastTimeout();
     }
     var c = navigator.clipboard;
     if (!c || !c.writeText) return byHand();
@@ -3914,6 +4645,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     function move(v) { s.value = v; s.paint(v); if (o.input) o.input(v); }
     node.addEventListener('pointerdown', function (e) {
       if ((e.button != null && e.button > 0) || !s.max()) return;
+      if (o.locked && o.locked()) { if (o.onLocked) o.onLocked(); return; }   // v2.35
       s.dragging = true;
       try { node.setPointerCapture(e.pointerId); } catch (err) {}
       move(fromX(e.clientX));
@@ -3930,6 +4662,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     node.addEventListener('keydown', function (e) {
       var max = s.max(), v = s.value;
       if (!max) return;
+      if (o.locked && o.locked() && /^(Arrow|Home$|End$)/.test(e.key)) { e.preventDefault(); if (o.onLocked) o.onLocked(); return; }   // v2.35
       if (e.key === 'ArrowRight' || e.key === 'ArrowUp') v += o.step;
       else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') v -= o.step;
       else if (e.key === 'Home') v = 0;
@@ -3959,6 +4692,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       paintIdle();
       return;
     }
+    if (!allowTap('seeking')) { paintProgress(); return false; }   // v2.35: puts the bar back where it was; false = not sent
     command('PUT', '/me/player/seek?position_ms=' + ms, function (x) { x.progress_ms = ms; state.playerAt = Date.now(); });
   }
   function seekBy(delta) { seekTo(curPos() + delta); }
@@ -3971,7 +4705,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   var REPEAT_LABEL = { off: 'Repeat off', context: 'Repeat all', track: 'Repeat one' };
   function repeatState() { var r = state.player && state.player.repeat_state; return REPEAT_LABEL[r] ? r : 'off'; }
   function cycleRepeat() {
-    var n = REPEAT_NEXT[repeatState()];
+    var n = repeatNext();   // v2.35: skips a state Spotify doesn't allow
+    if (!n) { toast(ALLOW_WHY.toggling_repeat_context + '.'); return; }
     command('PUT', '/me/player/repeat?state=' + n, function (x) { x.repeat_state = n; });
   }
   function paintRepeat(b) {
@@ -3982,6 +4717,98 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     b.setAttribute('aria-label', REPEAT_LABEL[r] + ' (tap to change)');
     b.innerHTML = r === 'track' ? ICON.repeatOne : ICON.repeat;
   }
+  // ---------- Controls that follow what Spotify allows (v2.35) ----------
+  // The /me/player answer the page already gets carries `actions`. Only {disallows: {skipping_prev: true, …}}
+  // (true = not allowed) is read; flags straight under `actions` (as Spotify's reference lists them, without saying
+  // what true means) are ignored. A missing flag never greys anything out. The saved "asleep" playback has no actions,
+  // so all controls work there. Seek, Shuffle and Repeat refuse the tap; Previous and Next only look greyed and
+  // still send the tap (Spotify's own refusal shows the usual message), since skipping_prev can be reported wrongly.
+  var ALLOW_WHY = {
+    skipping_prev: 'Spotify doesn’t allow skipping back here',
+    skipping_next: 'Spotify doesn’t allow skipping ahead here',
+    seeking: 'Spotify doesn’t allow seeking here',
+    toggling_shuffle: 'Spotify doesn’t allow shuffle here',
+    toggling_repeat_context: 'Spotify doesn’t allow changing repeat here',
+    toggling_repeat_track: 'Spotify doesn’t allow changing repeat here'
+  };
+  var ALLOW_NOUN = { skipping_prev: 'skipping back', skipping_next: 'skipping ahead', seeking: 'seeking', toggling_shuffle: 'shuffle', repeat: 'changing repeat' };
+  function playerDisallows(p) {
+    var a = p && !p.idle && p.actions;
+    if (!a || typeof a !== 'object') return null;
+    return a.disallows && typeof a.disallows === 'object' ? a.disallows : null;
+  }
+  // Repeat's next state that Spotify allows, or '' when none is. Leaving or entering all needs
+  // toggling_repeat_context, leaving or entering one needs toggling_repeat_track; a disallowed state is skipped
+  // (off → one when all isn't allowed; all → off when one isn't), so the page never asks for it.
+  var REPEAT_FLAG = { context: 'toggling_repeat_context', track: 'toggling_repeat_track' };
+  function repeatNext() {
+    var cur = repeatState();
+    var d = playerDisallows(state.player);
+    for (var n = REPEAT_NEXT[cur]; n !== cur; n = REPEAT_NEXT[n]) {
+      if (!d || ![REPEAT_FLAG[cur], REPEAT_FLAG[n]].some(function (f) { return f && d[f] === true; })) return n;
+    }
+    return '';
+  }
+  // The reason a control is greyed out right now, or '' when it's allowed (or Spotify didn't say).
+  function notAllowed(flag) {
+    var d = playerDisallows(state.player);
+    return d && d[flag] === true ? (ALLOW_WHY[flag] || 'Spotify doesn’t allow that here') : '';
+  }
+  // A tap on a greyed-out control: say why and send nothing.
+  function allowTap(flag) {
+    var why = notAllowed(flag);
+    if (why) toast(why + '.');
+    return !why;
+  }
+  function lockCtl(n, why) {
+    if (!n) return;
+    if (why) {
+      if (n.getAttribute('aria-disabled') !== 'true') n.setAttribute('aria-disabled', 'true');
+      if (n.getAttribute('title') !== why) { n.setAttribute('title', why); n.setAttribute('aria-description', why); }
+    } else if (n.hasAttribute('aria-disabled')) {
+      n.removeAttribute('aria-disabled'); n.removeAttribute('title'); n.removeAttribute('aria-description');
+    }
+  }
+  // Greys out (or brings back) Previous, Next, Shuffle and Repeat on the bar and the Now Playing screen, the
+  // progress bar and Back 15 / Forward 30, and fills the one-line note under the Now Playing controls.
+  function paintAllowed() {
+    var p = state.player;
+    var why = { prev: notAllowed('skipping_prev'), next: notAllowed('skipping_next'), seek: notAllowed('seeking'),
+      shuf: notAllowed('toggling_shuffle'), rep: repeatNext() ? '' : ALLOW_WHY.toggling_repeat_context };
+    ['p', 'np'].forEach(function (pre) {
+      lockCtl($(pre + 'Prev'), why.prev);
+      lockCtl($(pre + 'Next'), why.next);
+      lockCtl($(pre + 'Shuffle'), why.shuf);
+      lockCtl($(pre + 'Repeat'), why.rep);
+    });
+    lockCtl($('npSeek'), why.seek);
+    lockCtl($('npBack15'), why.seek);
+    lockCtl($('npFwd30'), why.seek);
+    var no = [];
+    if (why.prev) no.push(ALLOW_NOUN.skipping_prev);
+    if (why.next) no.push(ALLOW_NOUN.skipping_next);
+    if (why.seek) no.push(ALLOW_NOUN.seeking);
+    if (why.shuf) no.push(ALLOW_NOUN.toggling_shuffle);
+    if (why.rep) no.push(ALLOW_NOUN.repeat);
+    var t = [];
+    var live = p && !p.idle;
+    if (live && p.currently_playing_type === 'ad') t.push('An ad is playing.');
+    if (live && p.device && p.device.is_private_session === true) t.push('Private session is on.');
+    if (no.length) t.push('Spotify doesn’t allow ' + (no.length > 1 ? no.slice(0, -1).join(', ') + ' or ' + no[no.length - 1] : no[0]) + ' here.');
+    var line = t.join(' ');
+    var n = $('npAllow');
+    if (n.textContent !== line) n.textContent = line;
+    n.hidden = !line;
+  }
+  // Songs Spotify marks as unplayable (is_playable: false, or restrictions.reason). Spotify adds these only to
+  // answers asked with a market, which the page doesn't pass, so most rows never carry them.
+  var NOPE_WHY = { market: 'Not available in your country', explicit: 'Explicit content is off', product: 'Not available on your plan' };
+  function unplayableWhy(t) {
+    if (!t) return '';
+    var r = t.restrictions && typeof t.restrictions === 'object' ? t.restrictions.reason : '';
+    if (r) return NOPE_WHY[r] || 'Not available';
+    return t.is_playable === false ? 'Not available' : '';
+  }
   // Play/Pause freezes or restarts the local progress estimate where it is.
   function togglePlay(ev) {
     if (state.playerIdle) { resumeFromIdle(ev); return; }   // asleep: resume the last playback (wakes Spotify per the wake mode)
@@ -3990,6 +4817,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     else command('PUT', '/me/player/play', function (x) { x.progress_ms = curPos(); state.playerAt = Date.now(); x.is_playing = true; });
   }
   function toggleShuffle() {
+    if (!allowTap('toggling_shuffle')) return;   // v2.35
     var on = !(state.player && state.player.shuffle_state);
     command('PUT', '/me/player/shuffle?state=' + on, function (x) { x.shuffle_state = on; });
   }
@@ -4074,6 +4902,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     h.setAttribute('data-kind', ep ? 'episode' : 'track');
     h.hidden = !it.uri;
     paintHeart(h);
+    $('npBm').hidden = !bmOk(it);   // v2.32: songs and episodes with a Spotify link (not ads or local files)
     var pb = $('npPlay');
     var lab = p.is_playing ? 'Pause' : 'Play';
     if (pb.getAttribute('aria-label') !== lab || !pb.firstChild) { pb.setAttribute('aria-label', lab); pb.innerHTML = p.is_playing ? ICON.pause : ICON.play; }
@@ -4150,6 +4979,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function openQueue(from) {
     queueReturn = (from && from.nodeType === 1) ? from : document.activeElement;
     $('queue').hidden = false;
+    syncSheetLock();
     $('qHide').checked = queueHide();
     loadQueue();
     $('queueClose').focus();
@@ -4157,6 +4987,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function closeQueue(restore) {
     if ($('queue').hidden) return;
     $('queue').hidden = true;
+    syncSheetLock();
     queueSeq++;
     var r = queueReturn;
     queueReturn = null;
@@ -4382,6 +5213,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     markItem(item);   // v2.21: played state follows this phone's marks
     var opens = opensOnTap(item);
     var sub = (item.sub || '') + copySub(item);   // v2.24: " · You have a copy" / " · Copy" (shown only, never stored)
+    if (item.nope) sub += (sub ? ' · ' : '') + item.nope;   // v2.35
     var a = el('a', { class: 'item', href: item.url, 'data-verb': (opens ? 'Open “' : 'Play “') + item.name + '”', 'data-sub': sub, 'data-new': item.fresh ? '' : null }, [
       coverFor(item),
       el('div', { class: 'meta' }, [
@@ -4396,9 +5228,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       // v2.12: albums, playlists, Liked Songs, podcasts and artists open their list (Play is at the top there);
       // songs and episodes play. A release tapped in an artist view opens on top of it, so Back returns to the artist.
       if (opens) { ev.preventDefault(); openDetail(item, { push: !!state.detail }); return; }
+      if (item.noPlay) { ev.preventDefault(); toast(item.nope + '.'); return; }   // v2.35: Spotify says it can't play
       onItemClick(item, ev);
     });
-    var li = el('li', { class: 'row' }, [a]);
+    var li = el('li', { class: item.nope ? 'row nope' : 'row' }, [a]);   // v2.35: dimmed when Spotify says it can't play
     if (item.kind === 'track' || item.kind === 'episode') {
       li.setAttribute('data-puri', item.uri);
       var cur = playingUri();
@@ -4476,7 +5309,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var ul = $('slist');
     if (!ul) return;
     ul.textContent = '';
-    appendSearchRows(sortList('s-' + e.type, e.items), e);
+    appendSearchRows(sortShown('s-' + e.type, sortList('s-' + e.type, e.items)), e);
   }
   function searchFirst() {
     var v = get(K.searchFirst);
@@ -4517,16 +5350,42 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     return items.filter(function (i) { return (i.name + ' ' + i.sub + (i.album ? ' ' + i.album.name : '') + (i.playlist ? ' ' + i.playlist.name : '') + (i.liked ? ' ' + i.liked.name : '') + (i.show ? ' ' + i.show.name : '')).toLowerCase().indexOf(q) !== -1; });
   }
   // Recently played songs (Spotify) and podcast episodes (the page's own history, v2.11), newest first.
+  // v2.30: songs come from the listening log, under day headings; Show chips (All, Songs, Episodes) when both
+  // kinds are there; the newest LOG_ROWS rows, then Show earlier. Hearts are checked only for the songs in
+  // Spotify's latest answer (and episodes), as before, so older rows add no requests.
   function renderRecent(main) {
     var r = state.recent;
     if (r.error) main.appendChild(el('p', { class: 'err', text: r.error }));
-    if (!r.items && r.loading) { main.appendChild(el('p', { class: 'empty', text: 'Loading recently played…' })); return; }
-    var items = matches(byTime([r.items || [], epHistory().map(histRow)]));
+    var songs = logRows(), eps = epHistory().map(histRow);
+    if (!r.items && r.loading && !songs.length) { main.appendChild(el('p', { class: 'empty', text: 'Loading recently played…' })); return; }
+    var both = songs.length && eps.length, kind = both ? logKind : 'all';
+    if (both) main.appendChild(logKindBar(kind));
+    var items = matches(byTime([kind === 'episode' ? [] : songs, kind === 'track' ? [] : eps]));
     if (!items.length) { main.appendChild(el('p', { class: 'empty', text: state.query.trim() ? 'Nothing matches “' + state.query + '”.' : 'Nothing played recently.' })); return; }
-    var ul = el('ul', { class: 'list' });
-    items.forEach(function (i) { ul.appendChild(itemRow(i)); });
-    main.appendChild(ul);
-    requestSaved(savableUris(items));
+    var shown = items.slice(0, logShow), fresh = {}, day = null, ul = null, n = 0;
+    (r.items || []).forEach(function (i) { fresh[i.uri] = true; });
+    shown.forEach(function (i) {
+      var k = dayKey(i.at || 0);
+      if (k !== day) {
+        day = k; n++;
+        main.appendChild(el('h2', { class: 'sect', id: 'rday' + n, text: dayLabel(i.at || 0) }));
+        ul = el('ul', { class: 'list', 'aria-labelledby': 'rday' + n });
+        main.appendChild(ul);
+      }
+      ul.appendChild(itemRow(i));
+    });
+    if (items.length > shown.length) {
+      var more = el('button', { class: 'btn secondary', type: 'button', text: 'Show earlier' });
+      more.addEventListener('click', function () {
+        var from = shown.length;
+        logShow = from + LOG_ROWS;
+        renderList();
+        var a = document.querySelectorAll('#main li.row a.item')[from];
+        if (a) a.focus();
+      });
+      main.appendChild(el('div', { class: 'dfoot' }, [more]));
+    }
+    requestSaved(savableUris(shown.filter(function (i) { return i.kind !== 'track' || fresh[i.uri]; })));
   }
   function renderList() {
     if (state.detail) return;   // the song list view owns the page
@@ -4691,6 +5550,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var cl = matches(continueItems());
     renderContinue(main);
     shown += cl.length;
+    shown += renderBookmarks(main, q);   // v2.32
     // Jump back in: your last few distinct albums from Recently played, and (v2.11) one card per podcast
     // from the page's own history, newest first.
     setTimeout(maybeLoadHomeRecent, 0);   // after this render; at most once per 15 minutes
@@ -4703,7 +5563,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       syncLatest();   // v2.14: the cache only; Latest refreshes when you open it
       var c = state.latest.cache;
       var hide = hidePlayed();
-      var eps = c ? matches(c.items.map(latestItem).filter(function (i) { return !(hide && i.played); })) : [];
+      var eps = c ? matches(latestVisible(c.items).map(latestItem).filter(function (i) { return !(hide && i.played); })) : [];
       if (!q) eps = eps.slice(0, HOME_LATEST);
       if (eps.length) {
         main.appendChild(sectHead('hLatest', 'Latest episodes', function () { state.podTab = 'latest'; setFilter('podcasts'); }));
@@ -4722,6 +5582,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!shown) main.appendChild(el('p', { class: 'empty', text: q ? 'Nothing on Home matches “' + state.query + '”. Try All for your whole library.' : 'Nothing here yet.' }));
   }
   function setFilter(f, focus) {
+    clearTimeout(queryTimer); queryTimer = null;   // audit: PERF-3, this draws the view anyway
     var wasSearch = state.filter === 'search';
     state.filter = f; set(K.filter, f);
     document.querySelectorAll('.filters .chip').forEach(function (c) { c.setAttribute('aria-pressed', String(c.dataset.filter === f)); });
@@ -4775,6 +5636,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (at) at.albumName = parent.name || '';   // v2.22: Find in list matches the album name
       return at;
     }
+    if (parent.kind === 'liked') likedCount(it);   // v2.31: every Liked Songs entry counts (local files too), to know when all are in
     if (it.is_local) return null;
     var t = it.item || it.track;
     if (!t) return null;
@@ -4782,7 +5644,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var m = mapTrack(t, { sub: sub, ctx: parent.kind === 'liked' ? likedCtx() : parent.uri });
     if (m && it.added_at) m.added = it.added_at;   // when it was added to the playlist (or liked), for sorting
     if (m && t.album && t.album.name) m.albumName = t.album.name;   // v2.22: for Find in list
+    if (m && t.album) m.released = relDay(t.album.release_date);   // v2.34: for the Release date sort
     if (m && parent.kind === 'liked' && state.saved[m.uri] === undefined) state.saved[m.uri] = true;
+    if (m && parent.kind === 'liked') likedNote(m, t);   // v2.31: artist IDs, for Liked songs on the artist page
     return m;
   }
   // opts.push (v2.12): open on top of the current view (a release from an artist view), so Back returns to it.
@@ -4792,6 +5656,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     opts = opts || {};
     var y = window.pageYOffset || document.documentElement.scrollTop || 0;
     var old = state.detail;
+    // audit: A11Y-2 — the focused row or card is removed by the redraw; remember it so Back can return to it
+    var fa0 = document.activeElement;
+    var retHref = (fa0 && fa0.matches && fa0.matches('#main a.item, #main a.clcard')) ? fa0.getAttribute('href') : null;
     dropEmbed(old);   // v2.27
     var d = item.kind === 'artist'
       ? { kind: 'artist', item: item, img: '', items: [], offset: 0, more: false, total: null, loading: false, error: '', lastGot: 0 }
@@ -4803,6 +5670,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       d.returnScroll = y; d.pushed = false;
     } else if (old) {
       d.returnScroll = old.returnScroll; d.pushed = old.pushed;   // takes over the replaced view's history entry
+      if (!retHref) retHref = old.retHref;   // audit: A11Y-2 — and the row Back returns focus to
     } else {
       state.detailStack = [];
       d.returnScroll = y; d.pushed = false;
@@ -4811,8 +5679,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!d.pushed) {
       try { history.pushState({ detail: true, depth: state.detailStack.length + 1 }, '', '#detail'); d.pushed = true; } catch (e) { d.pushed = false; }
     }
+    d.retHref = retHref;
     renderDetail();
     window.scrollTo(0, 0);
+    // audit: A11Y-2 — focus fell to the page (the row was redrawn away): move it to Back, as openArtistPage does.
+    // Focus that is still in the page (a sheet, the player bar) is left alone.
+    if (!fa0 || fa0 === document.body || !document.body.contains(fa0)) { var bk = document.querySelector('.dhead .back'); if (bk) bk.focus({ preventScroll: true }); }
     if (canSave(item)) requestSaved([item.uri]);
     if (d.kind === 'artist') loadArtist(d);
     else startDetail(d);
@@ -4832,6 +5704,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       state.detail = state.detailStack.pop();
       renderDetail();   // from what that view already loaded; nothing is asked again
       window.scrollTo(0, d.returnScroll || 0);
+      refocusRow(d);   // audit: A11Y-2
       return;
     }
     state.detail = null;
@@ -4839,6 +5712,16 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (location.hash === '#detail') { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} }
     renderList();
     window.scrollTo(0, d.returnScroll || 0);
+    refocusRow(d);   // audit: A11Y-2
+  }
+  // audit: A11Y-2 — after Back, focus the row or card the closed view was opened from, if focus fell to the page.
+  // Compares hrefs in a loop (no CSS.escape needed).
+  function refocusRow(d) {
+    var a = document.activeElement;
+    if (a && a !== document.body && document.body.contains(a)) return;
+    if (!d.retHref) return;
+    var ls = document.querySelectorAll('#main a.item, #main a.clcard');
+    for (var i = 0; i < ls.length; i++) if (ls[i].getAttribute('href') === d.retHref) { ls[i].focus({ preventScroll: true }); return; }
   }
   function backButton() {
     var below = state.detailStack[state.detailStack.length - 1];
@@ -4883,7 +5766,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         el('div', { class: 'meta' }, [el('h2', { class: 'dname', text: it.name }), detailSub(it), el('div', { class: 'dsum', id: 'dsum' })])
       ]),
       el('div', { class: 'dbtns' }, btns),
-      el('div', { class: 'dbtns', id: 'dcont', hidden: true })   // v2.23: Continue · <song>
+      el('div', { class: 'dbtns', id: 'dcont', hidden: true }),   // v2.23: Continue · <song>
+      it.kind === 'show' ? introBox(it) : null   // v2.33: Skip intro
     ]));
     main.appendChild(el('p', { class: 'lnote', id: 'dnote', hidden: true }));   // v2.15: saved list / fallback note
     main.appendChild(el('div', { id: 'dedit' }));   // v2.26: Edit (your own and collaborative playlists)
@@ -4948,7 +5832,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       list = list.filter(function (i) { return findHit(i, tok); });
       d.findHits = list.length;
     }
-    list = view ? sortList(view, list) : list;
+    list = view ? sortShown(view, sortList(view, list)) : list;
     appendDetailRows(tok ? list.slice(0, FIND_SHOW) : list);
   }
   function firstUnplayed(items) {
@@ -4995,11 +5879,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }));
     if (!t) return null;
     var pos = t.played ? 0 : (t.positionMs || 0);
-    return { kind: 'episode', id: t.id, name: t.name || 'Untitled', uri: t.uri, url: 'https://open.spotify.com/episode/' + t.id, positionMs: pos, played: !!t.played };
+    return { kind: 'episode', id: t.id, name: t.name || 'Untitled', uri: t.uri, url: 'https://open.spotify.com/episode/' + t.id, positionMs: pos, played: !!t.played,
+      showId: showId, durMs: t.durMs || 0 };   // v2.33: for Skip intro
   }
   function appendDetailRows(items) {
     var ul = $('dlist');
     if (!ul) return;
+    if (state.detail && state.detail.item.kind === 'liked') items = items.map(withLastPlay);   // v2.30: "Played 3 days ago"
     items.forEach(function (i) { ul.appendChild(itemRow(i)); });
     requestSaved(savableUris(items));
   }
@@ -5161,7 +6047,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var g = coolGroup(urls[0]);
     var p = { urls: urls, group: g, total: d.total, more: d.total - off, reqs: 0, memo: null, disabled: false, why: '' };
     if (g === 'catalog') {
-      p.reqs = urls.filter(function (u) { return !catMemo[u]; }).length;   // pages kept for this visit cost nothing
+      p.reqs = urls.filter(function (u) { return !catMemo[memoKey(u)]; }).length;   // pages kept for this visit cost nothing
       if (p.reqs > FIND_CAT_MAX) { p.disabled = true; p.why = 'cap'; }
       else if (p.reqs && coolLeft('catalog')) { p.disabled = true; p.why = 'paused'; }
     } else {
@@ -5211,6 +6097,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     stop.addEventListener('click', function () { r.stop = true; stop.disabled = true; });
     f.appendChild(stop);
   }
+  // audit: Liked Songs and Saved episodes only: a like or unlike made while the list is open moves Spotify's offsets
+  // by one, so a page can bring back a row already shown; it's dropped. A playlist can hold a song twice, so not there.
+  function dropShown(d, mapped) {
+    if (d.item.kind !== 'liked' && d.item.kind !== 'episodes') return mapped;
+    var seen = {};
+    d.items.forEach(function (x) { seen[x.uri] = true; });
+    return mapped.filter(function (x) { return !seen[x.uri]; });
+  }
   // One answered page goes into the list in order (albums: into the saved copy's raw list).
   function addFindPage(d, j) {
     if (typeof j.total === 'number') d.total = j.total;
@@ -5221,7 +6115,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       return [];
     }
     var off = typeof j.offset === 'number' ? j.offset : null;   // v2.26: real playlist positions, for Edit
-    var mapped = (j.items || []).map(function (it, k) { var m = mapDetail(d.item, it); if (m && d.item.kind === 'playlist' && off !== null) m.pos = off + k; return m; }).filter(Boolean);
+    var mapped = dropShown(d, (j.items || []).map(function (it, k) { var m = mapDetail(d.item, it); if (m && d.item.kind === 'playlist' && off !== null) m.pos = off + k; return m; }).filter(Boolean));
     d.items = d.items.concat(mapped);
     if (isPod(d.item)) rememberEpisodes(mapped);
     return mapped;
@@ -5473,7 +6367,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!url) { d.restricted = true; paintDetailSort(); paintDetailFoot(); return; }
     d.lastUrl = url;
     var g = coolGroup(url);
-    if (!catMemo[url] && coolLeft(g)) {
+    if (!catMemo[memoKey(url)] && coolLeft(g)) {
       // v2.27: a playlist that may be someone else's (owner or account not confirmed) shows Show songs, as before.
       if (d.item.kind === 'playlist' && !knownListable(d.item)) { d.restricted = true; paintDetailSort(); paintDetailFoot(); return; }
       if (detailFallback(d)) return;   // v2.15: search (albums) or your saved and played episodes (podcasts)
@@ -5498,7 +6392,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         var raws = (r.json.items || []).filter(function (x) { return x && x.id && x.uri; }).map(kind === 'album' ? slTrack : slEpisode);
         if (first) d.checkedAt = Date.now();
         if (kind === 'album' && first) d.raw = raws;   // the first page (or Reload from Spotify) starts the list over
-        else if (kind === 'show' && first && d.raw.length) {
+        else if (kind === 'show' && first && d.raw.length && r.json.next && raws.length && !d.raw.some(function (x) { return x.id === raws[raws.length - 1].id; })) {
+          // audit: page 1's oldest episode isn't in the saved copy (50+ new since it was saved, or Latest's newest few
+          // on top of an older copy), so joining them would hide a gap: the list starts over from page 1.
+          d.raw = raws;
+        } else if (kind === 'show' && first && d.raw.length) {
           // Page 1 over a saved copy: Spotify's newest episodes first, then the saved ones it didn't include.
           var ids = {};
           raws.forEach(function (x) { ids[x.id] = true; });
@@ -5514,7 +6412,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         return;
       }
       var off = pageOffset(url, r.json);   // v2.26: each song's place in the playlist, for Edit
-      var mapped = (r.json.items || []).map(function (it, j) { var m = mapDetail(d.item, it); if (m && kind === 'playlist') m.pos = off + j; return m; }).filter(Boolean);
+      var mapped = dropShown(d, (r.json.items || []).map(function (it, j) { var m = mapDetail(d.item, it); if (m && kind === 'playlist') m.pos = off + j; return m; }).filter(Boolean));
       d.items = d.items.concat(mapped);
       if (isPod(d.item)) rememberEpisodes(mapped);   // for Continue listening
       if (!cur) return;
@@ -5598,9 +6496,24 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       var items = raw.slice(p.off, last ? p.off + lim : keep[k + 1].off);
       var next = !last ? p.r.json.next
         : p.off + items.length < total ? API + plItemsPath(id) + '?offset=' + (p.off + items.length) + '&limit=' + lim : null;
-      catMemo[p.key] = { ok: true, status: p.r.status || 200, json: Object.assign({}, p.r.json, { items: items, total: total, offset: p.off, next: next }), snap: snap || null };
+      catMemo[p.key] = { ok: true, status: p.r.status || 200, json: Object.assign({}, p.r.json, { items: items, total: total, offset: p.off, next: next }), snap: snap || null, at: p.r.at };
     });
     return { total: total };
+  }
+  // audit: a move is by position, so positions from pages kept for hours can move the wrong song when the playlist
+  // changed elsewhere. Stale = no change made in this view yet (or arrows locked) and page 1 is over a minute old.
+  function editStale(d) {
+    if (d.moveLock) return true;
+    if (d.snap !== undefined) return false;
+    var pages = memoPages(d.item.id);
+    return !pages.length || Date.now() - (pages[0].r.at || 0) > 60000;
+  }
+  // Loads page 1 again (one catalog request); rows past it come back with Load more.
+  function reloadForEdit(d) {
+    memoPages(d.item.id).forEach(function (p) { delete catMemo[p.key]; });
+    d.items = []; d.next = null; d.moveLock = false;
+    delete d.snap;   // an older change's snapshot doesn't go with the new positions
+    loadDetail(detailUrl(d.item));
   }
   // The snapshot the loaded positions belong to: the last change's answer, or none (Spotify then uses the
   // playlist as it is now, which is what the page loaded).
@@ -5651,11 +6564,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     plEdit.view = view;
     plEdit.ret = (from && from.nodeType === 1) ? from : document.activeElement;
     $('plsheet').hidden = false;
+    syncSheetLock();
     renderPl();
   }
   function closePl() {
     if ($('plsheet').hidden) return;
     $('plsheet').hidden = true;
+    syncSheetLock();
     plEdit.view = null;
     var r = plEdit.ret;
     plEdit.ret = null;
@@ -5684,7 +6599,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       body.appendChild(el('p', { class: 'sethint', text: what + (by ? ' · ' + by : '') }));
       var lists = editablePlaylists();
       if (!lists.pinned.length && !lists.rest.length) {
-        body.appendChild(el('p', { class: 'empty', text: state.data ? 'No playlists you own or collaborate on in your library.' : 'Your library hasn’t loaded yet.' }));
+        body.appendChild(el('p', { class: 'empty', text: !state.data ? 'Your library hasn’t loaded yet.' : !(state.data.me && state.data.me.id) ? 'Your account details didn’t load. Refresh (top right) to try again.' : 'No playlists you own or collaborate on in your library.' }));
       } else {
         var box = el('input', { class: 'search', type: 'search', id: 'plFilter', placeholder: 'Filter by name', 'aria-label': 'Filter playlists by name', autocomplete: 'off', enterkeyhint: 'done' });
         box.value = v.q || '';
@@ -5773,7 +6688,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         d.total += 1;
         if (total == null) total = d.total;
       }
-      d.snap = snap;
+      if (d.snap !== undefined) d.snap = snap;   // audit: an add doesn't make old positions current (editStale); the kept pages hold its snapshot
       if (state.detail === d && $('dlist')) { paintDetailList(); paintDetailSort(); paintDetailFoot(); }
     }
     if (total == null) { var lp = libraryPlaylist(id); if (lp && typeof lp.count === 'number') total = lp.count + 1; }
@@ -5797,7 +6712,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     done.addEventListener('click', function () { setEditing(d, false); });
     box.appendChild(el('div', { class: 'editbar' }, [
       el('p', { class: 'sethint', text: 'Shown in playlist order. Tap − to remove a song, or the arrows to move it.' +
-        (d.next ? ' Songs move only among the ' + d.items.length + ' loaded so far; Load more for the rest.' : '') }),
+        (d.next ? ' Songs move only among the ' + d.items.length + ' loaded so far; Load more for the rest.' : '') +
+        (d.moveLock ? ' Moving songs needs a fresh copy of the list' + (coolLeft('catalog') ? ', and Spotify paused updates until ' + clock(coolUntil('catalog')) : '') + '. Tap Done, then Edit, to try again.' : '') }),
       done
     ]));
     setEditLock(plEdit.busy || d.loading);
@@ -5805,6 +6721,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function setEditing(d, on) {
     if (state.detail !== d) return;
     if (on) stopFind(d);   // v2.26: a running Search all stops; what it loaded stays
+    // audit: old positions are loaded again first; while that can't be sent (paused, or a page is loading),
+    // Remove still works (it goes by song) but the arrows are off.
+    if (on && editStale(d)) { if (!d.loading && !coolLeft('catalog')) reloadForEdit(d); else d.moveLock = true; }
     d.editing = on;
     paintDetailSort(); paintDetailList(); paintDetailFoot();
     var f = $(on ? 'deditDone' : 'deditBtn');
@@ -5826,8 +6745,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var li = el('li', { class: 'row editrow', 'data-puri': x.uri }, [
       el('div', { class: 'item' }, [coverFor(x), el('div', { class: 'meta' }, [el('div', { class: 'name', text: x.name }), el('div', { class: 'sub', text: x.sub })])]),
       el('div', { class: 'acts' }, [
-        btn(EDIT_ICON.up, 'up', 'Move “' + x.name + '” up', !ok || !prev || typeof prev.pos !== 'number', function (ev) { moveSong(d, k, -1, ev.currentTarget); }),
-        btn(EDIT_ICON.down, 'down', 'Move “' + x.name + '” down', !ok || !next || typeof next.pos !== 'number', function (ev) { moveSong(d, k, 1, ev.currentTarget); }),
+        btn(EDIT_ICON.up, 'up', 'Move “' + x.name + '” up', !ok || d.moveLock || !prev || typeof prev.pos !== 'number', function (ev) { moveSong(d, k, -1, ev.currentTarget); }),
+        btn(EDIT_ICON.down, 'down', 'Move “' + x.name + '” down', !ok || d.moveLock || !next || typeof next.pos !== 'number', function (ev) { moveSong(d, k, 1, ev.currentTarget); }),
         btn(EDIT_ICON.minus, 'rm', 'Remove “' + x.name + '” from this playlist', !ok, function (ev) { askRemove(d, k, ev.currentTarget); })
       ])
     ]);
@@ -5861,7 +6780,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function moveSong(d, k, dir, btn) {
     var x = d.items[k], y = d.items[k + dir];
-    if (!x || !y || typeof x.pos !== 'number' || typeof y.pos !== 'number' || d.loading || state.detail !== d) return;
+    if (!x || !y || typeof x.pos !== 'number' || typeof y.pos !== 'number' || d.loading || d.moveLock || state.detail !== d) return;
     if (!editReady(btn)) return;
     // One place up or down, past any rows the list doesn't show (local files): before the song above it,
     // or after the song below it.
@@ -5954,6 +6873,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // alone; Diagnostics → Settings → Clear saved lists removes them.
   // While catalog is paused: an album that isn't saved is found through search (GET /search, its own quota),
   // and a podcast that isn't saved shows your saved episodes (library) and the page's own history of it.
+  // v2.35: an album song also keeps is_playable: false and restrictions {reason (20 chars max)} when Spotify sent them
+  // (same caps as above; absent otherwise).
   var SL_ALBUM = 'lib-cache-album:', SL_SHOW = 'lib-cache-show:';
   var SL_ALBUM_MAX = 150, SL_SHOW_MAX = 60, SL_SHOW_EPS = 50;
   var SHOW_STALE_MS = 12 * 60 * 60 * 1000;
@@ -6007,10 +6928,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   // Minimal Spotify objects: what mapDetail and the rows need.
   function slTrack(t) {
-    return {
+    var o = {
       id: t.id, uri: t.uri, name: t.name || '', artists: (t.artists || []).map(function (a) { return { name: (a && a.name) || '' }; }),
       track_number: t.track_number || 0, disc_number: t.disc_number || 1, duration_ms: t.duration_ms || 0
     };
+    if (t.is_playable === false) o.is_playable = false;   // v2.35: kept only when Spotify says it can't play
+    if (t.restrictions && t.restrictions.reason) o.restrictions = { reason: String(t.restrictions.reason).slice(0, 20) };
+    return o;
   }
   function slEpisode(e) {
     var o = {
@@ -6043,10 +6967,19 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var had = {};
     c.items.forEach(function (x) { had[x.id] = true; });
     var overlap = raws.some(function (x) { return had[x.id]; });
+    if (!overlap) return;   // audit: no overlap would leave a gap under them; the copy stays, and opening checks page 1
     var ids = {};
     raws.forEach(function (x) { ids[x.id] = true; });
     c.items = raws.concat(c.items.filter(function (x) { return !ids[x.id]; })).slice(0, SL_SHOW_EPS);
-    if (overlap) c.at = Date.now();
+    if (overlap) {
+      // audit: the new `at` also dates the episodes not re-read, so what the page heard since the old one goes in first.
+      var hist = histByUri(), oldAt = c.at || 0;
+      c.items = c.items.map(function (x) {
+        var h = !ids[x.id] && hist[x.uri];
+        return h && histSnap(h) > oldAt ? Object.assign({}, x, { resume_point: { fully_played: !!h.played, resume_position_ms: h.played ? 0 : (h.positionMs || 0) } }) : x;
+      });
+      c.at = Date.now();
+    }
     slPut(SL_SHOW, showId, c, SL_SHOW_MAX);
   }
   // A podcast with no saved copy that Latest episodes knows: those episodes become its copy (no request).
@@ -6070,6 +7003,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // Opening an album or podcast: the saved copy first; during a catalog pause, the fallbacks; otherwise Spotify.
   function startDetail(d) {
     var it = d.item;
+    if (it.kind === 'likedby') { fillLikedBy(d); return; }   // v2.31: from memory, no request
     if (it.kind === 'album' && it.id) {
       var c = slGet(SL_ALBUM, it.id);
       if (c && c.items.length) { useAlbumCache(d, c); return; }
@@ -6096,7 +7030,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function reloadAlbum(d) {
     if (!d || d.loading || coolBlocked('catalog')) return;
     var url = albumPage(d.item.id, 0);
-    delete catMemo[url];
+    delete catMemo[memoKey(url)];
     loadDetail(url);   // the first page replaces the list and the saved copy
   }
   function useShowCache(d, c) {
@@ -6111,7 +7045,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!d || d.loading || state.detail !== d) return;
     if (coolLeft('catalog')) { if (!auto) coolToast('catalog'); paintDetailFoot(); return; }
     var url = showPage(d.item.id, 0);
-    delete catMemo[url];
+    delete catMemo[memoKey(url)];
     d.autoCheck = !!auto;
     loadDetail(url);
   }
@@ -6243,6 +7177,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         }
       }
     } else if (kind === 'playlist') copyNoteParts(d, parts, link);   // v2.24
+    else if (kind === 'likedby') likedByNote(d, parts, link);   // v2.31
     parts.forEach(function (p, i) {
       if (i && p.tagName === 'BUTTON') n.appendChild(el('span', { 'aria-hidden': 'true', text: '·' }));
       n.appendChild(p);
@@ -6513,7 +7448,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function loadArtist(d) {
     if (!d || d.loading) return;
-    if (!catMemo[releaseUrl(d)] && coolLeft('catalog')) { d.error = coolText('catalog'); if (state.detail === d) paintArtistFoot(d); coolToast('catalog'); return; }   // v2.13
+    if (!catMemo[memoKey(releaseUrl(d))] && coolLeft('catalog')) { d.error = coolText('catalog'); if (state.detail === d) paintArtistFoot(d); coolToast('catalog'); return; }   // v2.13
     d.loading = true; d.error = '';
     if (state.detail === d) paintArtistFoot(d);
     if (!d.infoAsked && !d.item.img) {
@@ -6572,6 +7507,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       ]),
       el('div', { class: 'dbtns' }, btns)
     ]));
+    main.appendChild(el('div', { id: 'aliked' }));   // v2.31: Liked songs · N
+    paintArtistLiked(d);
     main.appendChild(el('div', { id: 'alist' }));
     main.appendChild(el('div', { class: 'dfoot', id: 'afoot' }));
     paintArtistList(d);
@@ -6637,6 +7574,174 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       var t = document.querySelector('#alist a.item[href="' + d.lastGot[0].url.replace(/"/g, '') + '"]');
       if (t) t.focus({ preventScroll: true });
     }
+  }
+
+  // ---------- Liked songs on the artist page (v2.31) ----------
+  // A "Liked songs · 12" row under the artist page's header: the songs in your Liked Songs where this artist is
+  // any of the credited artists, matched by artist ID. Built only from what the page already holds this visit,
+  // so showing it and opening it send nothing: Search all's answer (findMemo), a Liked Songs view that's open or
+  // under the current one, or the Liked Songs pages mapped earlier this visit (likedSeen, filled by mapDetail;
+  // memory only, nothing stored). While only part of Liked Songs is loaded, the row says how many were found so
+  // far; with none found yet it offers Find in list inside Liked Songs, filled with the artist's name (its Search
+  // all is the loader, no new kind of request). Hidden once the whole list is known and has none by this artist.
+  // The row opens the songs as a song list, newest liked first. Spotify has no context for "liked songs by one
+  // artist", so Play, Shuffle and a tapped song send a list of song URIs (the first LIKEDBY_PLAY): playback
+  // continues through those songs only, and Now Playing shows no album or playlist for them.
+  var LIKEDBY_PLAY = 100;
+  // by: uri -> {m, i}: Liked Songs rows mapped this visit (i: first seen). all: every entry seen, local files and
+  // songs without an ID included (they have no row), so `count` can reach Liked Songs' total.
+  // liked: songs liked with this page's hearts this visit (uri -> true); one that isn't in `all` yet means the list
+  // has a song the page hasn't seen, which may be by this artist, so nothing counts as complete until it's loaded.
+  var likedSeen = { me: '', by: {}, n: 0, all: {}, count: 0, liked: {} };
+  function likedFor() {
+    var me = state.data && state.data.me, id = (me && me.id) || '';
+    if (likedSeen.me !== id) likedSeen = { me: id, by: {}, n: 0, all: {}, count: 0, liked: {} };   // another account: start over
+    return likedSeen;
+  }
+  function likedSince(uri) { likedFor().liked[uri] = true; }
+  function likedUnseen() {
+    var ls = likedSeen, me = state.data && state.data.me;
+    if (ls.me !== ((me && me.id) || '')) return false;   // reading never starts the record over
+    return Object.keys(ls.liked).some(function (u) { return !ls.all[u] && state.saved[u] === true; });
+  }
+  function likedCount(it) {
+    var t = it && (it.track || it.item), ls = likedFor();
+    var key = (t && t.uri) || ((it && it.added_at) || '') + '\n' + ((t && t.name) || '');
+    if (!ls.all[key]) { ls.all[key] = true; ls.count++; }
+  }
+  function likedNote(m, t) {
+    m.artistIds = (t.artists || []).map(function (a) { return a && a.id ? String(a.id) : ''; }).filter(Boolean);
+    likedFor();
+    var w = likedSeen.by[m.uri];
+    if (w) w.m = m; else likedSeen.by[m.uri] = { m: m, i: likedSeen.n++ };
+  }
+  // What's known of Liked Songs now: {items, complete, total}. Null when nothing is known and nothing can be.
+  function likedKnown() {
+    var data = state.data;
+    if (!data) return null;
+    var total = typeof data.likedTotal === 'number' ? data.likedTotal : null;
+    var fresh = likedUnseen();   // liked here since the list was loaded: not complete
+    var memo = findMemo['liked:'];
+    if (memo && memo.items && memo.items.length && !memo.next) return { items: memo.items, complete: !fresh, total: memo.total };
+    var views = [state.detail].concat(state.detailStack), best = null;
+    views.forEach(function (d) {
+      if (!d || d.kind === 'artist' || !d.item || d.item.kind !== 'liked' || d.src !== 'api') return;
+      if (typeof d.total === 'number') total = d.total;
+      if (d.items.length && !d.next && !d.loading && !d.error) best = d;
+    });
+    if (best) return { items: best.items, complete: !fresh, total: best.items.length };
+    var me = data.me, id = (me && me.id) || '', list = [], n = 0;
+    if (likedSeen.me === id) {
+      for (var u in likedSeen.by) list.push(likedSeen.by[u]);
+      list.sort(function (a, b) { return cmpDesc(a.m.added || '', b.m.added || '') || a.i - b.i; });   // newest liked first
+      n = likedSeen.count;   // every entry, local files included
+    }
+    return { items: list.map(function (w) { return w.m; }), complete: !fresh && total != null && n >= total, total: total };
+  }
+  // {songs, complete, loaded, total}, or null to show nothing (not signed in, or no Liked Songs at all).
+  function likedByArtist(id) {
+    var k = likedKnown();
+    if (!k || !id || (k.total === 0 && !k.items.length)) return null;
+    var songs = k.items.filter(function (i) { return i && i.artistIds && i.artistIds.indexOf(id) !== -1 && state.saved[i.uri] !== false; });
+    return { songs: songs, complete: k.complete, loaded: k.items.length, total: k.total };
+  }
+  function likedLoadedText(s) {
+    return fmtCount(s.loaded) + (s.total != null ? ' of ' + fmtCount(s.total) : '') + ' Liked Songs loaded';
+  }
+  // A row like the other list rows, with the Liked Songs heart as its cover.
+  function likedRow(name, sub, label, fn) {
+    var a = el('a', { class: 'item', href: 'https://open.spotify.com/collection/tracks', 'aria-label': label + (sub ? ', ' + sub : '') }, [
+      coverFor({ kind: 'liked' }),
+      el('div', { class: 'meta' }, [el('div', { class: 'name', text: name }), el('div', { class: 'sub', text: sub })])
+    ]);
+    a.addEventListener('click', function (ev) { ev.preventDefault(); fn(); });
+    return el('li', { class: 'row', 'data-likedby': '' }, [a]);
+  }
+  function paintArtistLiked(d) {
+    var box = $('aliked');
+    if (!box) return;
+    box.textContent = '';
+    var a = d.item, s = likedByArtist(a.id), row = null;
+    if (!s) return;
+    if (s.songs.length) {
+      var name = 'Liked songs · ' + fmtCount(s.songs.length) + (s.complete ? '' : ' so far');
+      row = likedRow(name, s.complete ? 'From your Liked Songs' : likedLoadedText(s), 'Open “' + name + '”',
+        function () { openDetail(likedByItem(a, d.img || a.img), { push: true }); });
+    } else if (!s.complete) {
+      row = likedRow('Liked songs', 'Find ' + a.name + ' in your Liked Songs', 'Find “' + a.name + '” in Liked Songs',
+        function () { findInLiked(a.name, false); });
+    }
+    if (row) box.appendChild(el('ul', { class: 'list' }, [row]));
+  }
+  function likedByItem(a, pic) {
+    return { kind: 'likedby', artistId: a.id, artistName: a.name || '', name: 'Liked songs by ' + (a.name || 'this artist'), uri: null,
+      url: a.url || 'https://open.spotify.com/artist/' + a.id, img: pic || '', sub: 'From your Liked Songs', uris: [] };
+  }
+  // The song list: each song plays the list from itself, then the songs before it (all within LIKEDBY_PLAY).
+  function fillLikedBy(d) {
+    var s = likedByArtist(d.item.artistId) || { songs: [], complete: true, loaded: 0, total: null };
+    var uris = s.songs.map(function (m) { return m.uri; });
+    d.src = 'memory'; d.next = null; d.total = s.songs.length; d.liked = s;
+    d.item.uris = uris.slice(0, LIKEDBY_PLAY);
+    d.items = s.songs.map(function (m, i) {
+      return Object.assign({}, m, { ctx: null, uris: uris.slice(i).concat(uris.slice(0, i)).slice(0, LIKEDBY_PLAY) });
+    });
+    if (state.detail === d) { paintDetailList(); paintDetailSort(); paintDetailFoot(); }
+  }
+  function likedByNote(d, parts, link) {
+    var s = d.liked;
+    if (!s) return;
+    if (!s.complete) {
+      parts.push(el('span', { text: 'From the ' + likedLoadedText(s) }));
+      link('Find the rest', function () { findInLiked(d.item.artistName, true); });
+    }
+    if (d.items.length > LIKEDBY_PLAY) parts.push(el('span', { text: 'Play and Shuffle use the newest ' + LIKEDBY_PLAY }));
+  }
+  // Liked Songs with Find in list filled in: Search all there loads the rest (the existing library loader).
+  // replace: from the artist's song list, Liked Songs takes its place, so Back returns to the artist page.
+  function findInLiked(name, replace) {
+    if (!state.data) return;
+    // Liked Songs already open under this view: that same view moves up to just above the artist page, with what
+    // it has loaded (nothing asked again), so Back from it returns to the artist page and then to where it was.
+    // The number of views stays the same (or drops by the artist's song list), so history stays in step.
+    var st = state.detailStack, cur = state.detail;
+    for (var i = st.length - 1; i >= 0; i--) {
+      var u = st[i];
+      if (!u || u.kind === 'artist' || !u.item || u.item.kind !== 'liked' || u.src !== 'api' || u.restricted) continue;
+      u.find = name || '';
+      var old = u.returnScroll;
+      st.splice(i, 1);
+      var above = st[i] || null;   // the view that sat on it now returns to where it did
+      if (replace) {   // from the artist's song list: Liked Songs goes under it, then the list closes
+        if (above) { above.returnScroll = old; u.returnScroll = cur.returnScroll; }
+        st.push(u);
+        goBack();
+        return;
+      }
+      (above || cur).returnScroll = old;   // from the artist page: Liked Songs on top, the artist page under it
+      u.returnScroll = window.pageYOffset || document.documentElement.scrollTop || 0;
+      st.push(cur);
+      state.detail = u;
+      renderDetail();
+      window.scrollTo(0, 0);
+      var bk = document.querySelector('.dhead .back');
+      if (bk) bk.focus({ preventScroll: true });
+      return;
+    }
+    openDetail(likedDetailItem(), { push: !replace && !!state.detail });
+    var d = state.detail;
+    d.find = name || '';
+    var box = $('dfind');
+    if (box) box.value = d.find;
+    paintFindBox(d);
+    paintDetailList();
+    paintDetailFoot();
+    var back = document.querySelector('.dhead .back');
+    if (back) back.focus({ preventScroll: true });
+  }
+  function shuffleList(a) {
+    for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)), t = a[i]; a[i] = a[j]; a[j] = t; }
+    return a;
   }
 
   // ---------- follow artists (v2.25) ----------
@@ -6749,7 +7854,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function renderSetup(errMsgText) {
     stopApp();
     var main = $('main'); main.textContent = '';
-    var input = el('input', { class: 'field', id: 'clientId', type: 'text', placeholder: 'Paste your Client ID', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'aria-label': 'Client ID' });
+    var input = el('input', { class: 'field', id: 'clientId', type: 'text', placeholder: 'Paste your Client ID', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'aria-label': 'Client ID', 'aria-describedby': 'clientIdErr' });
     var save = el('button', { class: 'btn', type: 'button', text: 'Save and sign in with Spotify' });
     var copy = el('button', { class: 'btn secondary', type: 'button', text: 'Copy this address' });
     var addr = el('div', { class: 'mono', id: 'redirect', text: REDIRECT });
@@ -6760,10 +7865,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     });
     save.addEventListener('click', function () {
       var v = input.value.trim();
-      if (!/^[0-9a-f]{32}$/i.test(v)) { err.textContent = 'That doesn’t look like a Client ID. It’s 32 letters and numbers, from your app’s Settings page.'; return; }
+      // audit AUTH-6: the error is a role=alert region and focus moves to the field, so VoiceOver speaks it
+      if (!/^[0-9a-f]{32}$/i.test(v)) { err.textContent = 'That doesn’t look like a Client ID. It’s 32 letters and numbers, from your app’s Settings page.'; input.setAttribute('aria-invalid', 'true'); input.focus(); return; }
+      input.removeAttribute('aria-invalid');
       set(K.client, v); login();
     });
-    var err = el('p', { class: 'err', text: errMsgText || '' });
+    var err = el('p', { class: 'err', id: 'clientIdErr', role: 'alert', text: errMsgText || '' });
     main.appendChild(el('section', { class: 'card' }, [
       el('h2', { text: 'One-time setup' }),
       el('p', { text: 'In your Spotify developer app, set the Redirect URI to this exact address:' }),
@@ -6789,6 +7896,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
 
   function refresh() {
     return loadData().then(function (d) {
+      unseedRemoved(state.data, d);   // audit: start-up seeds hearts from the last visit's cached library
       state.data = d;
       matchCopies(d);   // v2.24: link a new copy, drop links to deleted copies (no requests)
       seedSaved(d, true);
@@ -6831,9 +7939,20 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- wiring ----------
+  // audit: PERF-3. The name filter used to rebuild the whole list on every key. Like Find in list, a view with
+  // more than 300 rows now redraws 150 ms after typing stops (only if still on the same tab); short views and
+  // clearing the box redraw at once. state.query always updates at once. The box isn't redrawn, so focus and
+  // the caret stay put.
+  var queryTimer = null, QUERY_DEBOUNCE_ROWS = 300;
   $('search').addEventListener('input', function (e) {
     if (state.filter === 'search') scheduleSearch(e.target.value, false);
-    else { state.query = e.target.value; renderList(); }
+    else {
+      state.query = e.target.value;
+      clearTimeout(queryTimer); queryTimer = null;
+      var f0 = state.filter;
+      if (!state.query || $('main').getElementsByTagName('li').length <= QUERY_DEBOUNCE_ROWS) renderList();
+      else queryTimer = setTimeout(function () { queryTimer = null; if (state.filter === f0) renderList(); }, 150);
+    }
   });
   $('search').addEventListener('keydown', function (e) {
     if (e.key !== 'Enter') return;
@@ -6858,6 +7977,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   $('sheetClose').addEventListener('click', closeSheet);
   $('sheetBack').addEventListener('click', closeSheet);
   $('sheetRefresh').addEventListener('click', loadSheetDevices);
+  // audit: the toast's timer stops while focus is in it and starts again when focus leaves.
+  $('toast').addEventListener('focusin', function () { clearTimeout(toastTimer); toastTimer = null; });
+  $('toast').addEventListener('focusout', function (e) {
+    if ($('toast').hidden || (e.relatedTarget && $('toast').contains(e.relatedTarget))) return;
+    clearTimeout(toastTimer); toastTimer = setTimeout(hideToast, toastMs);
+  });
   // Escape closes the topmost layer only: a sheet first, then the Now Playing screen.
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
@@ -6920,7 +8045,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     max: npDuration, step: 5000,
     text: function (v) { return fmtTime(v) + ' of ' + fmtTime(npDuration()); },
     input: function (v) { paintTimes(v); },
-    commit: function (v) { seekTo(v); }
+    commit: function (v) { seekTo(v); },
+    locked: function () { return !!notAllowed('seeking'); }, onLocked: function () { allowTap('seeking'); }   // v2.35
   });
   volSlider = makeSlider($('npVol'), {
     max: function () { return 100; }, step: 5,
@@ -6975,6 +8101,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   $('npFwd30').innerHTML = ICON.fwd30;
   $('npVolIcon').innerHTML = ICON.volume;
   $('npBack15').addEventListener('click', function () { seekBy(-15000); });
+  $('npBm').innerHTML = ICON.bmAdd;   // v2.32
+  $('npBm').addEventListener('click', addBookmark);
   $('npFwd30').addEventListener('click', function () { seekBy(30000); });
   // Back (button or swipe) closes one view per history entry: an album opened from an artist, then the artist,
   // then the list. Entries are {detail, depth}; older ones without depth count as 1.
@@ -7005,6 +8133,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     resumePending(false);
     state.bgHoldUntil = Math.max(state.bgHoldUntil, Date.now() + 3000);
     bgReady();   // then recently played (Home), resume points, Latest (each only when due)
+    if (state.latest.stoppedHidden && onLatestView()) maybeLoadLatest();   // audit: finish a Latest reload cut short by leaving
     startNpTick();
   }
   document.addEventListener('visibilitychange', function () {

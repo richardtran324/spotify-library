@@ -186,6 +186,27 @@ tests.push(function () {
   });
 });
 
+// 12. Liked songs by an artist (a song list with no context): Play turns shuffle off, a song tap doesn't.
+tests.push(function () {
+  return setup({ shuffleOn: true }).then(function (tab) {
+    var t = tab.t();
+    var list = { kind: 'likedby', artistId: 'ar1', name: 'Liked songs by Artist', uri: null, url: 'https://open.spotify.com/artist/ar1', img: '',
+      uris: ['spotify:track:a', 'spotify:track:b', 'spotify:track:c'] };
+    return after(tab, function () { return t.play(list); }).then(function () {
+      check('12 liked-by-artist Play: shuffle off then play', JSON.stringify(playerPuts(tab)) === '["shuffle?state=false","play"]', playerPuts(tab));
+      var p = playCall(tab);
+      check('12 liked-by-artist Play keeps the song order', p && p.body && JSON.stringify(p.body.uris) === JSON.stringify(list.uris), p && p.body);
+      t.state.player.shuffle_state = true;
+      tab.calls.length = 0;
+      var song = { kind: 'track', uri: 'spotify:track:b', name: 'B', ctx: null, url: 'https://open.spotify.com/track/b',
+        uris: ['spotify:track:b', 'spotify:track:c', 'spotify:track:a'] };
+      return after(tab, function () { return t.play(song); });
+    }).then(function () {
+      check('12 song tap in that list: no shuffle request', JSON.stringify(playerPuts(tab)) === '["play"]', playerPuts(tab));
+    });
+  });
+});
+
 var chain = Promise.resolve();
 tests.forEach(function (fn, i) {
   chain = chain.then(fn).catch(function (e) { results.push('FAIL test ' + (i + 1) + ' threw  ' + (e && e.stack || e)); });
