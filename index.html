@@ -5542,7 +5542,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     down: svg('<path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M5 9l7 7 7-7"/>'),
     minus: svg('<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M8 12h8"/>')
   };
-  function canEdit(p) { return !!(p && p.kind === 'playlist' && p.id && canList(p)); }
+  // audit: editing needs a known owner. canList's "ask anyway" (v2.27) is right for listing, which falls back to
+  // Show songs on a 403, but wrong for writing: with /me unknown, or a pin saved without an owner, it offered
+  // other people's playlists in Add to playlist and the change failed with a 403.
+  function canEdit(p) { return !!(p && p.kind === 'playlist' && p.id && !noList[p.id] && knownListable(p)); }
   function plItemsPath(id) { return '/playlists/' + encodeURIComponent(id) + '/items'; }
   function pageOffset(url, json) {
     if (json && typeof json.offset === 'number') return json.offset;
@@ -5672,7 +5675,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       body.appendChild(el('p', { class: 'sethint', text: what + (by ? ' · ' + by : '') }));
       var lists = editablePlaylists();
       if (!lists.pinned.length && !lists.rest.length) {
-        body.appendChild(el('p', { class: 'empty', text: state.data ? 'No playlists you own or collaborate on in your library.' : 'Your library hasn’t loaded yet.' }));
+        body.appendChild(el('p', { class: 'empty', text: !state.data ? 'Your library hasn’t loaded yet.' : !(state.data.me && state.data.me.id) ? 'Your account details didn’t load. Refresh (top right) to try again.' : 'No playlists you own or collaborate on in your library.' }));
       } else {
         var box = el('input', { class: 'search', type: 'search', id: 'plFilter', placeholder: 'Filter by name', 'aria-label': 'Filter playlists by name', autocomplete: 'off', enterkeyhint: 'done' });
         box.value = v.q || '';
