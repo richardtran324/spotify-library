@@ -273,6 +273,7 @@ ul.list.compact .cover.num { width: 28px; }
 }
 body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px)); }
 .toast a { color: var(--bg); font-weight: 700; }
+.toast .tsel { font-weight: 700; min-width: 0; overflow-wrap: anywhere; -webkit-user-select: all; user-select: all; }   /* v2.20: one tap selects the link */
 .toastbtn {
   font: inherit; font-weight: 700; color: var(--bg); background: none;
   border: 1px solid currentColor; border-radius: 8px; padding: 6px 12px; min-height: 40px; cursor: pointer; flex: none;
@@ -803,6 +804,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     back15: svg('<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M5.2 8.5A8 8 0 1 1 4 12"/><path fill="currentColor" d="M3.5 4v6h6z"/><text x="12.5" y="15.5" font-size="7.5" font-weight="700" text-anchor="middle" fill="currentColor" font-family="-apple-system, system-ui, sans-serif">15</text>'),
     fwd30: svg('<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M18.8 8.5A8 8 0 1 0 20 12"/><path fill="currentColor" d="M20.5 4v6h-6z"/><text x="11.5" y="15.5" font-size="7.5" font-weight="700" text-anchor="middle" fill="currentColor" font-family="-apple-system, system-ui, sans-serif">30</text>'),
     notes: svg('<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M6 3h9l4 4v14H6z"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M9 11h7M9 14.5h7M9 18h4"/>'),   // v2.18
+    share: svg('<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 3v12M8 7l4-4 4 4M8 10H6v11h12V10h-2"/>'),   // v2.20
     volume: svg('<path fill="currentColor" d="M4 9h4l5-4v14l-5-4H4z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12"/>')
   };
 
@@ -2845,7 +2847,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.19 (2026-11-27)';
+  var VERSION = 'v2.20 (2026-11-27)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -3424,6 +3426,48 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (it.external_urls && it.external_urls.spotify) return it.external_urls.spotify;
     return it.id ? 'https://open.spotify.com/' + (it.type === 'episode' ? 'episode/' : 'track/') + it.id : '';
   }
+  // v2.20: Share opens the iPhone share sheet with the item's open.spotify.com link. No request is sent.
+  // navigator.share must run straight from the tap. Without it, or if it fails, the link is copied instead;
+  // closing the sheet (AbortError) says nothing. If copying fails too, the toast shows the link to copy by hand.
+  var SHARE_KINDS = { track: 'track', episode: 'episode', album: 'album', playlist: 'playlist', show: 'show', artist: 'artist' };
+  function shareUrl(item) {
+    var k = item && SHARE_KINDS[item.kind];
+    if (!k) return '';   // Liked Songs and Saved episodes have no public link
+    if (item.url && item.url.indexOf('https://open.spotify.com/' + k + '/') === 0) return item.url;
+    return item.id ? 'https://open.spotify.com/' + k + '/' + encodeURIComponent(item.id) : '';
+  }
+  function shareBtn(item) {
+    var url = shareUrl(item);
+    if (!url) return null;
+    var name = item.name || '';
+    return iconBtn(ICON.share, 'Share “' + name + '”', function () { shareLink(name, url); });
+  }
+  function shareLink(title, url) {
+    if (!url) return;
+    var p = null;
+    if (navigator.share) {
+      try { p = navigator.share({ title: title, url: url }); } catch (e) { p = null; }
+    }
+    if (p && typeof p.then === 'function') {
+      p.then(function () {}, function (e) { if (!(e && e.name === 'AbortError')) copyLink(url); });
+    } else copyLink(url);
+  }
+  function copyLink(url) {
+    // Last resort: the link as plain text (one tap selects it, a link would open Spotify), up for 15 s or until Close.
+    function byHand() {
+      toast('Copy this link:', null, { text: 'Close', fn: function () {} });
+      var t = $('toast');
+      t.insertBefore(el('span', { class: 'tsel', text: url }), t.querySelector('.toastbtn'));
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(function () { t.hidden = true; }, 15000);
+    }
+    var c = navigator.clipboard;
+    if (!c || !c.writeText) return byHand();
+    var p;
+    try { p = c.writeText(url); } catch (e) { return byHand(); }
+    if (p && typeof p.then === 'function') p.then(function () { toast('Link copied'); }, byHand);
+    else toast('Link copied');
+  }
   // ---------- full Now Playing screen ----------
   // Opens from the bar's cover or title. Progress moves locally between checks: it starts from the last
   // answer's progress_ms at the moment that answer arrived (Spotify's own `timestamp` is when playback last
@@ -3681,6 +3725,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     });
     var url = spotifyUrl(p.item);
     if (url) {
+      var it = p.item, by = it.type === 'episode' ? (it.show && it.show.name) : names(it.artists);
+      var title = (it.name || '') + (by ? ' · ' + by : '');
+      var sb = el('button', { class: 'btn small secondary', type: 'button', text: 'Share' });   // v2.20
+      sb.addEventListener('click', function () { shareLink(title, url); });
+      box.appendChild(sb);
       var a = el('a', { class: 'btn small secondary', href: url, text: 'Open in Spotify' });
       a.addEventListener('click', function () { closeNp(false); });
       box.appendChild(a);
@@ -4409,6 +4458,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       btns.push(shufA);
     }
     if (canSave(it)) btns.push(heartBtn(it));
+    var shb = shareBtn(it);   // v2.20: albums, playlists and podcasts; not Liked Songs or Saved episodes
+    if (shb) btns.push(shb);
     main.appendChild(el('section', { class: 'dhead' }, [
       back,
       el('div', { class: 'drow' }, [
@@ -5047,6 +5098,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     playA.addEventListener('click', function (ev) { onItemClick(it, ev); });
     var btns = [playA];
     if (canPin(it)) btns.push(pinBtn(it));
+    var shb = shareBtn(it);   // v2.20
+    if (shb) btns.push(shb);
     main.appendChild(el('section', { class: 'dhead' }, [
       backButton(),
       el('div', { class: 'drow' }, [

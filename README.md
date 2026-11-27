@@ -68,6 +68,7 @@ Optional: Share → **Add to Home Screen**. The page brings its own icon (`apple
     - **Open playlist · …** when you're playing from a playlist. Your own playlists open their song list. A playlist that isn't in your library is looked up by Spotify (one request, remembered until you reload); since Spotify only lets personal apps list songs in your own playlists, it opens with the usual note and a **Play** button.
     - **Open Liked Songs** when you're playing from Liked Songs.
     - **Open show · …** (episodes): the podcast's episode list.
+    - **Share** (v2.20): opens the iPhone share sheet with the song's or episode's Spotify link, so you can send it in Messages or anywhere else.
     - **Open in Spotify:** the song or episode in the Spotify app.
   - **Up next** (top right) opens the queue (see below).
   - Close with the down arrow at the top left, by swiping down from the top of the screen, or with Escape on a keyboard.
@@ -77,6 +78,7 @@ Optional: Share → **Add to Home Screen**. The page brings its own icon (`apple
   - Spotify adds its own picks after your queue (autoplay) and doesn't say which songs are which. So the page remembers what you added with **+** on this page during the last 24 hours, and **Hide songs Spotify adds after my queue** (on by default, the switch at the top) shows only those, with the note **Spotify may add its own picks after these; they're hidden.** Turn it off to see everything; later songs may then be Spotify's picks.
   - Songs you added in the Spotify app itself, or more than 24 hours ago, are hidden while the switch is on.
 - **Playing now:** in any song or episode list (albums, playlists, Liked Songs, Recent, search, podcasts), the song or episode that's playing shows its name in green with a small **Playing** label. It updates with the Now Playing check.
+- **Share (v2.20):** albums, playlists, podcasts and artist pages have a share button at the top, next to the heart or pin. It opens the iPhone share sheet with the Spotify link. If the share sheet isn't available, the link is copied instead (**Link copied**); if copying doesn't work either, the message shows the link as text (tap it to select it, then copy) and stays up for 15 seconds or until you tap **Close**. Closing the share sheet does nothing. Liked Songs and Saved episodes have no share button, since they have no public link. Sharing sends no requests to Spotify.
 - **Choosing a device:** tap the device name in the status line ("Playing on iPhone · Change") to see your open Spotify devices. Picking one moves playback there and makes it the device taps play on from then on. **Refresh** in that panel looks again.
 
 ### Home
@@ -238,6 +240,7 @@ Album and podcast details are the part of Spotify's quota that runs out first, s
 - **v2.14** pauses only the part of the page Spotify refused (playback, library, search, or podcast and album details), never re-sends a refused request, makes Latest episodes reload only when you open it (12 podcasts at a time), drops the automatic resume-point checks, and keeps album and podcast pages for the visit. No new permissions.
 - **v2.18** adds **Episode notes** with tappable times (see **Podcasts**). No new permissions.
 - **v2.19** adds **Go to artist**: **Open artist · …** on the Now Playing screen for songs, and tappable artist names in album headers (see **Artist page**). No new permissions.
+- **v2.20** adds **Share** on the Now Playing screen and at the top of album, playlist, podcast and artist pages (iPhone share sheet, or copy the link). No requests and no new permissions.
 - If Spotify doesn't let the page check which items are already saved, hearts start outlined and a tap saves the item.
 - **Refresh** reloads your library and checks for an open Spotify device (whichever isn't paused by Spotify), and forgets the album and podcast pages kept for this visit (the lists saved on the phone stay). The page also checks each time you come back to it (devices at most once every 15 seconds).
 - To update the page later, upload the new `index.html` to the same repo (it replaces the old one).
