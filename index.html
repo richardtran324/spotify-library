@@ -2030,6 +2030,15 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var bs = document.querySelectorAll('.heart');
     for (var i = 0; i < bs.length; i++) paintHeart(bs[i]);
   }
+  // audit: an unlike (unsave) moves every later row of Liked Songs (Saved episodes) up one place on Spotify, so an
+  // open list's next page starts one earlier. At worst that page repeats a row, and dropShown skips it. A save isn't
+  // shifted: the row it pushes down comes back once and is dropped the same way (and a save that changed nothing
+  // would otherwise skip a row).
+  function shiftNext(listKind) {
+    [state.detail].concat(state.detailStack).forEach(function (v) {
+      if (v && v.item && v.item.kind === listKind && v.next) v.next = String(v.next).replace(/([?&]offset=)(\d+)/, function (m, a, n) { return a + Math.max(0, +n - 1); });
+    });
+  }
   function toggleSave(uri, name, kind, forceSave) {
     if (!uri || state.busy[uri]) return;
     if (coolBlocked('library')) return;   // v2.13
@@ -2041,6 +2050,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     api('/me/library?uris=' + encodeURIComponent(uri), { method: save ? 'PUT' : 'DELETE' }).then(function (r) {
       delete state.busy[uri];
       if (!r.ok) throw new Error(errMsg(r));
+      if (!save && (kind === 'track' || kind === 'episode')) shiftNext(kind === 'track' ? 'liked' : 'episodes');   // audit
       saveSavedSession();
       if (!save) toast('Removed “' + name + '”', null, { text: 'Undo', fn: function () { toggleSave(uri, name, kind, true); } });
       else if (forceSave) toast('Saved “' + name + '” again');
@@ -5214,6 +5224,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     stop.addEventListener('click', function () { r.stop = true; stop.disabled = true; });
     f.appendChild(stop);
   }
+  // audit: Liked Songs and Saved episodes only: a like or unlike made while the list is open moves Spotify's offsets
+  // by one, so a page can bring back a row already shown; it's dropped. A playlist can hold a song twice, so not there.
+  function dropShown(d, mapped) {
+    if (d.item.kind !== 'liked' && d.item.kind !== 'episodes') return mapped;
+    var seen = {};
+    d.items.forEach(function (x) { seen[x.uri] = true; });
+    return mapped.filter(function (x) { return !seen[x.uri]; });
+  }
   // One answered page goes into the list in order (albums: into the saved copy's raw list).
   function addFindPage(d, j) {
     if (typeof j.total === 'number') d.total = j.total;
@@ -5224,7 +5242,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       return [];
     }
     var off = typeof j.offset === 'number' ? j.offset : null;   // v2.26: real playlist positions, for Edit
-    var mapped = (j.items || []).map(function (it, k) { var m = mapDetail(d.item, it); if (m && d.item.kind === 'playlist' && off !== null) m.pos = off + k; return m; }).filter(Boolean);
+    var mapped = dropShown(d, (j.items || []).map(function (it, k) { var m = mapDetail(d.item, it); if (m && d.item.kind === 'playlist' && off !== null) m.pos = off + k; return m; }).filter(Boolean));
     d.items = d.items.concat(mapped);
     if (isPod(d.item)) rememberEpisodes(mapped);
     return mapped;
@@ -5517,7 +5535,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         return;
       }
       var off = pageOffset(url, r.json);   // v2.26: each song's place in the playlist, for Edit
-      var mapped = (r.json.items || []).map(function (it, j) { var m = mapDetail(d.item, it); if (m && kind === 'playlist') m.pos = off + j; return m; }).filter(Boolean);
+      var mapped = dropShown(d, (r.json.items || []).map(function (it, j) { var m = mapDetail(d.item, it); if (m && kind === 'playlist') m.pos = off + j; return m; }).filter(Boolean));
       d.items = d.items.concat(mapped);
       if (isPod(d.item)) rememberEpisodes(mapped);   // for Continue listening
       if (!cur) return;
