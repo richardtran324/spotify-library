@@ -2027,6 +2027,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       delete state.busy[uri];
       if (!r.ok) throw new Error(errMsg(r));
       saveSavedSession();
+      if (save && /^spotify:track:/.test(uri)) likedSince(uri);   // v2.28: Liked songs on the artist page is no longer complete
       if (!save) toast('Removed “' + name + '”', null, { text: 'Undo', fn: function () { toggleSave(uri, name, kind, true); } });
       else if (forceSave) toast('Saved “' + name + '” again');
       else toast(kind === 'track' ? 'Added to Liked Songs' : 'Saved to your library');
@@ -6650,11 +6651,19 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   var LIKEDBY_PLAY = 100;
   // by: uri -> {m, i}: Liked Songs rows mapped this visit (i: first seen). all: every entry seen, local files and
   // songs without an ID included (they have no row), so `count` can reach Liked Songs' total.
-  var likedSeen = { me: '', by: {}, n: 0, all: {}, count: 0 };
+  // liked: songs liked with this page's hearts this visit (uri -> true); one that isn't in `all` yet means the list
+  // has a song the page hasn't seen, which may be by this artist, so nothing counts as complete until it's loaded.
+  var likedSeen = { me: '', by: {}, n: 0, all: {}, count: 0, liked: {} };
   function likedFor() {
     var me = state.data && state.data.me, id = (me && me.id) || '';
-    if (likedSeen.me !== id) likedSeen = { me: id, by: {}, n: 0, all: {}, count: 0 };   // another account: start over
+    if (likedSeen.me !== id) likedSeen = { me: id, by: {}, n: 0, all: {}, count: 0, liked: {} };   // another account: start over
     return likedSeen;
+  }
+  function likedSince(uri) { likedFor().liked[uri] = true; }
+  function likedUnseen() {
+    var ls = likedSeen, me = state.data && state.data.me;
+    if (ls.me !== ((me && me.id) || '')) return false;   // reading never starts the record over
+    return Object.keys(ls.liked).some(function (u) { return !ls.all[u] && state.saved[u] === true; });
   }
   function likedCount(it) {
     var t = it && (it.track || it.item), ls = likedFor();
@@ -6672,22 +6681,23 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var data = state.data;
     if (!data) return null;
     var total = typeof data.likedTotal === 'number' ? data.likedTotal : null;
+    var fresh = likedUnseen();   // liked here since the list was loaded: not complete
     var memo = findMemo['liked:'];
-    if (memo && memo.items && memo.items.length && !memo.next) return { items: memo.items, complete: true, total: memo.total };
+    if (memo && memo.items && memo.items.length && !memo.next) return { items: memo.items, complete: !fresh, total: memo.total };
     var views = [state.detail].concat(state.detailStack), best = null;
     views.forEach(function (d) {
       if (!d || d.kind === 'artist' || !d.item || d.item.kind !== 'liked' || d.src !== 'api') return;
       if (typeof d.total === 'number') total = d.total;
       if (d.items.length && !d.next && !d.loading && !d.error) best = d;
     });
-    if (best) return { items: best.items, complete: true, total: best.items.length };
+    if (best) return { items: best.items, complete: !fresh, total: best.items.length };
     var me = data.me, id = (me && me.id) || '', list = [], n = 0;
     if (likedSeen.me === id) {
       for (var u in likedSeen.by) list.push(likedSeen.by[u]);
       list.sort(function (a, b) { return cmpDesc(a.m.added || '', b.m.added || '') || a.i - b.i; });   // newest liked first
       n = likedSeen.count;   // every entry, local files included
     }
-    return { items: list.map(function (w) { return w.m; }), complete: total != null && n >= total, total: total };
+    return { items: list.map(function (w) { return w.m; }), complete: !fresh && total != null && n >= total, total: total };
   }
   // {songs, complete, loaded, total}, or null to show nothing (not signed in, or no Liked Songs at all).
   function likedByArtist(id) {
