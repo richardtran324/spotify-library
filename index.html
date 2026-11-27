@@ -200,6 +200,7 @@ ul.list.compact .cover.num { width: 28px; }
 .dhead .sub { white-space: normal; }
 .dbtns { display: flex; gap: 10px; align-items: center; }
 .dbtns .btn { flex: 1; min-width: 0; }
+.btn.cont { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }   /* v2.23: Continue · <song> */
 .dfoot { padding: 12px 0; display: flex; flex-direction: column; gap: 10px; }
 /* v2.16: Spotify's own player for playlists the page can't list (tall enough to scroll the songs at phone width) */
 .sembed { display: block; width: 100%; max-width: 100%; height: 480px; border: 0; border-radius: 12px; background: var(--chip); }
@@ -679,6 +680,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     epHistory: 'lib-ep-history', // v2.11: [{uri, id, name, show:{id, name, images}, duration_ms, positionMs, played, at[, checkedAt]}], newest first
     epNotes: 'lib-ep-notes',     // v2.18: [{id, t, at[, cut]}], newest first: notes of episodes you opened or played (40, 4,000 characters each)
     epMarks: 'lib-ep-marks',     // v2.21: {uri: {played, at, pos}}: Mark as played / unplayed, this phone only (400, 180 days)
+    ctxLast: 'lib-ctx-last',     // v2.23: {album or playlist URI | 'liked': {uri, id, name, positionMs, durMs, at}}: the last song heard in each list (40, 30 days)
     // v2.13 rate limits. Shared by every copy of the page that shares this storage (Safari tabs on one origin).
     cool: 'lib-cooloff',         // v2.14: {group: {until, reason, strikes, quotaAt, retryAfter, last429:{at, reason, retryAfter, what}}}
     poller: 'lib-poller',        // {id, at, every}: the one visible copy that runs the player check
@@ -2139,7 +2141,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   // Home's "Jump back in" comes from the same answer: one card per album (newest play first). A tap on the card
   // opens the album (v2.12); its play button plays the song inside the album, playlist or Liked Songs it was
-  // played from, so the next songs keep going.
+  // played from, so the next songs keep going. v2.23: a song played from one of your library playlists or from
+  // Liked Songs makes a card for that playlist or Liked Songs instead (one per list, at its newest play). A playlist
+  // outside your library stays an album card: nothing is asked about it.
   function jumpCtx(c) {
     if (!c || !c.uri) return null;
     return (c.type === 'album' || c.type === 'playlist' || c.type === 'collection' || isLikedCtx(c)) ? c.uri : null;
@@ -2154,16 +2158,29 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     api('/me/player/recently-played?limit=50').then(function (r) {
       if (seq !== state.recentSeq) return;
       if (!r.ok) throw new Error(errMsg(r));
-      var seen = {}, out = [], seenAlbum = {}, jump = [];
-      ((r.json && r.json.items) || []).forEach(function (it) {
+      var seen = {}, out = [], seenAlbum = {}, seenList = {}, jump = [];
+      var rItems = (r.json && r.json.items) || [];
+      ctxFromRecent(rItems);   // v2.23: fills gaps in the last song heard per album or playlist
+      rItems.forEach(function (it) {
         var t = it && it.track;
         if (!t || !t.id) return;
         var at = Date.parse(it.played_at) || 0;   // v2.11: to merge with podcast episodes by time
-        var ak = (t.album && t.album.id) || t.id;
-        if (!seenAlbum[ak]) {
-          seenAlbum[ak] = true;
-          var j = mapTrack(t, { sub: names(t.artists), ctx: jumpCtx(it.context) });
-          if (j) { j.at = at; j.album = mapAlbum(t.album); jump.push(j); }   // v2.12: the card opens the album
+        var c = it.context, pid = c && c.type === 'playlist' ? ctxPlaylistId(c) : null;
+        var pl = pid ? inLibraryPlaylist(pid) : null, liked = isLikedCtx(c);
+        if (pl || liked) {
+          var lk = liked ? 'liked' : pl.uri;
+          if (!seenList[lk]) {
+            seenList[lk] = true;
+            var lj = mapTrack(t, { sub: names(t.artists), ctx: liked ? c.uri : pl.uri });
+            if (lj) { lj.at = at; if (liked) lj.liked = likedDetailItem(); else lj.playlist = pl; jump.push(lj); }   // the card opens the list
+          }
+        } else {
+          var ak = (t.album && t.album.id) || t.id;
+          if (!seenAlbum[ak]) {
+            seenAlbum[ak] = true;
+            var j = mapTrack(t, { sub: names(t.artists), ctx: jumpCtx(c) });
+            if (j) { j.at = at; j.album = mapAlbum(t.album); jump.push(j); }   // v2.12: the card opens the album
+          }
         }
         if (seen[t.id]) return;
         seen[t.id] = true;
@@ -2191,6 +2208,113 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (Date.now() - state.recentTriedAt < HOME_RECENT_MS && state.recentTriedAt <= Date.now()) return;
     if (!bgReady()) return;
     loadRecent();
+  }
+
+  // ---------- Continue in an album, playlist or Liked Songs (v2.23) ----------
+  // The last song heard in each list, from what the player check already sees (and Recently played, for the
+  // gaps), so a list's header can offer "Continue · <song>". No request of its own. One entry per list
+  // (album or playlist URI, or 'liked'), at most 40, none older than 30 days. Memory is always current; storage
+  // is written when the song changes, otherwise at most once per 15 s per list.
+  var CTX_LAST_MAX = 40, CTX_LAST_MS = 30 * 24 * 60 * 60 * 1000, CTX_LAST_WRITE_MS = 15000;
+  var CTX_END_MS = 30000;   // a spot within the last 30 s of the song isn't offered (it would just end)
+  var ctxLast = null;       // loaded from storage on first use
+  var ctxWriteAt = {};      // list key -> last storage write
+  function ctxKey(c) {
+    if (!c || !c.uri) return null;
+    if (isLikedCtx(c)) return 'liked';
+    var pid = ctxPlaylistId(c);
+    if (pid && (c.type === 'playlist' || /:playlist:/.test(c.uri))) return 'spotify:playlist:' + pid;
+    return /^spotify:album:[A-Za-z0-9]+$/.test(c.uri) ? c.uri : null;
+  }
+  function ctxOk(e, now) {
+    return !!e && typeof e === 'object' && typeof e.uri === 'string' && !!e.uri && typeof e.at === 'number' &&
+      now - e.at < CTX_LAST_MS && e.at < now + 60000;
+  }
+  // Keeps the 40 newest valid entries.
+  function ctxPrune(m) {
+    var now = Date.now(), keys = Object.keys(m || {}).filter(function (k) { return ctxOk(m[k], now); });
+    keys.sort(function (a, b) { return m[b].at - m[a].at; });
+    var out = {};
+    keys.slice(0, CTX_LAST_MAX).forEach(function (k) { out[k] = m[k]; });
+    return out;
+  }
+  // Another copy of the page may have written newer entries: the newer of each wins.
+  function ctxMerge() {
+    var st = get(K.ctxLast), m = ctxLast || {};
+    if (st && typeof st === 'object' && !Array.isArray(st)) {
+      Object.keys(st).forEach(function (k) { if (ctxOk(st[k], Date.now()) && (!m[k] || st[k].at > m[k].at)) m[k] = st[k]; });
+    }
+    ctxLast = ctxPrune(m);
+    return ctxLast;
+  }
+  function readCtxLast() { return ctxLast ? (ctxLast = ctxPrune(ctxLast)) : ctxMerge(); }
+  function saveCtxLast(k) {
+    ctxMerge();
+    if (k) ctxWriteAt[k] = Date.now();
+    set(K.ctxLast, ctxLast);
+  }
+  // t: a song as /me/player returns it; c: its context. playing: heard just now (`at` = now).
+  function noteCtxSong(t, c, pos, playing) {
+    if (!t || t.type !== 'track' || !t.uri || t.is_local) return;
+    var k = ctxKey(c);
+    if (!k) return;
+    var m = readCtxLast(), old = m[k], now = Date.now(), dur = t.duration_ms || 0;
+    pos = Math.max(0, Math.round(pos || 0));
+    if (dur) pos = Math.min(pos, dur);
+    var same = !!old && old.uri === t.uri;
+    if (same && old.positionMs === pos && !playing) return;   // paused and unchanged
+    m[k] = { uri: t.uri, id: t.id || t.uri.split(':').pop(), name: t.name || 'Untitled', positionMs: pos, durMs: dur, at: playing || !same ? now : old.at };
+    if (!same || now - (ctxWriteAt[k] || 0) >= CTX_LAST_WRITE_MS) saveCtxLast(k);
+  }
+  // Recently played (newest first): a list the page has nothing newer for takes its newest song, from the start.
+  function ctxFromRecent(items) {
+    var m = readCtxLast(), now = Date.now(), done = {}, changed = false;
+    (items || []).forEach(function (it) {
+      var t = it && it.track, k = it && ctxKey(it.context);
+      if (!t || !t.uri || t.is_local || !k || done[k]) return;
+      done[k] = true;
+      var at = Date.parse(it.played_at) || 0;
+      if (!at || now - at >= CTX_LAST_MS || at > now + 60000 || (m[k] && m[k].at >= at)) return;
+      m[k] = { uri: t.uri, id: t.id || t.uri.split(':').pop(), name: t.name || 'Untitled', positionMs: 0, durMs: t.duration_ms || 0, at: at };
+      changed = true;
+    });
+    if (changed) saveCtxLast();
+  }
+  // The list a song list view stands for: its key and the context to play it in.
+  function listCtx(it) {
+    if (!it) return null;
+    if (it.kind === 'liked') return likedCtx() ? { key: 'liked', uri: likedCtx() } : null;
+    if (it.kind === 'album' && it.uri) return { key: ctxKey({ type: 'album', uri: it.uri }), uri: it.uri };
+    if (it.kind === 'playlist' && it.id && it.uri) return { key: 'spotify:playlist:' + it.id, uri: it.uri };
+    return null;
+  }
+  // Hidden when nothing was heard in this list, when that song is playing now, or when the spot is in its last 30 s.
+  function continueEntry(it) {
+    var lc = listCtx(it);
+    var e = lc && lc.key ? readCtxLast()[lc.key] : null;
+    if (!e) return null;
+    var p = state.player;
+    if (p && p.item && p.item.uri === e.uri && p.is_playing && !state.playerIdle) return null;
+    if (e.durMs > 0 && e.positionMs >= e.durMs - CTX_END_MS) return null;
+    return e;
+  }
+  // The button under Play and Shuffle; redrawn only when the song it offers changes (or it hides or shows).
+  function paintContinue() {
+    var box = $('dcont'), d = state.detail;
+    if (!box || !d || d.kind === 'artist') return;
+    var it = d.item, e = continueEntry(it), sig = e ? e.uri : '';
+    if (box.getAttribute('data-sig') === sig) return;
+    box.setAttribute('data-sig', sig);
+    box.textContent = '';
+    box.hidden = !e;
+    if (!e) return;
+    var a = el('a', { class: 'btn secondary cont', href: 'https://open.spotify.com/track/' + e.id, text: 'Continue · ' + e.name, 'aria-label': 'Continue “' + e.name + '” in “' + it.name + '”' });
+    a.addEventListener('click', function (ev) {
+      var cur = continueEntry(it), lc = listCtx(it);
+      if (!cur || cur.uri !== e.uri || !lc) { ev.preventDefault(); paintContinue(); return; }
+      onItemClick({ kind: 'track', id: cur.id, name: cur.name, uri: cur.uri, url: 'https://open.spotify.com/track/' + cur.id, ctx: lc.uri, positionMs: cur.positionMs }, ev);
+    });
+    box.appendChild(a);
   }
 
   // ---------- latest episodes: the newest episodes across your saved shows ----------
@@ -2964,7 +3088,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.22 (2026-11-27)';
+  var VERSION = 'v2.23 (2026-11-27)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -3306,12 +3430,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       saveLastPlay(p, p.progress_ms || 0);
       noteEpisode(p.item, p.progress_ms || 0, !!p.is_playing, p.timestamp);   // v2.11: podcast history (episodes only)
       if (p.is_playing) markSeenPlaying(p.item, p.progress_ms || 0, o.at || Date.now());   // v2.21
+      noteCtxSong(p.item, p.context, p.progress_ms || 0, !!p.is_playing);   // v2.23: the last song heard per album or playlist
       if (p.item.type === 'episode' && p.item.id && p.item.id !== notesPlayerId) { notesPlayerId = p.item.id; keepNotes(p.item, true); }   // v2.18
     } else {
       // Nothing from Spotify: freeze the live playback where it got to, then show the saved one as asleep.
       if (!state.playerIdle && state.player && state.player.item) {
         var fpos = freezeLastPos(state.player, curPos());   // v2.17: keeps a spot another copy already froze
         noteEpisode(state.player.item, fpos, false);
+        noteCtxSong(state.player.item, state.player.context, fpos, false);   // v2.23
         // The device it played on has most likely dropped off too: the next tap checks the device list first.
         state.deviceAt = 0; state.devicesAt = 0;
       }
@@ -3336,6 +3462,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var bar = $('player');
     var item = p && p.item;
     paintPlaying();
+    paintContinue();   // v2.23: hides while its song plays
     if (!item || !state.started) {
       bar.hidden = true;
       document.body.classList.remove('has-player');
@@ -3486,11 +3613,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   var plMemo = {};    // playlist id -> promise of a mapped playlist (GET /playlists/{id}), this session
   var plKnown = {};   // playlist id -> mapped playlist, once that request answered
   var npReturn = null;
-  function libraryPlaylist(id) {
+  // v2.23: only the playlists in your library (the library cache), never one fetched by id.
+  function inLibraryPlaylist(id) {
     var list = (state.data && state.data.playlists) || [];
-    for (var i = 0; i < list.length; i++) { if (list[i].id === id) return list[i]; }
-    return plKnown[id] || null;
+    for (var i = 0; i < list.length; i++) { if (list[i] && list[i].id === id) return list[i]; }
+    return null;
   }
+  function libraryPlaylist(id) { return inLibraryPlaylist(id) || plKnown[id] || null; }
   // Playlists outside your library: Spotify still answers GET /playlists/{id} for Development Mode apps.
   // Its song list only loads for your own or collaborative playlists; the detail view explains the rest.
   function playlistById(id) {
@@ -4246,7 +4375,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var q = state.query.trim().toLowerCase();
     if (!q) return items;
     // Jump back in cards show their album or podcast name (v2.12), so those names match too.
-    return items.filter(function (i) { return (i.name + ' ' + i.sub + (i.album ? ' ' + i.album.name : '') + (i.show ? ' ' + i.show.name : '')).toLowerCase().indexOf(q) !== -1; });
+    return items.filter(function (i) { return (i.name + ' ' + i.sub + (i.album ? ' ' + i.album.name : '') + (i.playlist ? ' ' + i.playlist.name : '') + (i.liked ? ' ' + i.liked.name : '') + (i.show ? ' ' + i.show.name : '')).toLowerCase().indexOf(q) !== -1; });
   }
   // Recently played songs (Spotify) and podcast episodes (the page's own history, v2.11), newest first.
   function renderRecent(main) {
@@ -4360,15 +4489,18 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   // A horizontal strip of cards (the same look as Continue listening). A tap does what a row in its own
   // tab does (v2.12): playlists, albums, artists and podcasts open; songs and episodes play.
-  // Jump back in cards that carry an album or podcast (i.album / i.show) show that album or podcast and open it;
-  // the round play button on the cover plays the song in the context it was played from, or resumes the episode.
-  function cardStrip(main, id, title, items, seeAll) {
+  // Jump back in cards that carry an album, playlist, Liked Songs or podcast (i.album / i.playlist / i.liked / i.show)
+  // show that list or podcast and open it; the round play button on the cover plays the song in the context it was
+  // played from, or resumes the episode. o.pinPlay (v2.23, Pinned): playlists, albums and artists get the button too
+  // (it plays the list), and a podcast gets it when the page already holds one of its episodes.
+  function cardStrip(main, id, title, items, seeAll, o) {
+    o = o || {};
     if (!items.length) return;
     main.appendChild(sectHead(id, title, seeAll));
     var ul = el('ul', { class: 'cl', 'aria-labelledby': id });
     var cur = playingUri();
     items.forEach(function (i) {
-      var host = i.album || i.show || null;   // the album or podcast a Jump back in card stands for
+      var host = i.album || i.playlist || i.liked || i.show || null;   // the list or podcast a Jump back in card stands for
       var shown = host || i;
       var sub = host ? (i.album ? (host.artist || 'Album') : i.name) : cardSub(i);
       var opens = !!host || opensOnTap(i);
@@ -4382,10 +4514,16 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         onItemClick(i, ev);
       });
       var li = el('li', null, [a]);
-      if (host) {
-        var pb = el('button', { class: 'cardplay', type: 'button', 'aria-label': (i.kind === 'episode' ? 'Resume “' : 'Play “') + i.name + '”' });
+      var target = host ? i : null;   // what the round button plays
+      if (!host && o.pinPlay) {
+        if (i.kind === 'playlist' || i.kind === 'album' || i.kind === 'artist') target = i;
+        else if (i.kind === 'show') target = heldShowEpisode(i.id);   // none held: no button (nothing is asked)
+      }
+      if (target) {
+        var resume = target.kind === 'episode' && (!!host || target.positionMs > 0);
+        var pb = el('button', { class: 'cardplay', type: 'button', 'aria-label': (resume ? 'Resume “' : 'Play “') + target.name + '”' });
         pb.innerHTML = ICON.play;
-        pb.addEventListener('click', function (ev) { onItemClick(i, ev); });
+        pb.addEventListener('click', function (ev) { onItemClick(target, ev); });
         li.appendChild(pb);
       }
       if (i.kind === 'track' || i.kind === 'episode') {
@@ -4408,7 +4546,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var pins = matches(pinsFor('all', d));
     var pinnedUris = {};
     pinsFor('all', d).forEach(function (p) { pinnedUris[p.uri] = true; });
-    cardStrip(main, 'hPinned', 'Pinned', pins);
+    cardStrip(main, 'hPinned', 'Pinned', pins, null, { pinPlay: true });   // v2.23: round play buttons
     shown += pins.length;
     // Continue listening: in-progress episodes (as on Podcasts).
     var cl = matches(continueItems());
@@ -4595,7 +4733,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         coverFor(it, 'dcover'),
         el('div', { class: 'meta' }, [el('h2', { class: 'dname', text: it.name }), detailSub(it), el('div', { class: 'dsum', id: 'dsum' })])
       ]),
-      el('div', { class: 'dbtns' }, btns)
+      el('div', { class: 'dbtns' }, btns),
+      el('div', { class: 'dbtns', id: 'dcont', hidden: true })   // v2.23: Continue · <song>
     ]));
     main.appendChild(el('p', { class: 'lnote', id: 'dnote', hidden: true }));   // v2.15: saved list / fallback note
     var fbox = findBox(d);   // v2.22: Find in list
@@ -4604,6 +4743,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     main.appendChild(el('div', { id: 'dsort' }));
     main.appendChild(el('ul', { class: 'list compact', id: 'dlist' }));
     main.appendChild(el('div', { class: 'dfoot', id: 'dfoot' }));
+    paintContinue();
     paintDetailSort();
     paintDetailList();
     paintDetailFoot();
@@ -4662,6 +4802,45 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function firstUnplayed(items) {
     for (var i = 0; i < items.length; i++) { if (!markItem(items[i]).played) return items[i]; }   // v2.21: marks count
     return items[0] || null;
+  }
+  // v2.23: a pinned podcast's play button. Its episodes the page already holds (the Latest cache, the podcast's
+  // saved list, the episode history), newest release first, the newest position of each winning; then the same pick
+  // as the podcast's own Play (firstUnplayed). An episode with no release date anywhere (heard, but in no list) goes
+  // after every dated one, newest heard first, so it never beats a newer release. Null when none is held. Reads storage only.
+  function heldShowEpisode(showId) {
+    if (!showId) return null;
+    var byUri = {}, list = [];
+    function put(x, snap, k) {
+      if (!x || !x.uri || !x.id) return;
+      var w = byUri[x.uri];
+      if (!w) { w = byUri[x.uri] = { x: x, snap: snap, k: k, real: !!x.real, i: list.length }; list.push(w); return; }
+      if (!w.real && x.real) { w.k = k; w.real = true; }   // a release date beats the day it was heard
+      if (snap > w.snap) { w.x = Object.assign({}, w.x, { positionMs: x.positionMs, played: x.played, durMs: x.durMs || w.x.durMs }); w.snap = snap; }
+    }
+    var c = state.latest.cache;
+    if (c && Array.isArray(c.items)) c.items.forEach(function (x) {
+      if (x && x.showId === showId) put({ id: x.id, uri: x.uri, name: x.name, durMs: x.durMs || 0, positionMs: x.positionMs || 0, played: !!x.played, real: !!x.date }, c.at, x.date || '');
+    });
+    var sl = slGet(SL_SHOW, showId);
+    if (sl) sl.items.forEach(function (e) {
+      if (!e) return;
+      var rs = resumeOf(e);
+      put({ id: e.id, uri: e.uri, name: e.name, durMs: e.duration_ms || 0, positionMs: rs.pos, played: rs.played, real: !!e.release_date }, sl.at, e.release_date || '');
+    });
+    epHistory().forEach(function (h) {
+      if (!h.show || h.show.id !== showId) return;
+      var seenDate = (epSeen[h.uri] && epSeen[h.uri].x && epSeen[h.uri].x.date) || '';   // a list loaded this visit may know it
+      put({ id: h.id, uri: h.uri, name: h.name, durMs: h.duration_ms || 0, positionMs: h.played ? 0 : (h.positionMs || 0), played: !!h.played, real: !!seenDate }, histSnap(h), seenDate);
+      if (!byUri[h.uri].real) byUri[h.uri].heard = h.at || 0;
+    });
+    list.sort(function (a, b) {
+      if (a.real !== b.real) return a.real ? -1 : 1;   // dated before undated
+      return a.real ? (cmpDesc(a.k, b.k) || a.i - b.i) : ((b.heard || 0) - (a.heard || 0) || a.i - b.i);
+    });
+    var t = firstUnplayed(list.map(function (w) { return w.x; }));
+    if (!t) return null;
+    var pos = t.played ? 0 : (t.positionMs || 0);
+    return { kind: 'episode', id: t.id, name: t.name || 'Untitled', uri: t.uri, url: 'https://open.spotify.com/episode/' + t.id, positionMs: pos, played: !!t.played };
   }
   function appendDetailRows(items) {
     var ul = $('dlist');
