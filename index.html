@@ -3483,6 +3483,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var s = $('pSub');
     s.classList.toggle('idle', idle);
     if (idle && s.textContent !== t) s.textContent = t;
+    // audit: the bar's name starts with what it shows (song, artist and device, or the asleep line), then what it does
+    var ttl = $('pTitle').textContent, sub = s.textContent;
+    var lab = (ttl ? ttl + (sub ? ', ' + sub : '') + '. ' : '') + 'Open Now Playing';
+    var pi = $('pInfo');
+    if (pi.getAttribute('aria-label') !== lab) pi.setAttribute('aria-label', lab);
   }
   // Play while asleep: the last song or episode, at the saved position, through the usual tap path, so it
   // plays at once when a device is open and otherwise follows the wake mode ('wait' saves it as pending).
