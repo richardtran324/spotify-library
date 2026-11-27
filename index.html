@@ -3808,6 +3808,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (o.artist) {   // v2.19: already on this artist's page, so just show it
       var cur = state.detail;
       if (cur && cur.kind === 'artist' && cur.item.id === o.artist.id) { closeNp(false); return; }
+      var under = state.detailStack[state.detailStack.length - 1];   // a list opened from this artist: go back to it
+      if (cur && under && under.kind === 'artist' && under.item.id === o.artist.id) { closeNp(false); goBack(); return; }
       npOpenDetail(artistItem(o.artist));
       return;
     }
