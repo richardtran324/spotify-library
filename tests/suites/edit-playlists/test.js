@@ -280,7 +280,7 @@ tests.push(function () {
       check('4 toast and sheet closed', lastToast(tab) === 'Added to “Empty one”' && !plOpen(tab), tab.toasts());
       check('4 Spotify\'s copy has the song', tab.env.pls.p5.ids.join() === 's7');
       var c = cachePl(s, 'p5');
-      check('4 song count saved on the phone', c && c.count === 1 && / · 1 songs$/.test(c.sub), c);
+      check('4 song count saved on the phone', c && c.count === 1 && / · 1 song$/.test(c.sub), c);
       check('4 Now Playing still open', !$(tab, 'np').hidden);
     });
   });

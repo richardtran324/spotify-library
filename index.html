@@ -348,6 +348,9 @@ li.row.kpflash { animation: kpflash 1.6s ease-out; }
 .setname { display: block; font-weight: 600; }
 .setnote { display: block; font-size: 0.85rem; color: var(--muted); }
 .setgroup { border: 0; margin: 0; padding: 0; min-width: 0; }
+.wakehelp summary { cursor: pointer; padding: 10px 0; min-height: 44px; box-sizing: border-box; }   /* v2.47 */
+.wakehelp .sethint { margin: 0 0 8px; }
+.wakehelp b { color: var(--fg); font-weight: 600; }
 .setgroup legend { padding: 0; margin-bottom: 2px; font-weight: 600; }
 /* Podcasts: Latest / Shows toggle and the Latest episodes header */
 .seg { display: flex; gap: 3px; padding: 3px; margin-top: 12px; border-radius: 10px; background: var(--chip); }
@@ -700,10 +703,18 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     <h3 class="sheet-sub">Settings</h3>
     <fieldset class="setgroup" id="wakeModes">
       <legend>When Spotify isn’t running</legend>
-      <label class="setrow"><input type="radio" name="wakeMode" value="wait"><span><span class="setname">Wait for me to press play (no app)</span><span class="setnote">Press play in Control Center or on the lock screen. Spotify starts in the background and the page plays what you tapped.</span></span></label>
-      <label class="setrow"><input type="radio" name="wakeMode" value="link"><span><span class="setname">Open the Spotify app</span><span class="setnote">A tap opens the item in Spotify; switch back and the page plays it.</span></span></label>
-      <label class="setrow"><input type="radio" name="wakeMode" value="shortcut"><span><span class="setname">Run my Wake Spotify shortcut</span><span class="setnote">A tap runs your “Wake Spotify” shortcut, which opens Spotify and comes back to the page.</span></span></label>
+      <label class="setrow"><input type="radio" name="wakeMode" value="wait"><span><span class="setname">Wait for me to press play (no app)</span><span class="setnote">Press play in Control Center, on the lock screen or on your headphones. Spotify starts in the background with no screen of its own, and the page plays what you tapped.</span></span></label>
+      <label class="setrow"><input type="radio" name="wakeMode" value="link"><span><span class="setname">Open the Spotify app</span><span class="setnote">A tap opens the item in Spotify; switch back and the page plays it. If Spotify wasn’t running, its Home screen shows first.</span></span></label>
+      <label class="setrow"><input type="radio" name="wakeMode" value="shortcut"><span><span class="setname">Run my Wake Spotify shortcut</span><span class="setnote">A tap runs your “Wake Spotify” shortcut, which starts Spotify and comes back to the page. Built with Play/Pause (below), Spotify’s Home screen doesn’t show; the Shortcuts screen still shows for a moment.</span></span></label>
     </fieldset>
+    <details class="setgroup wakehelp" id="wakeHelp">
+      <summary class="setname">Wake Spotify without its Home screen</summary>
+      <p class="sethint">Opening Spotify while it isn’t running always shows its Home screen first, and no link can skip it. Pressing play instead starts Spotify in the background, the way Control Center does. These work with Wait for me to press play.</p>
+      <p class="sethint"><b>One gesture with Back Tap.</b> In Shortcuts, tap +, add the <b>Play/Pause</b> action, tap its word Play/Pause and choose <b>Play</b>, and name the shortcut <b>Play Spotify</b>. Then in Settings › Accessibility › Touch › Back Tap › Double Tap, choose Play Spotify. When the page says Spotify is asleep, double-tap the back of your phone.</p>
+      <p class="sethint"><b>Action button</b> (iPhone 15 Pro or later): Settings › Action Button › Shortcut › Play Spotify.</p>
+      <p class="sethint"><b>Wake Spotify shortcut</b> (for Run my Wake Spotify shortcut): use <b>Play/Pause</b> set to Play instead of Open App, then <b>Wait</b> 2 seconds, then <b>Open URLs</b> with <span id="wakeHelpUrl"></span>. It may come back in a new Safari tab, which still plays your tap.</p>
+      <p class="sethint">A play press resumes whatever Spotify played last for a moment, then the page switches to your tap. It wakes Spotify only if Spotify was the last app to play sound; if another app or a Safari preview played since, open Spotify once.</p>
+    </details>
     <fieldset class="setgroup" id="themeModes">
       <legend>Appearance</legend>
       <label class="setrow"><input type="radio" name="theme" value="auto"><span><span class="setname">Match phone</span></span></label>
@@ -911,6 +922,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   var SHORTCUT_URL = 'shortcuts://run-shortcut?name=' + encodeURIComponent('Wake Spotify');
   var NO_DEVICE = 'Spotify needs to be open on a device first: your phone, computer or speaker.';
   var REDIRECT = location.origin + location.pathname.replace(/index\.html$/, '');
+  var WAKE_RETURN_URL = REDIRECT + '?wake=1';   // v2.47: where the Wake Spotify shortcut comes back to
 
   var state = {
     data: null, filter: 'home', query: '',
@@ -1239,6 +1251,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var code = params.get('code');
     var err = params.get('error');
     history.replaceState(null, '', REDIRECT);
+    if (!err && (!params.get('state') || !get(K.state))) {
+      // No sign-in from this page is in progress, or the answer has no check value, so it isn't ours
+      // (before, a missing value matched a missing saved one).
+      if (get(K.token)) { toast('Sign-in check failed. You’re still signed in.'); return Promise.resolve(true); }
+      renderSignIn('Sign-in check failed. Please try again.'); return Promise.resolve(false);
+    }
     var ask = get(PERM_ASK);
     del(PERM_ASK);
     if (!ask || !FEATURE_SCOPES[ask.feature] || !(Date.now() - (ask.at || 0) < 30 * 60000)) ask = null;
@@ -1737,7 +1755,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       ownerId: (p.owner && p.owner.id) || '', collaborative: !!p.collaborative,
       ownerName: (p.owner && p.owner.display_name) || '', snap: p.snapshot_id || '',   // v2.24: for Make a copy ('' = unknown)
       count: count,   // number of songs, for Most songs
-      sub: 'Playlist' + (p.owner && p.owner.display_name ? ' · ' + p.owner.display_name : '') + (count ? ' · ' + count + ' songs' : '')
+      sub: 'Playlist' + (p.owner && p.owner.display_name ? ' · ' + p.owner.display_name : '') + (count ? ' · ' + count + (count === 1 ? ' song' : ' songs') : '')
     };
   }
   function mapArtist(a) {
@@ -1748,7 +1766,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     };
   }
   function likedItem(d) {
-    return { kind: 'liked', name: 'Liked Songs', uri: null, url: 'https://open.spotify.com/collection/tracks', sub: 'Playlist · ' + d.likedTotal + ' songs' };
+    return { kind: 'liked', name: 'Liked Songs', uri: null, url: 'https://open.spotify.com/collection/tracks', sub: 'Playlist · ' + d.likedTotal + (d.likedTotal === 1 ? ' song' : ' songs') };
   }
   function mapShow(s) {
     if (!s || !s.id) return null;
@@ -2644,7 +2662,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     e.type = type; e.q = q;
     cachePut(type, q, e);
     state.search = { q: q };
-    addRecentSearch(q);
+    if (!coolLeft('search')) addRecentSearch(q);   // while search is paused nothing is sent, so nothing is saved
     renderList();
     fetchSearchPage(type, q, e);
   }
@@ -4660,6 +4678,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (note.getAttribute('data-note') === null) note.setAttribute('data-note', note.textContent);
       note.textContent = sa ? SHORTCUT_STANDALONE_NOTE : note.getAttribute('data-note');
     });
+    var u = $('wakeHelpUrl'); if (u) u.textContent = WAKE_RETURN_URL;   // v2.47: the address the Wake Spotify shortcut opens
   }
   // Appearance: 'auto' follows the phone; Light or Dark sets data-theme on <html> (the CSS has a block for each).
   function themeMode() { var v = get(K.theme); return v === 'light' || v === 'dark' ? v : 'auto'; }
@@ -6455,7 +6474,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // A card's second line: short enough for a 112 px card.
   function cardSub(i) {
     if (i.kind === 'track') return i.artist || '';
-    if (i.kind === 'playlist') return i.count ? i.count + ' songs' : 'Playlist';
+    if (i.kind === 'playlist') return i.count ? i.count + (i.count === 1 ? ' song' : ' songs') : 'Playlist';
     if (i.kind === 'album') return i.artist || 'Album';
     if (i.kind === 'artist') return 'Artist';
     if (i.kind === 'show') return 'Podcast';
@@ -7443,7 +7462,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     else if (p.why === 'paused') note = coolText(p.group);
     else if (p.group === 'catalog' && !p.reqs && d.plSavedAt) note = 'Saved on this phone. No requests.';   // v2.37
     else if (p.memo || (p.group === 'catalog' && !p.reqs)) note = 'Already loaded this visit. No requests.';
-    else if (p.group !== 'catalog') note = 'Loads ' + fmtCount(Math.min(p.more, p.reqs * FIND_PAGE)) + ' more ' + noun + ' (' + p.reqs + (p.reqs === 1 ? ' request' : ' requests') + ')' +
+    else if (p.group !== 'catalog') note = 'Loads ' + fmtCount(Math.min(p.more, p.reqs * FIND_PAGE)) + ' more ' + (Math.min(p.more, p.reqs * FIND_PAGE) === 1 ? noun.replace(/s$/, '') : noun) + ' (' + p.reqs + (p.reqs === 1 ? ' request' : ' requests') + ')' +
       (capped ? ', ' + fmtCount(p.more - p.reqs * FIND_PAGE) + ' left after that. Tap again for the rest.' : '.');
     if (note) f.appendChild(el('p', { class: 'snote', text: note }));
   }
@@ -7507,6 +7526,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     function paintNew(mapped, last) {
       if (d.item.kind === 'album') { remapDetail(d); return; }   // first: d.items follows d.raw even off screen (it paints only on screen)
       if (state.detail !== d) return;
+      if (d.editing) { paintDetailList(); paintDetailFoot(); return; }   // Edit was tapped while it ran: late rows get edit buttons too
       var tok = findTokens(d), plain = sortIsDefault(detailView(d.item)) && !(epfKey(d.item) && epfActive(epfKey(d.item)));   // v2.40
       if (tok) {
         var n = mapped.filter(function (i) { return findHit(i, tok); }).length;
@@ -7744,6 +7764,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (r.status === 403 && d.item.kind === 'playlist') { noList[d.item.id] = true; d.restricted = true; if (cur) { paintDetailSort(); paintDetailFoot(); } return; }
       if (!r.ok || !r.json) throw httpError(r);   // v2.43: keeps status and reason
       d.next = r.json.next || null;
+      // A podcast's next page goes by the page's own short link, the one a reopened saved copy builds, so a page
+      // already kept this visit isn't asked again (Spotify's full next link would be a different key).
+      if (kind === 'show' && d.next) {
+        var nOff = /[?&]offset=\d+/.test(d.next) ? pageOffset(d.next) : pageOffset(url, r.json) + (r.json.items || []).length;
+        if (nOff > 0) d.next = showPage(d.item.id, nOff);   // otherwise Spotify's own link stays
+      }
       if (typeof r.json.total === 'number') d.total = r.json.total;
       if (kind === 'album' || kind === 'show') {
         // v2.15: kept as minimal objects and saved on this phone (lib-cache-album / lib-cache-show).
@@ -7892,7 +7918,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (!p || seen.indexOf(p) !== -1) return;
       seen.push(p);
       p.count = n;
-      if (typeof p.sub === 'string') p.sub = p.sub.replace(/ · \d+ songs$/, '') + (n ? ' · ' + n + ' songs' : '');
+      if (typeof p.sub === 'string') p.sub = p.sub.replace(/ · \d+ songs?$/, '') + (n ? ' · ' + n + (n === 1 ? ' song' : ' songs') : '');
     });
     if (state.data && (state.data.playlists || []).some(function (p) { return p.id === id; })) set(K.cache, state.data);
   }
@@ -8001,7 +8027,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       var ul = el('ul', { class: 'devlist' });
       rows.forEach(function (p) {
         var b = el('button', { class: 'devrow', type: 'button', 'data-pl': p.id }, [
-          el('span', {}, [el('span', { class: 'devname', text: p.name || 'Untitled' }), el('span', { class: 'sub', text: p.collaborative && !isOwn(p) ? 'Collaborative' : (p.count ? p.count + ' songs' : '') })])
+          el('span', {}, [el('span', { class: 'devname', text: p.name || 'Untitled' }), el('span', { class: 'sub', text: p.collaborative && !isOwn(p) ? 'Collaborative' : (p.count ? p.count + (p.count === 1 ? ' song' : ' songs') : '') })])
         ]);
         b.addEventListener('click', function () { pickPl(p, b); });
         ul.appendChild(el('li', {}, [b]));
@@ -9419,6 +9445,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     $('banner').hidden = true;
     paintNet();   // v2.43: hides the no-internet line (state.started is false now)
     closeSheet();
+    closePerm();   // the permission sheet and the Add to playlist / Remove sheet belong to that sign-in too
+    closePl();     // (closed in the reverse of the order they can open: the permission sheet opens from this one)
     closeQueue(false);
     closeNp(false);
     closePl(); closePerm();   // v2.28: Add to playlist and the permission sheet close on sign-out too
