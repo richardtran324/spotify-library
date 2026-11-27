@@ -727,7 +727,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     epHistory: 'lib-ep-history', // v2.11: [{uri, id, name, show:{id, name, images}, duration_ms, positionMs, played, at[, checkedAt]}], newest first
     epNotes: 'lib-ep-notes',     // v2.18: [{id, t, at[, cut]}], newest first: notes of episodes you opened or played (40, 4,000 characters each)
     epMarks: 'lib-ep-marks',     // v2.21: {uri: {played, at, pos}}: Mark as played / unplayed, this phone only (400, 180 days)
-    playLog: 'lib-play-log',     // v2.27: {e: [[playedAt ms, track id], …] newest first, t: {track id: [name, artists, album, cover]}}: songs from Recently played, kept past its last 50 (1,500 plays, 90 days; names cut at 80 characters with …; covers without the i.scdn.co prefix)
+    playLog: 'lib-play-log',     // v2.28: {e: [[playedAt ms, track id], …] newest first, t: {track id: [name, artists, album, cover]}}: songs from Recently played, kept past its last 50 (1,500 plays, 90 days; names cut at 80 characters with …; covers without the i.scdn.co prefix)
     ctxLast: 'lib-ctx-last',     // v2.23: {album or playlist URI | 'liked': {uri, id, name, positionMs, durMs, at}}: the last song heard in each list (40, 30 days)
     // v2.13 rate limits. Shared by every copy of the page that shares this storage (Safari tabs on one origin).
     cool: 'lib-cooloff',         // v2.14: {group: {until, reason, strikes, quotaAt, retryAfter, last429:{at, reason, retryAfter, what}}}
@@ -1427,7 +1427,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     latest: [['newest', 'Newest first'], ['oldest', 'Oldest first'], ['show', 'Show A–Z']],
     'd-album': [['track', 'Track order'], ['az', 'A–Z'], ['artist', 'Artist A–Z']],
     'd-playlist': [['default', 'Default'], ['az', 'Title A–Z'], ['artist', 'Artist A–Z'], ['added', 'Recently added']],
-    'd-liked': [['default', 'Recently liked'], ['az', 'Title A–Z'], ['artist', 'Artist A–Z'], ['lastplay', 'Not played lately']],   // v2.27: Not played lately
+    'd-liked': [['default', 'Recently liked'], ['az', 'Title A–Z'], ['artist', 'Artist A–Z'], ['lastplay', 'Not played lately']],   // v2.28: Not played lately
     'd-show': [['newest', 'Newest'], ['oldest', 'Oldest']],
     'd-episodes': [['saved', 'Recently saved'], ['newest', 'Newest'], ['oldest', 'Oldest']],
     // Search Spotify with one result type: 's-<type>'. Best match is Spotify's own order.
@@ -1463,7 +1463,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     },
     'd-album': { az: byName, artist: function (a, b) { return cmpText(a.artist, b.artist); } },
     'd-playlist': { az: byName, artist: function (a, b) { return cmpText(a.artist, b.artist); }, added: function (a, b) { return cmpDesc(a.added, b.added); } },
-    'd-liked': { az: byName, artist: function (a, b) { return cmpText(a.artist, b.artist); }, lastplay: function (a, b) { return cmpLastPlay(a, b); } },   // v2.27
+    'd-liked': { az: byName, artist: function (a, b) { return cmpText(a.artist, b.artist); }, lastplay: function (a, b) { return cmpLastPlay(a, b); } },   // v2.28
     'd-show': { oldest: function (a, b) { return cmpAsc(a.date, b.date); } },
     'd-episodes': { newest: function (a, b) { return cmpDesc(a.date, b.date); }, oldest: function (a, b) { return cmpAsc(a.date, b.date); } },
     's-track': { az: byName },
@@ -2236,7 +2236,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function loadRecent() {
     var seq = ++state.recentSeq;
     state.recentTriedAt = Date.now();
-    logShow = LOG_ROWS;   // v2.27: the log opens at its newest rows again
+    logShow = LOG_ROWS;   // v2.28: the log opens at its newest rows again
     state.recent = { items: state.recent.items, jump: state.recent.jump, loading: true, error: '' };
     renderIfRecent();
     api('/me/player/recently-played?limit=50').then(function (r) {
@@ -2245,7 +2245,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       var seen = {}, out = [], seenAlbum = {}, seenList = {}, jump = [];
       var rItems = (r.json && r.json.items) || [];
       ctxFromRecent(rItems);   // v2.23: fills gaps in the last song heard per album or playlist
-      logMerge(rItems);        // v2.27: keeps these plays in the listening log
+      logMerge(rItems);        // v2.28: keeps these plays in the listening log
       rItems.forEach(function (it) {
         var t = it && it.track;
         if (!t || !t.id) return;
@@ -2295,7 +2295,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     loadRecent();
   }
 
-  // ---------- listening log (v2.27) ----------
+  // ---------- listening log (v2.28) ----------
   // Spotify's recently played answer holds only the last 50 songs, so the page keeps what it already gets: each
   // answer (Recent, or Home's at most once per 15 minutes) is merged into a log on this phone, one entry per play
   // (played_at + song), newest first, at most 1,500 plays and 90 days, with each song's name, artists, album (each cut to 80
@@ -3333,7 +3333,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.27 (2026-11-27)';
+  var VERSION = 'v2.28 (2026-11-27)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -4671,7 +4671,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     return items.filter(function (i) { return (i.name + ' ' + i.sub + (i.album ? ' ' + i.album.name : '') + (i.playlist ? ' ' + i.playlist.name : '') + (i.liked ? ' ' + i.liked.name : '') + (i.show ? ' ' + i.show.name : '')).toLowerCase().indexOf(q) !== -1; });
   }
   // Recently played songs (Spotify) and podcast episodes (the page's own history, v2.11), newest first.
-  // v2.27: songs come from the listening log, under day headings; Show chips (All, Songs, Episodes) when both
+  // v2.28: songs come from the listening log, under day headings; Show chips (All, Songs, Episodes) when both
   // kinds are there; the newest LOG_ROWS rows, then Show earlier. Hearts are checked only for the songs in
   // Spotify's latest answer (and episodes), as before, so older rows add no requests.
   function renderRecent(main) {
@@ -5177,7 +5177,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function appendDetailRows(items) {
     var ul = $('dlist');
     if (!ul) return;
-    if (state.detail && state.detail.item.kind === 'liked') items = items.map(withLastPlay);   // v2.27: "Played 3 days ago"
+    if (state.detail && state.detail.item.kind === 'liked') items = items.map(withLastPlay);   // v2.28: "Played 3 days ago"
     items.forEach(function (i) { ul.appendChild(itemRow(i)); });
     requestSaved(savableUris(items));
   }
