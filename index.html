@@ -4323,6 +4323,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       ? { kind: 'artist', item: item, img: '', items: [], offset: 0, more: false, total: null, loading: false, error: '', lastGot: 0 }
       : { item: item, items: [], next: null, loading: false, error: '', restricted: false, lastUrl: null,
           raw: [], src: 'api', savedAt: 0, checkedAt: 0, seed: false, pausedUntil: 0 };   // v2.15: saved lists and pause fallbacks
+    if (old && !opts.push) stopFind(old);   // v2.22: a replaced list stops its Search all
     if (old && opts.push) {
       state.detailStack.push(old);
       d.returnScroll = y; d.pushed = false;
@@ -4351,6 +4352,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function closeDetail() {
     var d = state.detail;
     if (!d) return;
+    stopFind(d);   // v2.22
     if (state.detailStack.length) {
       state.detail = state.detailStack.pop();
       renderDetail();   // from what that view already loaded; nothing is asked again
@@ -4523,12 +4525,18 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // It matches the title, the artist (an episode's show) and the album, ignoring case and accents, over the
   // songs loaded so far. Typing sends nothing: it only redraws the rows (filter first, then sort the matches).
   // When more pages remain, "Search all N songs" loads them: Liked Songs and Saved episodes are the library
-  // group (2 requests at a time, up to FIND_LIB_MAX per tap, kept for this visit in findMemo); your playlists
+  // group (2 requests at a time, up to FIND_LIB_MAX per tap so a 429 can't pause hearts and refresh; another tap
+  // carries on; kept for this visit in findMemo); your playlists
   // and partial albums are the catalog group (one at a time, kept by apiCached; the button names the request
   // count and is off above FIND_CAT_MAX or while catalog is paused). Any 429 or pause stops it; what arrived stays.
-  var FIND_SHOW = 300, FIND_PAGE = 50, FIND_LIB_MAX = 60, FIND_CAT_MAX = 4, FIND_DEBOUNCE_ROWS = 300;
+  // It also stops once its list is closed or replaced (only a view still on screen or under one keeps loading),
+  // and only one load runs at a time: a new one waits until the last one's answers are in.
+  var FIND_SHOW = 300, FIND_PAGE = 50, FIND_LIB_MAX = 20, FIND_CAT_MAX = 4, FIND_DEBOUNCE_ROWS = 300;
   var findMemo = {};   // 'liked:' / 'episodes:' -> {total, head, items, next}: Search all's answer, for this visit
   var findBoxFor = null, findTimer = null;
+  var findBusy = null;   // the load with requests in flight: {waiters: [fn]}
+  function findAlive(d) { return state.detail === d || state.detailStack.indexOf(d) !== -1; }
+  function stopFind(d) { if (d && d.findRun) d.findRun.stop = true; }
   function findable(d) {
     var it = d && d.item;
     if (!it || d.kind === 'artist' || d.restricted) return false;
@@ -4635,7 +4643,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       }
       return;
     }
-    var label = 'Search all ' + fmtCount(p.total) + ' ' + noun;
+    var capped = p.group !== 'catalog' && !p.memo && p.more > p.reqs * FIND_PAGE;
+    var label = capped ? 'Search ' + fmtCount(p.reqs * FIND_PAGE) + ' more' : 'Search all ' + fmtCount(p.total) + ' ' + noun;
     if (p.group === 'catalog' && p.reqs) label += ' (' + p.reqs + (p.reqs === 1 ? ' request)' : ' requests)');
     var b = el('button', { class: 'btn secondary', type: 'button', id: 'dfindAll', text: label });
     if (p.disabled) b.disabled = true;
@@ -4645,7 +4654,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (p.why === 'cap') note = 'That needs ' + p.reqs + ' requests. Spotify allows only about 20 an hour for playlist and album songs, so this works for up to ' + (FIND_CAT_MAX * FIND_PAGE) + ' more songs. Clear the box and use Load more instead.';
     else if (p.why === 'paused') note = coolText(p.group);
     else if (p.memo || (p.group === 'catalog' && !p.reqs)) note = 'Already loaded this visit. No requests.';
-    else if (p.group !== 'catalog') note = 'Loads ' + fmtCount(Math.min(p.more, p.reqs * FIND_PAGE)) + ' more ' + noun + ' (' + p.reqs + (p.reqs === 1 ? ' request' : ' requests') + ').';
+    else if (p.group !== 'catalog') note = 'Loads ' + fmtCount(Math.min(p.more, p.reqs * FIND_PAGE)) + ' more ' + noun + ' (' + p.reqs + (p.reqs === 1 ? ' request' : ' requests') + ')' +
+      (capped ? ', ' + fmtCount(p.more - p.reqs * FIND_PAGE) + ' left after that. Tap again for the rest.' : '.');
     if (note) f.appendChild(el('p', { class: 'snote', text: note }));
   }
   function paintFindRun(d, f, noun) {
@@ -4678,15 +4688,27 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (state.detail === d) { paintDetailList(); paintDetailSort(); paintDetailFoot(); }
       return;
     }
+    if (findBusy) {   // the last load (another visit to this list) still has answers coming: start after it
+      var wait = d.findRun = { stop: false, waiting: true };
+      d.loading = true;
+      findBusy.waiters.push(function () {
+        d.loading = false; d.findRun = null;
+        if (!wait.stop && findAlive(d)) searchAll(d);
+        else if (state.detail === d) paintDetailFoot();
+      });
+      if (state.detail === d) paintDetailFoot();
+      return;
+    }
     var urls = p.urls, cat = p.group === 'catalog', par = cat ? 1 : 2;
     var run = d.findRun = { stop: false };
     var got = {}, done = 0, nextI = 0, active = 0, failed = null, lastJ = null;
+    var busy = findBusy = { waiters: [] };
     d.loading = true;
     if (state.detail === d) paintDetailFoot();
     // Draws what a page added, cheaply: matches only when they change what's shown; a sorted full list once at the end.
     function paintNew(mapped, last) {
+      if (d.item.kind === 'album') { remapDetail(d); return; }   // first: d.items follows d.raw even off screen (it paints only on screen)
       if (state.detail !== d) return;
-      if (d.item.kind === 'album') { remapDetail(d); return; }
       var tok = findTokens(d), plain = sortIsDefault(detailView(d.item));
       if (tok) {
         var n = mapped.filter(function (i) { return findHit(i, tok); }).length;
@@ -4705,6 +4727,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }
     function finish(mapped) {
       d.loading = false; d.findRun = null;
+      if (findBusy === busy) findBusy = null;
+      busy.waiters.splice(0).forEach(function (fn) { setTimeout(fn, 0); });
       if (d.item.kind === 'album') { if (done) saveAlbumList(d); }   // v2.15: the saved copy stays whole
       paintNew(mapped, true);   // the last rows (an album redraws from its saved copy)
       if (d.item.kind !== 'album' && !cat && !d.next && done === urls.length) findMemo[findMemoKey(d)] = { total: d.total, head: findHead(d.items), items: d.items.slice(), next: null };
@@ -4718,7 +4742,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (state.detail === d) { paintDetailSort(); paintDetailFoot(); }
     }
     function launch() {
-      while (!failed && !run.stop && active < par && nextI < urls.length) {
+      while (!failed && !run.stop && findAlive(d) && active < par && nextI < urls.length) {
         (function (i) {
           active++;
           (cat ? apiCached : api)(urls[i]).then(function (r) {
@@ -4727,7 +4751,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
           }).catch(function (e) { if (!failed) failed = e || new Error('unknown error'); }).then(function () {
             active--;
             var mapped = commit();
-            if (active === 0 && (failed || run.stop || nextI >= urls.length)) { finish(mapped); return; }
+            if (active === 0 && (failed || run.stop || !findAlive(d) || nextI >= urls.length)) { finish(mapped); return; }
             paintNew(mapped);
             launch();
           });
@@ -5318,6 +5342,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     clearLastPlay();   // signed out: the last playback belongs to that sign-in
     releasePoller();
     paintCool();       // hides the cool-off line (state.started is false now)
+    stopFind(state.detail); state.detailStack.forEach(stopFind);   // v2.22
     state.detail = null; state.detailStack = [];
     $('top').classList.remove('detail');
     $('top').hidden = true;
