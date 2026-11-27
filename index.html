@@ -369,6 +369,8 @@ li.row.kpflash { animation: kpflash 1.6s ease-out; }
 .copynote { font-size: 0.85rem; color: var(--muted); }
 .lnote .copyline { min-width: 0; overflow-wrap: anywhere; }
 .lnote .copychg { flex-basis: 100%; }
+/* v2.45: "2 new" on a Pinned podcast card */
+.clcard .sub.newsub { color: var(--accent); font-weight: 600; }
 .newdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-right: 6px; vertical-align: 0.1em; }
 /* Now Playing bar: cover + title is a button that opens the "Now playing" sheet */
 .pinfo {
@@ -382,7 +384,7 @@ a.devrow { text-decoration: none; }
 .devrow[aria-busy="true"] { opacity: 0.6; cursor: progress; }
 /* The song that's playing now, in any list */
 li.row.playing .name { color: var(--accent); }
-.nowtag {
+.nowtag, .newtag {
   display: inline-block; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
   color: var(--accent); margin-right: 6px;
 }
@@ -820,7 +822,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     poller: 'lib-poller',        // {id, at, every}: the one visible copy that runs the player check
     playerCache: 'lib-player-cache', // {at, by, json}: the last /me/player answer, for the other copies
     meter: 'lib-reqmeter',       // {minute index: requests}, last 60 minutes, all copies
-    linkShuffle: 'lib-link-shuffle' // v2.39: true adds &shuffle=1 to copied shortcut links (Diagnostics)
+    linkShuffle: 'lib-link-shuffle', // v2.39: true adds &shuffle=1 to copied shortcut links (Diagnostics)
+    // v2.45: smarter Latest and the catalog budget guard
+    catMeter: 'lib-cat-meter',   // {minute index: catalog requests}, last 60 minutes, all copies (the budget guard)
+    showSeen: 'lib-show-seen'    // {showId: episode count when you last opened it}, saved podcasts only ("N new")
   };
   // v2.13 rate limits. Spotify counts an app's requests in a rolling 30-second window (and Development Mode apps
   // have a separate, unpublished quota); either one answers 429. v2.14: the quota is counted per kind of request
@@ -895,6 +900,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   var LATEST_PER_SHOW = 5;
   var LATEST_KEEP = 50;
   var LATEST_PARALLEL = 2;        // show requests in flight at once (v2.13: was 4)
+  // v2.45: Latest asks the podcasts whose episode count went up since it last asked them (and podcasts it never
+  // asked), up to LATEST_SHOWS per reload; every podcast is asked at least every 3 days so none is missed for good.
+  var LATEST_SLOW_MS = 3 * 24 * 60 * 60 * 1000;
+  var SHOW_COUNTS_MS = 2 * 60 * 1000;   // Latest's Refresh re-reads your podcasts' counts (library) unless read this recently
+  // v2.45 catalog budget guard: Spotify refused catalog requests after about 21 in an hour (one report, UNVERIFIED).
+  // At CAT_HOLD_AT in the last hour (all copies), automatic catalog work waits; taps still go.
+  var CAT_HOUR_MAX = 21;
+  var CAT_HOLD_AT = 18;
   var SHORTCUT_URL = 'shortcuts://run-shortcut?name=' + encodeURIComponent('Wake Spotify');
   var NO_DEVICE = 'Spotify needs to be open on a device first: your phone, computer or speaker.';
   var REDIRECT = location.origin + location.pathname.replace(/index\.html$/, '');
@@ -916,7 +929,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     sheetLoading: false, sheetError: '', sheetReturn: null,
     wake: { running: false, timer: null, gen: 0 },
     podTab: 'latest',
-    latest: { cache: null, loading: false, error: '', triedAt: 0, seq: 0, stoppedHidden: false },
+    latest: { cache: null, loading: false, error: '', triedAt: 0, seq: 0, stoppedHidden: false, held: false },   // v2.45: held (budget guard)
+    libAt: 0, libLoading: false,   // v2.45: when this visit read the library (the podcast counts); a library load in flight
     // v2.13: request budget
     lastActiveAt: 0,   // last time something was seen playing (or a control was used): the player check slows after 10 min
     lastPollAt: 0,     // last /me/player request from this copy
@@ -1481,6 +1495,49 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     b[m] = (b[m] || 0) + 1;
     Object.keys(b).forEach(function (k) { if (m - (+k) >= 60 || +k > m + 1) delete b[k]; });
     set(K.meter, b);
+    if (g === 'catalog') catNote(m);   // v2.45: the budget guard's count
+  }
+  // v2.45: catalog budget guard. Catalog requests per minute for the last hour, shared by every copy of the page
+  // (localStorage; memory only when storage is blocked). At CAT_HOLD_AT in the last hour, automatic catalog work
+  // (Latest opening on its own, a saved podcast's 12-hour check, the Now Playing playlist name) waits; taps still go.
+  // The per-group cool-off (429s) is separate and unchanged.
+  var catMem = {};
+  // Stored and in-memory counts merged (the larger per minute): another copy's requests come from storage, and
+  // this copy's own still count when storage refused the last write (full or blocked).
+  function catBuckets() {
+    var b = get(K.catMeter), out = {};
+    if (!b || typeof b !== 'object' || Array.isArray(b)) b = {};
+    Object.keys(b).forEach(function (k) { out[k] = Math.max(0, +b[k] || 0); });
+    Object.keys(catMem).forEach(function (k) { out[k] = Math.max(out[k] || 0, +catMem[k] || 0); });
+    return out;
+  }
+  function catNote(m) {
+    var b = catBuckets();
+    b[m] = (+b[m] || 0) + 1;
+    Object.keys(b).forEach(function (k) { if (m - (+k) >= 60 || +k > m + 1 || !(+b[k] > 0)) delete b[k]; });
+    catMem = b;
+    set(K.catMeter, b);
+  }
+  // Catalog requests in the last hour, all copies.
+  function catUsed() {
+    var b = catBuckets(), m = Math.floor(Date.now() / 60000), n = 0;
+    Object.keys(b).forEach(function (k) { if (m - (+k) < 60 && +k <= m + 1) n += Math.max(0, +b[k] || 0); });
+    return n;
+  }
+  function catHeld() { return catUsed() >= CAT_HOLD_AT; }
+  // When automatic lookups may go again (the count drops below CAT_HOLD_AT); 0 when they may go now.
+  function catFreeAt() {
+    var b = catBuckets(), m = Math.floor(Date.now() / 60000), n = catUsed();
+    if (n < CAT_HOLD_AT) return 0;
+    var ks = Object.keys(b).map(Number).filter(function (k) { return m - k < 60 && k <= m + 1; }).sort(function (x, y) { return x - y; });
+    for (var i = 0; i < ks.length; i++) { n -= Math.max(0, +b[ks[i]] || 0); if (n < CAT_HOLD_AT) return (ks[i] + 60) * 60000; }
+    return (m + 60) * 60000;
+  }
+  // How many catalog requests a Latest reload may send: automatic ones stop at CAT_HOLD_AT; a tap may use the
+  // rest of the hour's ~21 and always gets at least LATEST_PARALLEL.
+  function catRoom(manual) {
+    var n = catUsed();
+    return manual ? Math.max(LATEST_PARALLEL, CAT_HOUR_MAX - n) : Math.max(0, CAT_HOLD_AT - n);
   }
   function meterCount(ms, g) {
     var now = Date.now(), n = 0;
@@ -1698,7 +1755,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var n = s.total_episodes;
     return {
       kind: 'show', id: s.id, name: s.name || 'Untitled', uri: s.uri, url: 'https://open.spotify.com/show/' + s.id, img: img(s.images),
-      sub: 'Podcast' + (n != null ? ' · ' + n + (n === 1 ? ' episode' : ' episodes') : (s.publisher ? ' · ' + s.publisher : ''))
+      sub: 'Podcast' + (n != null ? ' · ' + n + (n === 1 ? ' episode' : ' episodes') : (s.publisher ? ' · ' + s.publisher : '')),
+      total: typeof n === 'number' ? n : null   // v2.45: the episode count, for Latest and "N new"
     };
   }
   // Shows ordered by their newest episode's release date (from the Latest feed), newest first.
@@ -3175,10 +3233,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // ---------- latest episodes: the newest episodes across your saved shows ----------
   // Spotify has no batch call for this, so each show's newest few episodes are fetched separately.
   // v2.14: only when you open Podcasts → Latest (and the cache is over 12 hours old) or tap its Refresh, never
-  // in the background; only the 12 most recently updated shows (by the cache; saved order before the first
-  // load), 2 at a time. The answers are merged into the cache, so the other shows keep what they had.
-  // audit: with more than 12 saved shows, 3 of the 12 (6 while some show was never asked) go to the shows asked
-  // longest ago, so a show past the first 12, a newly followed one, or one that starts publishing again is reached.
+  // in the background; at most 12 shows per reload, 2 at a time. The answers are merged into the cache, so the
+  // other shows keep what they had. v2.45: which shows a reload asks comes from the library's episode counts
+  // (see latestPlan). audit: when more shows are due than fit, 3 of the places (6 while a due show was never
+  // asked) go to the due shows asked longest ago, so every podcast is reached; a reload cut short by leaving the
+  // page is marked partial and finished when you come back.
   // Home's "Latest episodes" and the Shows order read the cache only.
   function onLatestView() { return state.started && !state.detail && state.filter === 'podcasts' && state.podTab === 'latest'; }
   function onHome() { return state.started && !state.detail && state.filter === 'home'; }
@@ -3193,20 +3252,25 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var L = state.latest, sc = get(K.latest);
     if (sc && Array.isArray(sc.items) && typeof sc.at === 'number' && (!L.cache || sc.at > L.cache.at) && sc.at < Date.now() + 60000) { L.cache = sc; setTimeout(rerenderLatest, 0); }
   }
-  // Opening Latest: fetches only when the cache is over 12 hours old, catalog isn't paused, and the last try
-  // was over 5 minutes ago.
+  // Opening Latest (v2.45): only when the list is over 12 hours old or was cut short (as v2.14 and the audit),
+  // and then only the podcasts the library's episode counts say have new episodes, plus the ones not asked for
+  // 3 days (see latestPlan). Never while catalog is paused, never before this visit's library answer (the counts)
+  // arrives, at most once per 5 minutes, and never past the automatic part of the hour's catalog budget (catRoom).
+  // A Refresh that leaving the page cut short before it asked anything goes on as a Refresh (stoppedHidden 'manual').
   function maybeLoadLatest() {
     var L = state.latest;
     if (!onLatestView() || document.hidden || L.loading) return;
     syncLatest();
-    if (latestFresh(L.cache) || coolLeft('catalog')) return;
+    if (coolLeft('catalog') || state.libLoading) return;
     if (Date.now() - L.triedAt < LATEST_MANUAL_MS && L.triedAt <= Date.now()) return;
-    loadLatest();
+    loadLatest(L.stoppedHidden === 'manual' ? 'manual' : 'auto');
   }
-  // The Refresh link next to "Updated … ago": at most once per 5 minutes.
+  // The Refresh link next to "Updated … ago": at most once per 5 minutes. v2.45: it first re-reads your podcasts'
+  // episode counts (one library request per 50 podcasts, unless read in the last 2 minutes), then asks only the
+  // podcasts whose count went up (plus the ones not asked for 3 days); nothing changed: "No new episodes", 0 lookups.
   function refreshLatest() {
     var L = state.latest;
-    if (coolBlocked('catalog')) return;
+    if (L.loading || coolBlocked('catalog')) return;
     var last = Math.max(L.triedAt || 0, (L.cache && !L.cache.partial && L.cache.at) || 0);
     var wait = last + LATEST_MANUAL_MS - Date.now();
     if (wait > 0 && last <= Date.now()) {
@@ -3214,7 +3278,38 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       toast('Updated a moment ago. Try again in ' + m + (m === 1 ? ' minute.' : ' minutes.'));
       return;
     }
-    loadLatest();
+    L.loading = true; L.error = ''; L.triedAt = Date.now();
+    var seq = ++L.seq;
+    setTimeout(rerenderLatest, 0);   // "Updating…"
+    freshShowCounts().then(function () {
+      if (seq !== L.seq) return;
+      L.loading = false;
+      // audit: left the page while the counts loaded: nothing was asked yet, so the Refresh goes on when you come back
+      if (document.hidden) { L.triedAt = 0; L.stoppedHidden = 'manual'; setTimeout(rerenderLatest, 0); return; }
+      loadLatest('manual');
+      setTimeout(rerenderLatest, 0);
+    }, function (e) {
+      if (seq !== L.seq) return;
+      L.loading = false;
+      if (e && e.message === 'signed-out') renderSignIn(); else setTimeout(rerenderLatest, 0);
+    });
+  }
+  // v2.45: your podcasts' current episode counts (GET /me/shows, library group). False when they weren't re-read
+  // (read in the last 2 minutes, library paused, or an error): Latest then goes by the counts it has.
+  function freshShowCounts() {
+    var now = Date.now();
+    if (!state.data || coolLeft('library') || (state.libAt && now - state.libAt < SHOW_COUNTS_MS && state.libAt <= now)) return Promise.resolve(false);
+    return pages('/me/shows?limit=50', function (it) { return mapShow(it && it.show); }).then(function (shows) {
+      if (!state.data) return false;
+      state.data.shows = shows;
+      state.libAt = Date.now();
+      set(K.cache, state.data);
+      syncSeen();
+      return true;
+    }, function (e) {
+      if (e && e.message === 'signed-out') throw e;
+      return false;
+    });
   }
   function mapLatest(e, s) {
     if (!e || !e.uri || !e.id || e.is_playable === false) return null;
@@ -3226,36 +3321,128 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       durMs: e.duration_ms || 0, positionMs: rs.pos, played: rs.played
     };
   }
-  // The 12 shows most recently updated per the cache (newest episode date), then saved order for the rest.
-  // audit: with more than 12, the last 3 (or 6) places go to the other shows asked longest ago (never asked first).
-  function latestShows(all) {
-    var c = state.latest.cache || {}, newest = c.newest || {}, askedAt = c.askedAt || {};
-    var w = all.map(function (s, i) { return { s: s, i: i, d: newest[s.id] || '', a: +askedAt[s.id] || 0 }; })
-      .sort(function (a, b) { return cmpDesc(a.d, b.d) || a.i - b.i; });
-    var rot = w.length <= LATEST_SHOWS ? 0 : w.some(function (x) { return !x.a && !x.d; }) ? LATEST_ROTATE_NEW : LATEST_ROTATE;
-    var rest = w.slice(LATEST_SHOWS - rot).sort(function (a, b) { return (a.a - b.a) || a.i - b.i; }).slice(0, rot);
-    return w.slice(0, LATEST_SHOWS - rot).concat(rest).map(function (x) { return x.s; });
+  // v2.45: which podcasts a Latest reload asks, from the episode counts in the library answer (total_episodes,
+  // already fetched on every page open and Refresh). cache.checks = {showId: [when Latest last got its episodes,
+  // the library's count for it then (null when unknown, or when that request failed)]}.
+  //   due:  count went up since then, oldest-checked first; then never asked, most recently updated first (saved
+  //         order before any reload); then count unknown (or failed) and asked over 12 hours ago, oldest first
+  //   slow: asked over 3 days ago, oldest first (a podcast that removes one episode and adds one keeps its count)
+  //   rose: just the first group of due
+  //   rest: every podcast, oldest-checked first (used when this visit hasn't read the counts)
+  //   at:   {showId: when Latest last got its episodes (0: never)}, for the audit's rotation in loadLatest
+  function latestPlan(all) {
+    var c = state.latest.cache, chk = (c && c.checks) || {}, newest = (c && c.newest) || {}, now = Date.now();
+    var more = [], fresh = [], unknown = [], slow = [], rest = [], atOf = {};
+    all.forEach(function (s, i) {
+      if (!s || !s.id) return;
+      var r = Array.isArray(chk[s.id]) ? chk[s.id] : null;
+      var at = r && typeof r[0] === 'number' && r[0] <= now + 60000 ? r[0] : 0;
+      var n = r && typeof r[1] === 'number' ? r[1] : null;
+      var w = { s: s, i: i, at: at, d: newest[s.id] || '' };
+      atOf[s.id] = at;
+      rest.push(w);
+      if (!at) fresh.push(w);
+      else if (typeof s.total === 'number' && n != null) {
+        if (s.total > n) more.push(w);
+        else if (now - at >= LATEST_SLOW_MS) slow.push(w);
+      } else if (now - at >= LATEST_MS) unknown.push(w);
+    });
+    function byAt(a, b) { return (a.at - b.at) || cmpDesc(a.d, b.d) || a.i - b.i; }
+    more.sort(byAt); unknown.sort(byAt); slow.sort(byAt); rest.sort(byAt);
+    fresh.sort(function (a, b) { return cmpDesc(a.d, b.d) || a.i - b.i; });
+    function ss(list) { return list.map(function (w) { return w.s; }); }
+    return { due: ss(more.concat(fresh, unknown)), rose: ss(more), slow: ss(slow), rest: ss(rest), more: more.length, at: atOf };
   }
-  function loadLatest() {
+  // Nothing to ask: the counts say nothing changed, so the list is up to date as of when they were read.
+  // A podcast whose request failed in the last 12 hours still counts as failed (it's asked again after that).
+  // audit (kept from loadLatest): the new `at` also dates the rows' positions, so what the page heard since the
+  // old one goes in first, and rows of podcasts no longer saved drop out. Nothing is left to ask, so not partial.
+  function latestUpToDate(at) {
+    var L = state.latest, old = L.cache || { items: [], newest: {}, checks: {} }, chk = old.checks || {}, now = Date.now(), failed = 0;
+    var shows = (state.data && state.data.shows) || [], ids = {};
+    shows.forEach(function (s) {
+      if (s && s.id) ids[s.id] = true;
+      var r = s && Array.isArray(chk[s.id]) ? chk[s.id] : null;
+      if (r && r[1] === null && typeof s.total === 'number' && now - r[0] < LATEST_MS) failed++;
+    });
+    var oldAt = old.at || 0, hist = histByUri();
+    var items = (Array.isArray(old.items) ? old.items : []).filter(function (x) { return x && ids[x.showId]; }).map(function (x) {
+      var h = hist[x.uri];
+      return h && histSnap(h) > oldAt ? Object.assign({}, x, { positionMs: h.played ? 0 : (h.positionMs || 0), played: !!h.played }) : x;
+    });
+    L.cache = Object.assign({}, old, { items: items, at: Math.min(now, Math.max(oldAt, at || 0)), failed: failed, quiet: !failed, left: 0, partial: false });
+    L.stoppedHidden = false;
+    set(K.latest, L.cache);
+    setTimeout(rerenderLatest, 0);
+  }
+  // mode: 'auto' (opening Latest) or 'manual' (its Refresh).
+  function loadLatest(mode) {
     var L = state.latest;
+    var manual = mode === 'manual';
     var all = state.data && state.data.shows;
     if (L.loading || !all || !all.length || document.hidden || coolLeft('catalog')) return;
-    var shows = latestShows(all);
+    var plan = latestPlan(all);
+    var stale = !latestFresh(L.cache);   // audit: a list cut short by leaving the page (partial) counts as stale
+    // A list under 12 hours old opening on its own asks nothing (as v2.14); a Refresh, or a list over 12 hours old
+    // or cut short, asks only podcasts whose count went up, never asked (or with no count), or not asked for 3 days.
+    if (!manual && !stale) { L.stoppedHidden = false; return; }
+    var ask = plan.due.concat(plan.slow);
+    if (!state.libAt) {
+      // This visit hasn't read the counts (library paused or failed): the podcasts asked longest ago fill up.
+      ask = ask.concat(plan.rest.filter(function (s) { return ask.indexOf(s) === -1; }));
+    }
+    if (!ask.length) {
+      L.triedAt = Date.now(); L.held = false; L.error = ''; latestUpToDate(manual ? Date.now() : state.libAt);
+      return;
+    }
+    var room = catRoom(manual);
+    if (room <= 0) {   // automatic only: the hour's catalog budget is nearly used up; Refresh still works
+      if (!L.held) { L.held = true; setTimeout(rerenderLatest, 0); }
+      return;
+    }
+    L.held = false;
+    var lim = Math.min(LATEST_SHOWS, room), shows = ask.slice(0, lim);
+    if (ask.length > lim) {
+      // audit: when more are due than fit, the last places go to the due podcasts asked longest ago (never asked
+      // first), so none waits for good behind podcasts that publish often. Half the places at most.
+      var rot = Math.min(Math.floor(lim / 2), ask.slice(lim).some(function (s) { return !plan.at[s.id]; }) ? LATEST_ROTATE_NEW : LATEST_ROTATE);
+      if (rot > 0) {
+        var tail = ask.slice(lim - rot).map(function (s, k) { return { s: s, k: k, a: plan.at[s.id] || 0 }; })
+          .sort(function (a, b) { return (a.a - b.a) || a.k - b.k; }).slice(0, rot).map(function (w) { return w.s; });
+        shows = ask.slice(0, lim - rot).concat(tail);
+      }
+    }
     L.loading = true; L.error = ''; L.triedAt = Date.now(); L.stoppedHidden = false;
     var seq = ++L.seq;
-    var found = [], done = {}, failed = 0, next = 0, running = 0, stopped = false, hiddenStop = false, signedOut = false, finished = false;
+    var found = [], done = {}, bad = {}, failed = 0, next = 0, running = 0, stopped = false, hiddenStop = false, signedOut = false, finished = false;
+    function checksNow() {
+      var ids = {}, out = {}, old = (L.cache && L.cache.checks) || {}, now = Date.now();
+      all.forEach(function (s) { if (s && s.id) ids[s.id] = s; });
+      Object.keys(old).forEach(function (id) { if (ids[id] && Array.isArray(old[id])) out[id] = old[id]; });   // audit: podcasts no longer saved drop out
+      Object.keys(done).forEach(function (id) { if (ids[id]) out[id] = [now, typeof ids[id].total === 'number' ? ids[id].total : null]; });
+      Object.keys(bad).forEach(function (id) { if (ids[id] && !done[id]) out[id] = [now, null]; });   // asked again after 12 h
+      return out;
+    }
     function finish() {
       if (finished) return;
       finished = true;
       if (seq !== L.seq) return;
       L.loading = false;
       if (signedOut) { renderSignIn(); return; }
-      // audit: shows not asked because the page was hidden haven't failed: no note, and the list counts as not fresh,
-      // so the next open of Latest (or coming back to it) reloads it.
+      // audit: shows not asked because the page was hidden haven't failed: no note, and the list counts as not fresh
+      // (partial), so the next open of Latest (or coming back to it) asks the rest: their checks didn't move, so
+      // the plan still has them, while the ones answered here are up to date.
       if (hiddenStop) { L.triedAt = 0; L.stoppedHidden = true; }
       else failed += shows.length - next;   // not asked (paused): they keep what the cache had
+      // v2.45: due podcasts not answered or failed this time go first next time ("3 more podcasts next time")
+      var left = plan.due.filter(function (s) { return !done[s.id] && !bad[s.id]; }).length;
       if (!Object.keys(done).length) {
         if (!stopped) L.error = 'Couldn’t load the latest episodes.';
+        if (L.cache && (Object.keys(bad).length || hiddenStop)) {
+          L.cache = Object.assign({}, L.cache, { checks: checksNow(), quiet: false });
+          if (hiddenStop) L.cache.partial = true;
+          set(K.latest, L.cache);
+        }
       } else {
         // Episodes of the shows not asked this time (or that failed) stay as the cache had them.
         var old = L.cache && Array.isArray(L.cache.items) ? L.cache.items : [];
@@ -3273,10 +3460,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         found.sort(function (a, b) { return a.x.date < b.x.date ? 1 : a.x.date > b.x.date ? -1 : (a.si - b.si) || (a.k - b.k); });
         var newestByShow = Object.assign({}, (L.cache && L.cache.newest) || {});   // every show's newest episode date
         found.forEach(function (f) { var x = f.x; if (x.showId && x.date && (!newestByShow[x.showId] || x.date > newestByShow[x.showId])) newestByShow[x.showId] = x.date; });
-        // audit: when each saved show was last answered (failed or unsent ones keep theirs, so they come back first)
-        var askedAt = {}, prevAsked = (L.cache && L.cache.askedAt) || {}, now = Date.now();
-        all.forEach(function (s) { if (done[s.id]) askedAt[s.id] = now; else if (+prevAsked[s.id]) askedAt[s.id] = +prevAsked[s.id]; });
-        L.cache = { at: now, items: found.slice(0, LATEST_KEEP).map(function (f) { return f.x; }), failed: failed, newest: newestByShow, asked: shows.length, askedAt: askedAt };
+        // v2.45: cache.checks (when each saved show was last answered, and its count then) replaces the audit's
+        // askedAt; failed shows wait 12 hours, unsent ones keep theirs, so they come back first.
+        L.cache = { at: Date.now(), items: found.slice(0, LATEST_KEEP).map(function (f) { return f.x; }), failed: failed, newest: newestByShow, asked: shows.length,
+          checks: checksNow(), left: left };
         if (hiddenStop) L.cache.partial = true;
         set(K.latest, L.cache);
       }
@@ -3300,6 +3487,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       }).catch(function (e) {
         if (e && e.message === 'signed-out') signedOut = true;
         else if (isCool(e)) stopped = true;   // stop here; never asked again on its own (Refresh after the pause)
+        else bad[s.id] = true;
         failed++;
       }).then(function () { running--; launch(); });
     }
@@ -3325,6 +3513,65 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     });
     i.fresh = !i.played && !(i.positionMs > 0) && age != null && age < 7;   // released in the last 7 days, not started
     return i;
+  }
+  // ---------- "N new" on podcasts (v2.45) ----------
+  // Each saved podcast's episode count (total_episodes, in the library answer the page already asks for) is kept
+  // as of the last time you opened that podcast ('lib-show-seen', saved podcasts only). When the count is higher,
+  // its row and cards say "2 new" until you open it. The first time the page sees a podcast, its count is the
+  // starting point (no marker). Not a stat, and nothing is asked for it.
+  var seenMem = null, seenRaw = null, seenVal = {}, seenUnsaved = false;
+  function readSeen() {
+    if (seenUnsaved && seenMem) return seenMem;   // storage refused the last write: this copy's answer wins
+    var raw = null;
+    try { raw = localStorage.getItem(K.showSeen); } catch (e) { return seenMem || {}; }
+    if (raw == null) return seenMem || {};
+    if (raw !== seenRaw) { var v = null; try { v = JSON.parse(raw); } catch (e) {} seenRaw = raw; seenVal = v && typeof v === 'object' && !Array.isArray(v) ? v : {}; }
+    return seenVal;
+  }
+  function writeSeen(v) {
+    seenMem = v;
+    try { localStorage.setItem(K.showSeen, JSON.stringify(v)); seenUnsaved = false; } catch (e) { seenUnsaved = true; }
+  }
+  var libTotMemo = { list: null, map: {} };
+  function libShowTotals() {
+    var list = state.data && state.data.shows;
+    if (!Array.isArray(list)) return {};
+    if (libTotMemo.list !== list) {
+      var m = {};
+      list.forEach(function (s) { if (s && s.id && typeof s.total === 'number') m[s.id] = s.total; });
+      libTotMemo = { list: list, map: m };
+    }
+    return libTotMemo.map;
+  }
+  // After each library answer: a podcast seen for the first time starts at its count; a count that went down
+  // starts over there; podcasts you no longer follow are dropped.
+  function syncSeen() {
+    var list = state.data && state.data.shows;
+    if (!Array.isArray(list)) return;
+    var v = readSeen(), out = {}, changed = false;
+    list.forEach(function (s) {
+      if (!s || !s.id) return;
+      var n = s.total, had = v[s.id];
+      if (typeof n !== 'number') { if (typeof had === 'number') out[s.id] = had; return; }
+      if (typeof had !== 'number' || had > n) { out[s.id] = n; changed = true; } else out[s.id] = had;
+    });
+    if (Object.keys(v).length !== Object.keys(out).length) changed = true;
+    if (changed) writeSeen(out);
+  }
+  function showNew(id) {
+    var n = id ? libShowTotals()[id] : null, had = id ? readSeen()[id] : null;
+    return typeof n === 'number' && typeof had === 'number' && n > had ? n - had : 0;
+  }
+  function newText(n) { return (n > 99 ? '99+' : n) + ' new'; }
+  // Opening a saved podcast clears its marker.
+  function markShowSeen(id) {
+    var n = id ? libShowTotals()[id] : null;
+    if (typeof n !== 'number') return;
+    var v = readSeen();
+    if (v[id] === n) return;
+    var o = Object.assign({}, v);
+    o[id] = n;
+    writeSeen(o);
   }
   // ---------- podcast listening history (v2.11) ----------
   // Spotify's GET /me/player/recently-played leaves out podcast episodes, so the page keeps its own list:
@@ -3721,7 +3968,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     main.appendChild(el('div', { class: 'lbar' }, [playA, epfBar('latest', renderList)]));
     if (c && c.items.length > 1) main.appendChild(sortBar('latest', renderList));
     var note = el('p', { class: 'lnote' });
-    if (c) note.appendChild(el('span', { text: 'Updated ' + ago(new Date(c.at).toISOString()) + (L.loading ? ' · Updating…' : '') }));
+    if (c) note.appendChild(el('span', { text: 'Updated ' + ago(new Date(c.at).toISOString()) + (L.loading ? ' · Updating…' : c.quiet ? ' · No new episodes' : '') }));   // v2.45
     else if (L.loading) note.appendChild(el('span', { text: 'Loading the latest episodes…' }));
     else note.appendChild(el('span', { text: 'Not loaded yet' }));
     if (!L.loading) {
@@ -3734,6 +3981,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (cu) note.appendChild(el('span', { class: 'err', text: 'Paused by Spotify until ' + clock(cu) }));
     else if (L.error) note.appendChild(el('span', { class: 'err', text: L.error }));
     else if (c && c.failed) note.appendChild(el('span', { class: 'err', text: 'Couldn’t load ' + c.failed + (c.failed === 1 ? ' show' : ' shows') }));
+    // v2.45: podcasts with new episodes that didn't fit this reload go first next time; the budget guard's hold
+    if (!cu && !L.loading && c && c.left > 0) note.appendChild(el('span', { text: c.left + (c.left === 1 ? ' more podcast next time' : ' more podcasts next time') }));
+    if (!cu && !L.loading && L.held && catHeld()) note.appendChild(el('span', { text: 'Few album and podcast lookups left this hour, so it waits. Refresh still works.' }));
     main.appendChild(note);
     if (!c) return;
     // Play newest (above) always uses the newest-first order; the list follows the chosen sort.
@@ -4386,7 +4636,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.44 (2026-11-27)';
+  var VERSION = 'v2.45 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -4454,8 +4704,17 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     line('Pinned: ' + readPins().length + ' · Queued with ＋ (24 h): ' + readQueued().length + ' · Recent searches: ' + recentSearches().length);
     line('Up next “Next from”: uses song lists already loaded, no requests · Liked Songs known this visit: ' + upnLikedN);   // v2.41
     line('Playlist copies linked: ' + Object.keys(readCopies()).length + (readCopyWatch() ? ' · watching for a new copy' : ''));   // v2.24
-    line('Latest episodes: ' + (lc ? lc.items.length + ' cached, updated ' + ago(new Date(lc.at).toISOString()) + (lc.failed ? ', ' + lc.failed + ' show(s) failed' : '') : 'not loaded') +
-      ' · Latest: refreshes only when you open it (up to ' + LATEST_SHOWS + ' shows, cache ' + Math.round(LATEST_MS / 3600000) + ' h)');
+    line('Latest episodes: ' + (lc ? lc.items.length + ' cached, updated ' + ago(new Date(lc.at).toISOString()) + (lc.failed ? ', ' + lc.failed + ' show(s) failed' : '') +
+      (lc.quiet ? ', no new episodes by the counts' : '') + (lc.left ? ', ' + lc.left + ' left for next time' : '') : 'not loaded') +
+      ' · Latest: asks only podcasts whose episode count went up (each at least every ' + Math.round(LATEST_SLOW_MS / 86400000) + ' days), up to ' + LATEST_SHOWS + ' per reload');   // v2.45
+    (function () {   // v2.45: what the counts say right now
+      var shows = (state.data && state.data.shows) || [], tot = libShowTotals();
+      var known = shows.filter(function (s) { return s && typeof tot[s.id] === 'number'; }).length;
+      var plan = shows.length ? latestPlan(shows) : { due: [], more: 0 };
+      var nn = shows.filter(function (s) { return s && showNew(s.id) > 0; }).length;
+      line('Podcast episode counts: ' + known + ' of ' + shows.length + ' known' + (state.libAt ? ' (read ' + agoAt(state.libAt) + ')' : ' (from the saved library)') +
+        ' · Latest would ask ' + plan.due.length + ' now (' + plan.more + ' with new episodes) · Podcasts marked new: ' + nn);
+    })();
     var eh = epHistory();
     line(slStatsText() + ' · albums kept until cleared, podcasts re-checked after ' + Math.round(SHOW_STALE_MS / 3600000) + ' h');   // v2.15
     line('Album songs with the library answer: ' + albumSeedText());   // v2.38
@@ -4476,6 +4735,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     line('Most asked (10 min): ' + (top || 'nothing'));
     // v2.14: per group
     line('Requests by group, this copy (10 min / 1 h): ' + COOL_GROUPS.map(function (g) { return g + ' ' + meterCount(600000, g) + ' / ' + meterCount(3600000, g); }).join(' · '));
+    var cfa = catFreeAt();   // v2.45: catalog budget guard (all copies)
+    line('Album and podcast lookups: ' + catUsed() + ' in the last hour (all copies; Spotify allowed about ' + CAT_HOUR_MAX + ') · ' +
+      (cfa ? 'automatic lookups wait until ' + clock(cfa) + '; your taps still go' : 'automatic lookups pause at ' + CAT_HOLD_AT));
     var l4 = null;
     COOL_GROUPS.forEach(function (g) { var c = coolRec(g); if (c && c.last429 && (!l4 || c.last429.at > l4.at)) l4 = c.last429; });
     line('Last 429: ' + (l4 ? clockSec(l4.at) + ' (' + agoAt(l4.at) + ') · ' + (l4.reason || 'rate limit') + ' · Retry-After ' +
@@ -5482,8 +5744,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     box.textContent = '';
     npOptions(p).forEach(function (o) {
       var b = el('button', { class: 'btn small secondary', type: 'button', text: o.label });
-      if (o.playlistId && o.label === 'Open playlist') {
-        // Not in your library: fetch the name now so the button can show it.
+      if (o.playlistId && o.label === 'Open playlist' && !catHeld()) {
+        // Not in your library: fetch the name now so the button can show it. v2.45: not when the hour's catalog
+        // budget is nearly used (the button still works; a tap asks).
         playlistById(o.playlistId).then(function (pl) {
           if (document.body.contains(b)) b.textContent = 'Open playlist · ' + pl.name;
         }, function () {});
@@ -5904,13 +6167,16 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var sub = (item.sub || '') + copySub(item);   // v2.24: " · You have a copy" / " · Copy" (shown only, never stored)
     if (item.nope) sub += (sub ? ' · ' : '') + item.nope;   // v2.35
     var ex = item.kind === 'track' && item.ex;   // v2.38: "E" badge (drawn by CSS, so the row's text stays the same)
+    var nn = item.kind === 'show' ? showNew(item.id) : 0;   // v2.45: "2 new" since you last opened it
+    var subEl = el('div', { class: ex ? 'sub ex' : 'sub', text: sub });
+    if (nn) { subEl.insertBefore(el('span', { class: 'newtag', text: newText(nn) }), subEl.firstChild); sub = newText(nn) + (sub ? ' · ' + sub : ''); }
     var a = el('a', { class: 'item', href: item.url, 'data-verb': (opens ? 'Open “' : 'Play “') + item.name + '”', 'data-sub': sub, 'data-new': item.fresh ? '' : null, 'data-ex': ex ? '' : null }, [
       coverFor(item),
       el('div', { class: 'meta' }, [
         item.fresh
           ? el('div', { class: 'name' }, [el('span', { class: 'newdot', role: 'img', 'aria-label': 'New' }), document.createTextNode(item.name)])
           : el('div', { class: 'name', text: item.name }),
-        el('div', { class: ex ? 'sub ex' : 'sub', text: sub })
+        subEl
       ])
     ]);
     paintRowLabel(a, false);
@@ -6196,10 +6462,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       var shown = host || i;
       var sub = host ? (i.album ? (host.artist || 'Album') : i.name) : cardSub(i);
       var opens = !!host || opensOnTap(i);
-      var a = el('a', { class: 'clcard', href: shown.url, 'aria-label': (opens ? 'Open “' : 'Play “') + shown.name + '”' + (sub ? ', ' + sub : '') }, [
+      var nn = shown.kind === 'show' ? showNew(shown.id) : 0;   // v2.45: a dot, and "2 new" on a Pinned card
+      if (nn && !host) sub = newText(nn);
+      var a = el('a', { class: 'clcard', href: shown.url, 'aria-label': (opens ? 'Open “' : 'Play “') + shown.name + '”' + (nn && host ? ', ' + newText(nn) : '') + (sub ? ', ' + sub : '') }, [
         coverFor(shown),
-        el('span', { class: 'clname', text: shown.name }),
-        el('span', { class: 'sub', text: sub })
+        nn ? el('span', { class: 'clname' }, [el('span', { class: 'newdot', 'aria-hidden': 'true' }), document.createTextNode(shown.name)])
+          : el('span', { class: 'clname', text: shown.name }),
+        el('span', { class: 'sub' + (nn && !host ? ' newsub' : ''), text: sub })
       ]);
       a.addEventListener('click', function (ev) {
         if (opens) { ev.preventDefault(); openDetail(shown); return; }
@@ -6658,6 +6927,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     // Focus that is still in the page (a sheet, the player bar) is left alone.
     if (!fa0 || fa0 === document.body || !document.body.contains(fa0)) { var bk = document.querySelector('.dhead .back'); if (bk) bk.focus({ preventScroll: true }); }
     if (canSave(item)) requestSaved([item.uri]);
+    if (item.kind === 'show') markShowSeen(item.id);   // v2.45: clears "N new" (the rows redraw when you go back)
     if (d.held) { /* v2.42: nothing is asked until Reopen */ }
     else if (d.kind === 'artist') loadArtist(d);
     else startDetail(d);
@@ -8177,7 +8447,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     d.total = typeof c.total === 'number' ? c.total : null;
     d.next = d.seed ? showPage(d.item.id, 0) : (d.total == null || d.raw.length < d.total) ? showPage(d.item.id, d.raw.length) : null;
     remapDetail(d);
-    if (!showFresh(c.at) && !coolLeft('catalog') && !d.kpNoAuto) checkNewEpisodes(d, true);   // one request: page 1 (v2.42: not for a view brought back after a reload)
+    // v2.45: the 12-hour check waits while the hour's catalog budget is nearly used (Check for new episodes still works).
+    if (!showFresh(c.at) && !coolLeft('catalog') && !catHeld() && !d.kpNoAuto) checkNewEpisodes(d, true);   // one request: page 1 (v2.42: not for a view brought back after a reload)
   }
   function checkNewEpisodes(d, auto) {
     if (!d || d.loading || state.detail !== d) return;
@@ -9181,9 +9452,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   function refresh() {
+    state.libLoading = true;   // v2.45: Latest waits for this visit's podcast counts
     return loadData().then(function (d) {
+      state.libLoading = false;
       unseedRemoved(state.data, d);   // audit: start-up seeds hearts from the last visit's cached library
       state.data = d;
+      state.libAt = Date.now();   // v2.45: when the podcast counts were read
+      syncSeen();   // v2.45: "N new" starting points
       matchCopies(d);   // v2.24: link a new copy, drop links to deleted copies (no requests)
       seedSaved(d, true);
       renderList();
@@ -9191,7 +9466,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       paintFollows();   // v2.25: the followed list arrived or changed
       if (onLatestView()) maybeLoadLatest();   // v2.14: Latest was open before the shows list arrived
     }).catch(function (e) {
+      state.libLoading = false;
       if (e.message === 'signed-out') return renderSignIn();
+      if (onLatestView()) setTimeout(maybeLoadLatest, 0);   // v2.45: Latest goes by the counts it has
       var cool = isCool(e);   // v2.13: the library loads again after the cool-off (afterCool) if nothing was cached
       if (!state.data && !state.detail && state.filter !== 'search' && state.filter !== 'recent') {
         $('main').textContent = ''; $('main').appendChild(el('p', { class: 'err', text: cool ? coolText(e.group) : failText('Couldn’t load your library', e) }));
@@ -9222,6 +9499,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     state.latest.cache = (lc && Array.isArray(lc.items) && typeof lc.at === 'number') ? lc : null;
     loadSavedSession();   // v2.13: saved-state answers from earlier in this browser session
     seedSaved(state.data, false);
+    syncSeen();               // v2.45: from the saved library until this visit's answer arrives
+    state.libLoading = true;  // v2.45: refresh() below reads the podcast counts; Latest waits for them
     updateBanner();
     // v2.13: the first requests go out a few seconds apart: devices, library and the player check now;
     // recently played, resume points and Latest episodes after bgHoldUntil (see bgReady).
