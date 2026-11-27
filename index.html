@@ -208,7 +208,7 @@ ul.list.compact .cover.num { width: 28px; }
 .dbtns { display: flex; gap: 10px; align-items: center; }
 .dbtns .btn { flex: 1; min-width: 0; }
 .btn.cont { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }   /* v2.23: Continue · <song> */
-.introrow { display: flex; align-items: center; gap: 10px; }   /* v2.30: Skip intro */
+.introrow { display: flex; align-items: center; gap: 10px; }   /* v2.31: Skip intro */
 .introlab { font-size: 0.95rem; white-space: nowrap; }
 .introsel.field { width: auto; flex: 1; min-width: 0; min-height: 44px; }
 .introhint { font-size: 0.85rem; color: var(--muted); margin: 6px 2px 0; }
@@ -732,7 +732,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     epNotes: 'lib-ep-notes',     // v2.18: [{id, t, at[, cut]}], newest first: notes of episodes you opened or played (40, 4,000 characters each)
     epMarks: 'lib-ep-marks',     // v2.21: {uri: {played, at, pos}}: Mark as played / unplayed, this phone only (400, 180 days)
     ctxLast: 'lib-ctx-last',     // v2.23: {album or playlist URI | 'liked': {uri, id, name, positionMs, durMs, at}}: the last song heard in each list (40, 30 days)
-    introSkip: 'lib-intro-skip', // v2.30: {show URI: {s, at}}: Skip intro per podcast, s = 15|30|45|60|90|120 seconds, at = last set or used (100 shows, 365 days)
+    introSkip: 'lib-intro-skip', // v2.31: {show URI: {s, at}}: Skip intro per podcast, s = 15|30|45|60|90|120 seconds, at = last set or used (100 shows, 365 days)
     // v2.13 rate limits. Shared by every copy of the page that shares this storage (Safari tabs on one origin).
     cool: 'lib-cooloff',         // v2.14: {group: {until, reason, strikes, quotaAt, retryAfter, last429:{at, reason, retryAfter, what}}}
     poller: 'lib-poller',        // {id, at, every}: the one visible copy that runs the player check
@@ -1624,7 +1624,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       sp: rs.played, spos: rs.pos, subBase: ['Episode', by],   // v2.21: sub, positionMs and played come from markItem
       date: e.release_date || '',   // for sorting
       durMs: dur, showName: (e.show && e.show.name) || '',   // for the total length and Continue listening
-      showId: (e.show && e.show.id) || ''   // v2.30: for Skip intro
+      showId: (e.show && e.show.id) || ''   // v2.31: for Skip intro
     });
   }
   // ---------- episode notes (v2.18) ----------
@@ -2298,7 +2298,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     loadRecent();
   }
 
-  // ---------- Skip intro per podcast (v2.30) ----------
+  // ---------- Skip intro per podcast (v2.31) ----------
   // A setting on a podcast's page: an episode of that show that the page starts from the very beginning (a row,
   // the podcast's Play, Play newest, a Home card) starts at N seconds instead. The start is position_ms in the
   // same play request, so it costs no request. Never for a resume (a saved position above 0), a timestamp in the
@@ -2989,7 +2989,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var shuffleOk = true;
     var pre = opts.shuffle ? shuffle().then(function (r) { shuffleOk = r.ok; }, function () { shuffleOk = false; }) : Promise.resolve();
     function done() {
-      toast((opts.shuffle ? 'Shuffling “' : 'Playing “') + item.name + '” on ' + d.name + (item.introSecs ? ' from ' + fmtTime(item.introSecs * 1000) : ''));   // v2.30
+      toast((opts.shuffle ? 'Shuffling “' : 'Playing “') + item.name + '” on ' + d.name + (item.introSecs ? ' from ' + fmtTime(item.introSecs * 1000) : ''));   // v2.31
       // Shuffle on a device that wasn't active yet can fail; try again now that it plays.
       if (opts.shuffle && !shuffleOk) shuffle().catch(function () {});
       noteStarted(item);   // v2.11: an episode goes into the podcast history right away
@@ -3038,7 +3038,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     // Not sure: check first, as before, and if nothing is open offer a button that wakes Spotify.
     // In 'wait' mode nothing opens at all: the page waits for you to press play in Control Center.
     ev.preventDefault();
-    item = introStart(item);   // v2.30: Skip intro (a start from 0:00 begins at the show's setting instead)
+    item = introStart(item);   // v2.31: Skip intro (a start from 0:00 begins at the show's setting instead)
     if (coolBlocked('player')) return;   // v2.13: nothing is sent while playback is paused by Spotify
     if (deviceFresh()) { playNow(item, opts); return; }
     if (noDeviceKnown()) { wakeSpotify(item, opts); return; }
@@ -3078,7 +3078,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function savePending(item, opts, mode) {
     var p = {
-      item: { kind: item.kind, id: item.id, name: item.name, uri: item.uri, url: item.url, ctx: item.ctx, positionMs: item.positionMs, exactPos: !!item.exactPos, introSecs: item.introSecs || 0 },   // v2.18: exactPos keeps a "0:00" timestamp at 0; v2.30: introSecs for the toast
+      item: { kind: item.kind, id: item.id, name: item.name, uri: item.uri, url: item.url, ctx: item.ctx, positionMs: item.positionMs, exactPos: !!item.exactPos, introSecs: item.introSecs || 0 },   // v2.18: exactPos keeps a "0:00" timestamp at 0; v2.31: introSecs for the toast
       opts: { shuffle: !!(opts && opts.shuffle) },
       at: Date.now(),
       mode: mode || 'link'
@@ -3263,7 +3263,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.30 (2026-11-27)';
+  var VERSION = 'v2.31 (2026-11-27)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -4968,7 +4968,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       ]),
       el('div', { class: 'dbtns' }, btns),
       el('div', { class: 'dbtns', id: 'dcont', hidden: true }),   // v2.23: Continue · <song>
-      it.kind === 'show' ? introBox(it) : null   // v2.30: Skip intro
+      it.kind === 'show' ? introBox(it) : null   // v2.31: Skip intro
     ]));
     main.appendChild(el('p', { class: 'lnote', id: 'dnote', hidden: true }));   // v2.15: saved list / fallback note
     main.appendChild(el('div', { id: 'dedit' }));   // v2.26: Edit (your own and collaborative playlists)
@@ -5078,7 +5078,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!t) return null;
     var pos = t.played ? 0 : (t.positionMs || 0);
     return { kind: 'episode', id: t.id, name: t.name || 'Untitled', uri: t.uri, url: 'https://open.spotify.com/episode/' + t.id, positionMs: pos, played: !!t.played,
-      showId: showId, durMs: t.durMs || 0 };   // v2.30: for Skip intro
+      showId: showId, durMs: t.durMs || 0 };   // v2.31: for Skip intro
   }
   function appendDetailRows(items) {
     var ul = $('dlist');
