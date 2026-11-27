@@ -636,7 +636,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     queueHide: 'lib-queue-hide', // false shows the whole queue; anything else hides Spotify's own additions
     theme: 'lib-theme',          // 'light' | 'dark'; unset = match the phone
     searchFirst: 'lib-search-first', // the group shown first in Search Spotify → All
-    lastplay: 'lib-lastplay',    // v2.10: {item, context, positionMs, deviceId, at[, shuffle, repeat]}: the last song or episode seen playing
+    lastplay: 'lib-lastplay',    // v2.10: {item, context, positionMs, deviceId, at[, shuffle, repeat, frozenAt]}: the last song or episode seen playing
     epHistory: 'lib-ep-history', // v2.11: [{uri, id, name, show:{id, name, images}, duration_ms, positionMs, played, at[, checkedAt]}], newest first
     // v2.13 rate limits. Shared by every copy of the page that shares this storage (Safari tabs on one origin).
     cool: 'lib-cooloff',         // v2.14: {group: {until, reason, strikes, quotaAt, retryAfter, last429:{at, reason, retryAfter, what}}}
@@ -2568,7 +2568,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.16 (2026-11-25)';
+  var VERSION = 'v2.17 (2026-11-26)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -2818,6 +2818,20 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     lastPlayMem = o;
     set(K.lastplay, o);
   }
+  // v2.17: freezes the saved position because playback stopped (a 404 or a "nothing playing" answer) and notes
+  // when (frozenAt). If another copy of the page (or this one) already froze the same song after the answer this
+  // copy counts from, that spot is kept: this copy may still be counting the song on as playing. A seek while
+  // asleep (setLastPos) and a fresh playing answer (saveLastPlay) still replace it. Returns the frozen position.
+  function freezeLastPos(p, pos) {
+    var o = readLastPlay();
+    if (!o) return Math.max(0, Math.round(pos));
+    if (typeof o.frozenAt === 'number' && o.frozenAt > (state.playerAt || 0) && p && p.item && o.item.uri === p.item.uri) return o.positionMs || 0;
+    o.positionMs = Math.max(0, Math.round(pos));
+    o.frozenAt = Date.now();
+    lastPlayMem = o;
+    set(K.lastplay, o);
+    return o.positionMs;
+  }
   // A player answer rebuilt from the saved playback: paused, at the saved position, on no device.
   function idleFrom(o) {
     if (!o) return null;
@@ -2825,12 +2839,16 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       shuffle_state: !!o.shuffle, repeat_state: o.repeat || 'off', idle: true };
   }
   // The device answered 404 (gone): show the last playback as asleep instead of an error.
-  function goIdle() {
+  // pos (v2.17): the position to freeze at (Pause passes the spot it showed at the tap); default: where it got to.
+  function goIdle(pos) {
     var p = state.player;
     state.device = null; state.deviceAt = 0; state.devicesAt = 0; state.active = null;
     if (p && p.item) {
-      var pos = curPos();
-      if (readLastPlay()) setLastPos(pos); else saveLastPlay(p, pos);
+      if (typeof pos !== 'number') pos = curPos();
+      if (!readLastPlay()) saveLastPlay(p, pos);
+      pos = freezeLastPos(p, pos);
+      noteEpisode(p.item, pos, false);   // v2.17: podcast history gets the paused spot now…
+      if (p.item.type === 'episode' && epHist) saveEpHistory(p.item.uri);   // …and keeps it after a reload (one write per pause)
       state.player = idleFrom(readLastPlay());
       state.playerIdle = !!state.player;
       state.playerAt = Date.now();
@@ -2889,8 +2907,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     } else {
       // Nothing from Spotify: freeze the live playback where it got to, then show the saved one as asleep.
       if (!state.playerIdle && state.player && state.player.item) {
-        noteEpisode(state.player.item, curPos(), false);
-        setLastPos(curPos());
+        var fpos = freezeLastPos(state.player, curPos());   // v2.17: keeps a spot another copy already froze
+        noteEpisode(state.player.item, fpos, false);
         // The device it played on has most likely dropped off too: the next tap checks the device list first.
         state.deviceAt = 0; state.devicesAt = 0;
       }
@@ -2966,6 +2984,42 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       }
       throw new Error(errMsg(r));
     }).catch(onFail('Couldn’t control playback')).then(function () { schedulePoll(500, true); });
+  }
+
+  // v2.17: Pause. The music stopping is the goal, so a 404 is not an error here. If the request named a device,
+  // ask once more with no device (Spotify then pauses whichever device is active, in case the phone came back
+  // under a new id). If that 404s too, Spotify is asleep and nothing is playing: show the song paused and asleep
+  // at the spot shown at the tap, with no message, tell the other copies of the page, and skip the extra check.
+  // A 403 "Restriction violated" (reported when the player is already paused) also counts as paused.
+  function pausedAlready(r) {
+    return !!r && r.status === 403 && /restriction/i.test(errMsg(r));
+  }
+  function pauseNow() {
+    if (state.playerIdle) return Promise.resolve();   // the button shows Play while asleep, so this can't come from a tap
+    if (coolBlocked('player')) return Promise.resolve();
+    state.lastActiveAt = Date.now();
+    var p = state.player;
+    var dev = p && p.device && p.device.id;
+    var pos = curPos();
+    if (p) { p.progress_ms = pos; state.playerAt = Date.now(); p.is_playing = false; paintPlayer(); showStatus(); }
+    state.pollSeq++;   // ignore any check that started before this command
+    var nextIn = 500, force = true;
+    function asleep() {
+      goIdle(pos);
+      playerSeenAt = Date.now();
+      storePlayerCache(null);   // other copies show it asleep too, without asking Spotify
+      nextIn = pollEvery(); force = false;
+    }
+    return api('/me/player/pause' + (dev ? '?device_id=' + encodeURIComponent(dev) : ''), { method: 'PUT' }).then(function (r) {
+      if (r.ok || pausedAlready(r)) return;
+      if (r.status !== 404) throw new Error(errMsg(r));
+      if (!dev) return asleep();
+      return api('/me/player/pause', { method: 'PUT' }).then(function (r2) {
+        if (r2.ok || pausedAlready(r2)) return;   // it was playing under another id: the check below finds it
+        if (r2.status === 404) return asleep();
+        throw new Error(errMsg(r2));
+      });
+    }).catch(onFail('Couldn’t control playback')).then(function () { schedulePoll(nextIn, force); });
   }
 
   // ---------- device sheet ----------
@@ -3220,7 +3274,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function togglePlay(ev) {
     if (state.playerIdle) { resumeFromIdle(ev); return; }   // asleep: resume the last playback (wakes Spotify per the wake mode)
     var p = state.player;
-    if (p && p.is_playing) command('PUT', '/me/player/pause', function (x) { x.progress_ms = curPos(); state.playerAt = Date.now(); x.is_playing = false; });
+    if (p && p.is_playing) pauseNow();   // v2.17: no "wake Spotify" message when Spotify fell asleep
     else command('PUT', '/me/player/play', function (x) { x.progress_ms = curPos(); state.playerAt = Date.now(); x.is_playing = true; });
   }
   function toggleShuffle() {
