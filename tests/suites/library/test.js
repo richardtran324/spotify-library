@@ -451,7 +451,7 @@ tests.push(function () {
       check('12 no saved-state check for liked songs', reqs(tab.calls, 'GET', '/me/library/contains').length === 0, tab.calls);
       var labels = qa(tab, '.sortbar[data-view="d-liked"] button.chip').map(function (b) { return b.textContent; });
       group('12 sorting the loaded songs: chips, A–Z, partial note, stored');
-      check('12 song sort options', labels.join() === 'Recently liked,Title A–Z,Artist A–Z', labels);
+      check('12 song sort options', labels.join() === 'Recently liked,Title A–Z,Artist A–Z,Not played lately', labels);   // #46: Not played lately
       click(tab, chip(tab, 'd-liked', 'Title A–Z'));
       check('12 A–Z sorts the loaded songs', detailNames(tab)[0] === 'Track 71' && detailNames(tab)[49] === 'Track 120', detailNames(tab).slice(0, 2));
       var note = d(tab).querySelector('#dsort .snote');
