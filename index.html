@@ -840,7 +840,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
 
   // ---------- storage helpers ----------
   function get(k) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch (e) { return null; } }
-  function set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+  function set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } }   // v2.35: true when stored
   function del(k) { try { localStorage.removeItem(k); } catch (e) {} }
 
   function $(id) { return document.getElementById(id); }
@@ -1944,7 +1944,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var episodes = api('/me/episodes?limit=1').then(function (r) { return r.ok && r.json && typeof r.json.total === 'number' ? r.json.total : null; }).catch(optional);
     return Promise.all([me, playlists, albums, liked, artists, shows, episodes]).then(function (v) {
       var data = { at: Date.now(), me: v[0], playlists: v[1], albums: v[2], likedTotal: v[3], artists: v[4], shows: v[5], episodesTotal: v[6] };
-      set(K.cache, data);
+      libCacheSave = { ok: set(K.cache, data), at: Date.now() };   // v2.35: shown in Diagnostics
       return data;
     });
   }
@@ -3246,6 +3246,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var eh = epHistory();
     line(slStatsText() + ' · albums kept until cleared, podcasts re-checked after ' + Math.round(SHOW_STALE_MS / 3600000) + ' h');   // v2.15
     line('Album songs with the library answer: ' + albumSeedText());   // v2.35
+    if (libCacheSave && !libCacheSave.ok) line('Library copy: couldn’t be saved on this phone at ' + clock(libCacheSave.at) + ' (storage full); the library loads from Spotify each visit');   // v2.35
     line('Podcast history: ' + eh.length + (eh.length === 1 ? ' episode' : ' episodes') + (eh[0] ? ' (newest: ' + eh[0].name + ', ' + agoAt(eh[0].at) + ')' : '') +
       ' · Marked played or unplayed on this phone: ' + markCount());   // v2.21
     line('Resume points: from this page’s own podcast history (no automatic Spotify checks)');
@@ -5137,7 +5138,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       f.appendChild(el('p', { class: 'empty', text: d.src === 'search' ? 'Search didn’t find this album’s songs. Try again after Spotify’s pause.'
         : d.src === 'local' ? 'You haven’t saved or played an episode of this show on this phone yet.' : 'No ' + noun + ' here.' }));
     }
-    if (!d.next && d.items.length && d.item.kind === 'album') { var af = albumFoot(d.item); if (af) f.appendChild(af); }   // v2.35
+    if (!d.next && d.items.length && d.item.kind === 'album' && (d.src !== 'search' || (d.total != null && d.raw.length >= d.total))) {   // v2.35 (not under a partial search list)
+      var af = albumFoot(d.item); if (af) f.appendChild(af);
+    }
   }
   // ---------- Find in list (v2.22) ----------
   // A box under the header of Liked Songs, your own (and collaborative) playlists, albums and Saved episodes.
@@ -6048,8 +6051,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!id) return false;
     var key = prefix + id;
     var others = slKeys(prefix).filter(function (k) { return k !== key; }).map(function (k) {
-      var v = get(k); return { k: k, at: v && typeof v.at === 'number' ? v.at : 0 };
-    }).sort(function (a, b) { return a.at - b.at; });
+      var v = get(k); return { k: k, at: v && typeof v.at === 'number' ? v.at : 0, lib: !!(v && v.lib) };
+    }).sort(function (a, b) { return (b.lib - a.lib) || a.at - b.at; });   // v2.35: lists from the library answer go first
     var i = 0, txt;
     for (; i < others.length - (max - 1); i++) del(others[i].k);
     try { txt = JSON.stringify(c); } catch (e) { return false; }
@@ -6095,6 +6098,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // When Spotify leaves the songs out, nothing is seeded and albums open exactly as before (one catalog request).
   var albumSeed = {};          // album id -> {total, items}
   var albumSeedStat = null;    // the last library load's count, for Diagnostics
+  var libCacheSave = null;     // {ok, at}: whether the last library load could be kept on the phone
   function seedAlbum(a, st) {
     if (!a || !a.id) return;
     st.albums++;
@@ -6109,14 +6113,26 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (items.length >= total) st.whole++;
     albumSeed[a.id] = { total: total, items: items };
   }
+  // Saved as a saved list marked `lib`: the library answer brings it back on every load, so it goes first when the
+  // 150 places are full and lists that cost catalog requests stay. Load more adding a page drops the mark.
   function useAlbumSeed(d, sd) {
     d.raw = sd.items.slice();
     d.total = sd.total;
     d.checkedAt = Date.now();
-    saveAlbumList(d);   // sets d.savedAt when the phone keeps it ("Saved on this phone")
-    d.src = 'cache';    // from here on it behaves as a saved list (a pause keeps it on screen)
+    d.fromLib = true;
+    saveAlbumList(d, true);   // sets d.savedAt when the phone keeps it ("Saved on this phone")
+    d.src = 'cache';    // behaves as a saved list (a pause keeps it on screen)
     d.next = d.raw.length < d.total ? albumPage(d.item.id, d.raw.length) : null;
     remapDetail(d);
+  }
+  // A list saved before v2.35 has no `explicit`: the library's songs fill it in (no request), keeping the copy's age.
+  function fillExplicit(id, c) {
+    var sd = albumSeed[id];
+    if (!sd) return;
+    var ex = {}, changed = false;
+    sd.items.forEach(function (x) { if (x.explicit) ex[x.id] = true; });
+    c.items.forEach(function (x) { if (x && ex[x.id] && !x.explicit) { x.explicit = true; changed = true; } });
+    if (changed) slPut(SL_ALBUM, id, c, SL_ALBUM_MAX);
   }
   function albumSeedText() {
     var st = albumSeedStat;
@@ -6135,11 +6151,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (rp) o.resume_point = { fully_played: !!rp.fully_played, resume_position_ms: rp.resume_position_ms || 0 };
     return o;
   }
-  function saveAlbumList(d) {
+  function saveAlbumList(d, lib) {
     if (!d.raw.length) return;
     var total = typeof d.total === 'number' ? d.total : d.raw.length;
     var at = Date.now();
-    if (slPut(SL_ALBUM, d.item.id, { at: at, total: total, items: d.raw.map(slTrack) }, SL_ALBUM_MAX)) d.savedAt = at;
+    var c = { at: at, total: total, items: d.raw.map(slTrack) };
+    if (lib) c.lib = true;   // v2.35: came with the library answer (first to go when full)
+    if (slPut(SL_ALBUM, d.item.id, c, SL_ALBUM_MAX)) d.savedAt = at;
   }
   // `at` is when page 1 was last asked (older pages don't make the copy newer).
   function saveShowList(d) {
@@ -6186,7 +6204,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var it = d.item;
     if (it.kind === 'album' && it.id) {
       var c = slGet(SL_ALBUM, it.id);
-      if (c && c.items.length) { useAlbumCache(d, c); return; }
+      if (c && c.items.length) { fillExplicit(it.id, c); useAlbumCache(d, c); return; }   // v2.35: fillExplicit
       var sd = albumSeed[it.id];   // v2.35: songs that came with the library answer
       if (sd && sd.items.length) { useAlbumSeed(d, sd); return; }
     } else if (it.kind === 'show' && it.id) {
@@ -6345,7 +6363,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       else if (d.savedAt) {
         parts.push(el('span', { text: 'Saved on this phone' }));
         if (!d.loading) link('Reload from Spotify', reloadAlbum);
-      }
+      } else if (d.fromLib) parts.push(el('span', { text: 'Came with your library' }));   // v2.35
     } else if (kind === 'show') {
       if (d.src === 'local') parts.push(el('span', { text: 'Your saved and played episodes from this show (Spotify paused the full list' + pausedUntilText(d) + ')' }));
       else if (d.savedAt || d.checkedAt) {
