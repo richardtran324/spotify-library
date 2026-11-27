@@ -2925,6 +2925,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     return state.deviceChecked && !state.device && !state.deviceError && (Date.now() - state.devicesAt < NO_DEVICE_MS);
   }
   var goneWaitAt = 0;   // last time a 404 (device gone) turned a tap into a wait; once a minute at most, so it can't loop
+  var tapSeq = 0;   // audit: newest tap wins; a tap still waiting on the device check plays only if no tap came after it
   function playNow(item, opts) {
     return play(item, opts).catch(function (e) {
       if (e.message === 'signed-out') return renderSignIn();
@@ -2950,9 +2951,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     // In 'wait' mode nothing opens at all: the page waits for you to press play in Control Center.
     ev.preventDefault();
     if (coolBlocked('player')) return;   // v2.13: nothing is sent while playback is paused by Spotify
+    var mine = ++tapSeq;
     if (deviceFresh()) { playNow(item, opts); return; }
     if (noDeviceKnown()) { wakeSpotify(item, opts); return; }
     checkDevice().then(function () {
+      if (mine !== tapSeq) return;   // audit: a newer tap came during the check; it plays instead
       if (!state.started) return;
       if (coolLeft('player')) { coolToast('player'); return; }   // the check itself hit the limit: nothing more is sent
       if (state.device) return playNow(item, opts);
