@@ -240,7 +240,8 @@ tests.push(function () {
   });
 });
 
-// 3. Refresh: at most once per 5 minutes; after that it asks the 12 shows that published most recently.
+// 3. Refresh: at most once per 5 minutes; after that (v2.45) it asks only the podcasts due by the episode counts:
+//    here the 2 never asked (newest first), not the 12 already asked whose counts didn't change.
 tests.push(function () {
   var tab = tab1, t = tab.t();
   click(tab, refreshBtn(tab));
@@ -256,12 +257,9 @@ tests.push(function () {
       return settle(400);
     }).then(function () {
       var lr = latestReqs(tab.calls);
-      check('3 after 5 minutes: 12 requests', lr.length === 12, lr.map(showIdOf));
-      check('3 most recently updated shows first, ties in saved order', showIdOf(lr[0]) === 's12' && showIdOf(lr[1]) === 's13' && showIdOf(lr[2]) === 's11', lr.map(showIdOf));
-      // #30 (audit/latest-episodes-fixes): with more than 12 saved shows and one never asked (s14), the last 6 of the 12
-      // places go to the shows asked longest ago: s14 first, then the rest (all asked at once in 1) in saved order.
-      check('3 six newest-updated shows, then the never-asked show and the longest-asked in saved order',
-        JSON.stringify(lr.map(showIdOf)) === JSON.stringify(['s12', 's13', 's11', 's10', 's9', 's8', 's14', 's1', 's2', 's3', 's4', 's5']), lr.map(showIdOf));
+      check('3 after 5 minutes: only the 2 never asked', JSON.stringify(lr.map(showIdOf)) === '["s13","s14"]', lr.map(showIdOf));
+      check('3 shows already asked with the same count are left out', lr.map(showIdOf).indexOf('s1') === -1 && lr.map(showIdOf).indexOf('s12') === -1, lr.map(showIdOf));
+      check('3 every saved podcast now has a check', Object.keys(t.state.latest.cache.checks || {}).length === 14, t.state.latest.cache.checks);
       check('3 cache newer, note back to Updated just now', t.state.latest.cache.at > before && /Updated just now/.test(noteText(tab)) && !/Updating/.test(noteText(tab)), noteText(tab));
       close(tab);
     });
@@ -908,15 +906,16 @@ tests.push(function () {
   });
 });
 
-// 24. latestShows and showFresh directly.
+// 24. latestPlan (v2.45; was latestShows) and showFresh directly.
 tests.push(function () {
   return setup(store0({ filter: 'albums' }), { shows: [] }).then(function (tab) {
     var t = tab.t();
     var all = SHOWS.slice();
     t.state.latest.cache = null;
-    check('24 no cache: first 12 in saved order', t.latestShows(all).map(function (s) { return s.id; }).join() === SHOWS.slice(0, 12).map(function (s) { return s.id; }).join());
+    function plan12() { return t.latestPlan(all).due.slice(0, 12).map(function (s) { return s.id; }); }
+    check('24 no cache: first 12 in saved order', plan12().join() === SHOWS.slice(0, 12).map(function (s) { return s.id; }).join());
     t.state.latest.cache = { at: Date.now(), items: [], newest: { s14: '2026-01-02', s7: '2026-01-02', s2: '2025-12-01' } };
-    var ids = t.latestShows(all).map(function (s) { return s.id; });
+    var ids = plan12();
     check('24 newest first, ties in saved order, then the rest', ids.length === 12 && ids.slice(0, 4).join() === 's7,s14,s2,s1' && ids.indexOf('s12') === -1, ids);
     check('24 showFresh: 12 hours', t.showFresh(Date.now() - 11 * HOUR) === true && t.showFresh(Date.now() - 13 * HOUR) === false && t.showFresh(Date.now() + 2 * HOUR) === false);
     check('24 latestFresh rejects broken caches', t.latestFresh(null) === false && t.latestFresh({ at: 'x' }) === false && t.latestFresh({ at: Date.now() - 11 * HOUR }) === true);
