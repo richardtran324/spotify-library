@@ -524,7 +524,7 @@ tests.push(function () {
     var t = tab.t();
     check('23 token kept after server error', (getJ(store, 'lib-token') || {}).refresh === 'r');
     check('23 no sign-in screen', heading(tab) !== 'Sign in' && t.state.started === true, heading(tab));
-    check('23 library error shown', /Couldn’t load your library: Try later/.test(main(tab).textContent), main(tab).textContent.slice(0, 200));
+    check('23 library error shown', /Couldn’t load your library \(Try later\)\./.test(main(tab).textContent), main(tab).textContent.slice(0, 200));   // #41: same wording as other errors
     check('23 nothing sent with the expired token', apiReqs(tab).length === 0, apiReqs(tab));
     fail = false;
     var before = tokenReqs(tab).length;

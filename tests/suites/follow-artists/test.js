@@ -390,19 +390,20 @@ tests.push(function () {
         return H.wait(100);
       }
       return tap({ status: 500, json: { error: { status: 500, message: 'Server error' } } }).then(function () {
-        check('9 500: toast with Spotify message', lastToast(tab) === 'Couldn’t follow “New Artist” (Server error).', tab.toasts());
+        // #41: 5xx and no-internet errors are said in plain words; other answers keep Spotify's text
+        check('9 500: toast in plain words', lastToast(tab) === 'Couldn’t follow “New Artist”. Spotify isn’t answering right now.', tab.toasts());
         check('9 500: still Follow, not busy', b.textContent === 'Follow' && b.getAttribute('aria-pressed') === 'false' && !b.hasAttribute('aria-busy'));
         check('9 500: list and saved copy unchanged', !t.isFollowed('new1') && JSON.stringify(cacheArtists(s)) === cache0);
         return tap({ status: 502 });
       }).then(function () {
-        check('9 502 without a body: HTTP status in toast', lastToast(tab) === 'Couldn’t follow “New Artist” (HTTP 502).', tab.toasts());
+        check('9 502 without a body: same plain words', lastToast(tab) === 'Couldn’t follow “New Artist”. Spotify isn’t answering right now.', tab.toasts());   // #41
         return tap({ status: 400, json: { error: { status: 400, message: 'Invalid uri' } } });
       }).then(function () {
         check('9 400: didn’t accept following from this page', lastToast(tab) === 'Spotify didn’t accept following from this page (Invalid uri).', tab.toasts());
         check('9 400: nothing changed', b.textContent === 'Follow' && !t.isFollowed('new1') && JSON.stringify(cacheArtists(s)) === cache0);
         return tap({ throws: 'Load failed' });
       }).then(function () {
-        check('9 network error: toast', lastToast(tab) === 'Couldn’t follow “New Artist” (Load failed).', tab.toasts());
+        check('9 network error: toast says no internet', lastToast(tab) === 'Couldn’t follow “New Artist”. No internet connection.', tab.toasts());   // #41
         check('9 network error: not busy, still Follow', !b.hasAttribute('aria-busy') && b.textContent === 'Follow');
         return tap({ status: 403, json: { error: { status: 403, message: 'Forbidden' } } });
       }).then(function () {
@@ -419,7 +420,7 @@ tests.push(function () {
         check('9 unfollow 400: still Following', b.textContent === 'Following' && t.isFollowed('new1'));
         return tap({ status: 500 });
       }).then(function () {
-        check('9 unfollow 500: Couldn’t unfollow', lastToast(tab) === 'Couldn’t unfollow “New Artist” (HTTP 500).', tab.toasts());
+        check('9 unfollow 500: Couldn’t unfollow', lastToast(tab) === 'Couldn’t unfollow “New Artist”. Spotify isn’t answering right now.', tab.toasts());   // #41
       });
     });
   });

@@ -318,16 +318,18 @@ tests.push(function () {
       check('7 404: open Spotify on a device', tab.toasts()[0] === t.NO_DEVICE, tab.toasts());
       return tap(500, { error: { status: 500, message: 'Server error' } });
     }).then(function () {
-      check('7 500: toast', tab.toasts()[0] === 'Couldn’t add to queue (Server error).', tab.toasts());
+      check('7 500: toast in plain words', tab.toasts()[0] === 'Couldn’t add to queue. Spotify isn’t answering right now.', tab.toasts());   // #41
       check('7 500: logged with method, path and status', /POST \/me\/player\/queue → 500 Server error$/.test(t.errorLog()[t.errorLog().length - 1]), t.errorLog());
       check('7 500: no cool-off, no retry', t.coolUntil('player') === 0 && reqs(tab, 'POST', '/me/player/queue').length === 1);
       return tap(502, null);
     }).then(function () {
-      check('7 502 with no body: HTTP 502', tab.toasts()[0] === 'Couldn’t add to queue (HTTP 502).', tab.toasts());
+      // #41: the same plain words, and that toast is still up, so it isn't shown a second time
+      check('7 502 with no body: same words, the toast still up is not repeated', tab.toasts().length === 0 && !$(tab, 'toast').hidden &&
+        $(tab, 'toast').firstChild.textContent === 'Couldn’t add to queue. Spotify isn’t answering right now.', { toasts: tab.toasts(), shown: $(tab, 'toast').textContent });
       tab.env.fail = function (u) { return /queue/.test(u); };
       return tap(204, null);
     }).then(function () {
-      check('7 network failure: toast with the browser\'s reason', tab.toasts()[0] === 'Couldn’t add to queue (Load failed).', tab.toasts());
+      check('7 network failure: toast says no internet', tab.toasts()[0] === 'Couldn’t add to queue. No internet connection.', tab.toasts());   // #41
       check('7 network failure: logged as network', /POST \/me\/player\/queue → network Load failed$/.test(t.errorLog()[t.errorLog().length - 1]), t.errorLog().slice(-1));
       check('7 network failure: no cool-off', t.coolUntil('player') === 0 && cool(store) === null);
       tab.env.fail = null;

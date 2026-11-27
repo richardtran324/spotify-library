@@ -121,7 +121,7 @@ tests.push(function () {
     var t = tab.t();
     click(tab, $(tab, 'pNext'));
     return H.wait(100).then(function () {
-      check('2 500: Couldn’t control playback toast', tab.toasts().indexOf('Couldn’t control playback (Server error).') !== -1 && !t.state.playerIdle, tab.toasts());
+      check('2 500: Couldn’t control playback toast', tab.toasts().indexOf('Couldn’t control playback. Spotify isn’t answering right now.') !== -1 && !t.state.playerIdle, tab.toasts());   // #41: plain words
       tab.w.__toasts = [];
       click(tab, $(tab, 'pNext'));
       return H.wait(100);
@@ -465,7 +465,7 @@ tests.push(function () {
       t.transferTo(DEV_B);
       return H.wait(100);
     }).then(function () {
-      check('11 other error shows Spotify’s message', tab.toasts().indexOf('Couldn’t switch to Computer (Bad gateway).') !== -1, tab.toasts());
+      check('11 a 5xx says so in plain words', tab.toasts().indexOf('Couldn’t switch to Computer. Spotify isn’t answering right now.') !== -1, tab.toasts());   // #41
       tab.calls.length = 0;
       t.transferTo(DEV_B);
       return H.wait(100);
@@ -476,7 +476,7 @@ tests.push(function () {
       t.openSheet();
       return H.wait(120);
     }).then(function () {
-      check('11 list error shown in the sheet', list.querySelector('.err') && list.querySelector('.err').textContent === 'Couldn’t load devices (Server down).', list.textContent);
+      check('11 list error shown in the sheet', list.querySelector('.err') && list.querySelector('.err').textContent === 'Couldn’t load devices. Spotify isn’t answering right now.', list.textContent);   // #41
       tab.env.devices = [];
       t.loadSheetDevices();
       return H.wait(120);
@@ -558,7 +558,7 @@ tests.push(function () {
     tab.env.script.push({ m: 'GET', path: '/me/player/devices', status: 500, json: { error: { status: 500, message: 'Down' } } });
     t.state.active = null;
     return t.checkDevice().then(function () {
-      check('13 error kept and shown', t.state.deviceError === 'Down' && t.state.device === null && txt(tab, 'statusText') === 'Couldn’t check your devices (Down).', txt(tab, 'statusText'));
+      check('13 error kept and shown', t.state.deviceError === 'Down' && t.state.device === null && txt(tab, 'statusText') === 'Couldn’t check your devices. Spotify isn’t answering right now.', txt(tab, 'statusText'));   // #41: plain words
       return t.checkDevice();
     }).then(function () {
       check('13 next check clears it', t.state.deviceError === '' && t.state.device && t.state.device.id === 'A', t.state.deviceError);
@@ -627,7 +627,7 @@ tests.push(function () {
     var t = tab.t(), body = $(tab, 'qBody');
     t.openQueue();
     return H.wait(120).then(function () {
-      check('15 error shown', body.querySelector('.err') && body.querySelector('.err').textContent === 'Couldn’t load the queue (Server down).', body.textContent);
+      check('15 error shown', body.querySelector('.err') && body.querySelector('.err').textContent === 'Couldn’t load the queue. Spotify isn’t answering right now.', body.textContent);   // #41
       t.loadQueue();
       return H.wait(120);
     }).then(function () {
@@ -678,7 +678,7 @@ tests.push(function () {
       click(tab, plus);
       return H.wait(100);
     }).then(function () {
-      check('16 500: Couldn’t add to queue', tab.toasts().indexOf('Couldn’t add to queue (Boom).') !== -1, tab.toasts());
+      check('16 500: Couldn’t add to queue', tab.toasts().indexOf('Couldn’t add to queue. Spotify isn’t answering right now.') !== -1, tab.toasts());   // #41
       tab.calls.length = 0; tab.w.__toasts = [];
       click(tab, plus);
       return H.wait(100);
@@ -790,7 +790,7 @@ tests.push(function () {
       t.playNow(songItem());
       return H.wait(120);
     }).then(function () {
-      check('19 other error: Couldn’t play with Spotify’s message', tab.toasts().indexOf('Couldn’t play (Oops). | https://open.spotify.com/track/t5 | Open in Spotify') !== -1, tab.toasts());
+      check('19 a 5xx: Couldn’t play in plain words', tab.toasts().indexOf('Couldn’t play. Spotify isn’t answering right now. | https://open.spotify.com/track/t5 | Open in Spotify') !== -1, tab.toasts());   // #41
       var saved = t.state.data;
       t.state.data = null;
       t.state.device = clone(DEV_A); t.state.deviceAt = tab.w.Date.now();
@@ -870,7 +870,7 @@ tests.push(function () {
       t.onItemClick(songItem(), ev());
       return H.wait(150);
     }).then(function () {
-      check('20 lookup failed: toast with Open in Spotify', tab.toasts().indexOf('Couldn’t check your devices (Down). | https://open.spotify.com/track/t5 | Open in Spotify') !== -1, tab.toasts());
+      check('20 lookup failed: toast with Open in Spotify', tab.toasts().indexOf('Couldn’t check your devices. Spotify isn’t answering right now. | https://open.spotify.com/track/t5 | Open in Spotify') !== -1, tab.toasts());   // #41
       done(tab);
     });
   });
@@ -1013,7 +1013,7 @@ tests.push(function () {
     tab.calls.length = 0;
     t.pollPlayer();
     return H.wait(100).then(function () {
-      check('24 error: one toast', tab.toasts().filter(function (x) { return x === 'Couldn’t check what’s playing (Server down).'; }).length === 1, tab.toasts());
+      check('24 error: one toast', tab.toasts().filter(function (x) { return x === 'Couldn’t check what’s playing. Spotify isn’t answering right now.'; }).length === 1, tab.toasts());   // #41
       check('24 next check rescheduled', !!s.pollTimer);
       t.pollPlayer();
       return H.wait(100);

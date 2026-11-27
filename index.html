@@ -320,8 +320,9 @@ li.row.kpflash { animation: kpflash 1.6s ease-out; }
 .toast .tsel { font-weight: 700; min-width: 0; overflow-wrap: anywhere; -webkit-user-select: all; user-select: all; }   /* v2.20: one tap selects the link */
 .toastbtn {
   font: inherit; font-weight: 700; color: var(--bg); background: none;
-  border: 1px solid currentColor; border-radius: 8px; padding: 6px 12px; min-height: 40px; cursor: pointer; flex: none;
+  border: 1px solid currentColor; border-radius: 8px; padding: 6px 12px; min-height: 44px; cursor: pointer; flex: none;   /* v2.43: 44 px tap target */
 }
+.toast.two { flex-wrap: wrap; }   /* v2.43: a link and Try again together wrap below the text */
 .toast .toastbtn:focus-visible { outline-color: var(--bg); }
 /* audit: on screen for VoiceOver only (#announce, the live region that speaks toasts, cool-off and wake lines) */
 .vh { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
@@ -527,6 +528,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   border-radius: 8px; background: var(--chip); color: var(--fg); font-size: 0.82rem; line-height: 1.3;
 }
 .coolbar .cleft { color: var(--warn); font-weight: 700; font-variant-numeric: tabular-nums; margin-left: auto; }
+/* v2.43: no internet: one quiet line in place of repeated "Load failed" toasts */
+.netbar { color: var(--muted); }
 </style>
 </head>
 <body>
@@ -561,6 +564,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       <button class="schip" type="button" data-stype="show" aria-pressed="false">Podcasts</button>
       <button class="schip" type="button" data-stype="episode" aria-pressed="false">Episodes</button>
     </div>
+    <div class="coolbar netbar" id="net" hidden>No internet. The page will catch up when you’re back.</div>   <!-- v2.43: spoken through #announce (setOffline) -->
     <div class="coolbar" id="cool" hidden><span id="coolText"></span><span class="cleft" id="coolLeft" aria-hidden="true"></span></div>
   </header>
   <div class="banner" id="banner" role="status" hidden>
@@ -888,6 +892,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     data: null, filter: 'home', query: '',
     device: null, deviceAt: 0, deviceChecked: false, devices: [], devicesAt: 0, active: null,
     player: null, playerAt: 0, pollTimer: null, pollSeq: 0, pollFailed: false,
+    offline: false, offlineAt: 0, deviceErrObj: null,   // v2.43: no internet (see setOffline); the last device-check error
     playerIdle: false,   // v2.10: Spotify dropped off (204 / no item); state.player is the last playback, shown paused
     search: { q: '' }, stype: 'all',   // results live in searchCache, per type and query
     recent: { items: null, jump: null, loading: false, error: '' }, recentSeq: 0, recentTriedAt: 0,
@@ -1012,10 +1017,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var inside = toastFocused();
     if (!inside) toastReturn = document.activeElement;
     t.textContent = '';
+    t.className = 'toast' + (link && action ? ' two' : '');   // v2.43
     t.appendChild(el('span', { text: msg }));
     if (link) t.appendChild(el('a', { href: link.href, text: link.text }));
     if (action) {
       var b = el('button', { class: 'toastbtn', type: 'button', text: action.text });
+      if (action.retry) b.setAttribute('data-retry', '1');   // v2.43: failToast's Try again (also when it waited behind a held toast)
       b.addEventListener('click', function () { if (action.hold) toastHold = null; hideToast(); action.fn(); });
       t.appendChild(b);
     }
@@ -1033,13 +1040,93 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (typeof e === 'string') return (r.json.error_description || e);
     return 'HTTP ' + (r ? r.status : '?');
   }
-  function onFail(prefix) {
-    return function (e) {
-      if (e && e.message === 'signed-out') return renderSignIn();
-      if (isCool(e)) return coolToast(e.group);   // v2.13: nothing was sent; say when to try again
-      toast(prefix + ' (' + (e && e.message ? e.message : 'unknown error') + ').');
-    };
+  // v2.43: every error toast goes through failToast. retry (optional) puts Try again on the toast, but never after
+  // a 429 or while a group is paused (coolToast), and not for answers that won't change (Premium, region).
+  function onFail(prefix, retry) {
+    return function (e) { return failToast(prefix, e, retry); };
   }
+  // v2.43: what went wrong, in plain words. Spotify's wording isn't guaranteed, so status and `reason` come first and
+  // the message is only a fallback. raw: no plain-words match, so the toast keeps Spotify's own text in brackets.
+  function plainErr(e) {
+    if (isCool(e)) return { text: coolText(e.group), retry: false, cool: true };
+    if (e && e.net) return { text: 'No internet connection.', retry: true, net: true };
+    var s = e && e.status, m = (e && e.message) || '', reason = (e && e.reason) || '';
+    if (reason === 'PREMIUM_REQUIRED' || (s === 403 && /premium/i.test(m))) return { text: 'Spotify Premium is needed to control playback.', retry: false };
+    if ((s === 403 || s === 404 || s === 451) && (reason === 'UNAVAILABLE' || /market|region|country|not available|unavailable/i.test(m))) return { text: 'That item isn’t available in your country.', retry: false };
+    if (s >= 500 && s < 600) return { text: 'Spotify isn’t answering right now.', retry: true };
+    return { text: m || 'unknown error', retry: false, raw: true };
+  }
+  // "Couldn’t play. Spotify isn’t answering right now." or, with no match, "Couldn’t play (Spotify's text)."
+  function failText(prefix, e) {
+    var p = plainErr(e);
+    return p.raw ? prefix + ' (' + p.text + ').' : prefix + '. ' + p.text;
+  }
+  var lastFail = { msg: '', at: 0, retry: null };
+  var FAIL_DUP_MS = 6000;   // the same error toast again within this time (while one is showing) isn't shown again…
+  function failToast(prefix, e, retry, link) {
+    if (e && e.message === 'signed-out') return renderSignIn();
+    if (isCool(e)) return coolToast(e.group);   // v2.13: nothing was sent; say when to try again
+    var p = plainErr(e), msg = failText(prefix, e), now = Date.now();
+    var fn = (p.retry && typeof retry === 'function') ? retry : null;
+    var t = $('toast'), shown = !t.hidden && t.firstChild && t.firstChild.textContent === msg;   // v2.43: that very toast is still up
+    if (msg === lastFail.msg && now - lastFail.at < FAIL_DUP_MS && shown) {
+      // …but its Try again now repeats the newest failed action (or goes, if that one can't be repeated).
+      lastFail.retry = fn;
+      var old = t.querySelector('.toastbtn[data-retry]');
+      if (!fn && old) {
+        var had = document.activeElement === old;
+        old.remove();
+        if (had) { toastGiveBack(null); toastTimeout(); }   // v2.43: audit focus return; the close timer runs again
+      }
+      return;
+    }
+    lastFail = { msg: msg, at: now, retry: fn };
+    toast(msg, link || null, fn ? { text: 'Try again', retry: true, fn: function () { var f = lastFail.retry; lastFail.retry = null; if (f) f(); } } : null);
+  }
+  // ---------- v2.43: no internet ----------
+  // A fetch that gets no answer at all (iPhone Safari: TypeError "Load failed") marks the page offline: one quiet
+  // line under the header, no toasts for background checks, and the Now Playing check slows to once a minute.
+  // The `offline` event does the same. Any answer from Spotify, or the `online` event (only a hint: a captive
+  // Wi-Fi says online too), clears the line and runs one catch-up check.
+  var NET_RETURN_MS = 45000;   // a failed GET within this long of coming back to the page is retried once…
+  var NET_RETRY_MS = 2000;     // …after this wait (iOS can fail the first request sent right on return)
+  var RETURN_DELAY_MS = 1000;  // the first check after coming back waits this long
+  var netReturnAt = 0, catchUpAt = 0, catchUpTimer = null;
+  function paintNet() {
+    var n = $('net'), on = !!(state.started && state.offline);
+    if (!n) return;
+    if (on && n.hidden) announce(n.textContent);   // v2.43: audit: #announce speaks it (the line's own region is hidden until now)
+    n.hidden = !on;
+  }
+  function setOffline(on) {
+    on = !!on;
+    if (!!state.offline === on) return;
+    state.offline = on;
+    state.offlineAt = on ? Date.now() : 0;
+    paintNet();
+  }
+  // One catch-up when the connection is back: the Now Playing check (unless an answer just came in), devices if
+  // that check failed, and the library if it never loaded. Paused groups send nothing, as always.
+  function catchUp(fromAnswer) {
+    if (!state.started || document.hidden) return;
+    var now = Date.now();
+    if (now - catchUpAt < 5000) return;
+    catchUpAt = now;
+    clearTimeout(catchUpTimer);
+    catchUpTimer = setTimeout(function () {
+      catchUpTimer = null;
+      if (!state.started || document.hidden || state.offline) return;
+      if (!fromAnswer) schedulePoll(0, true);
+      if (state.deviceErrObj && state.deviceErrObj.net && !coolLeft('player')) { bgDevAt = 0; bgCheckDevice(); }
+      if (!state.data && !coolLeft('library')) refresh();
+    }, fromAnswer ? 0 : RETURN_DELAY_MS);
+  }
+  window.addEventListener('offline', function () { setOffline(true); });
+  window.addEventListener('online', function () {
+    var was = state.offline;
+    setOffline(false);
+    if (was || state.pollFailed || state.deviceErrObj) catchUp(false);
+  });
 
   // ---------- PKCE auth ----------
   function randomString(len) {
@@ -1090,7 +1177,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         state: st
       });
       location.assign(AUTH + '/authorize?' + p.toString());
-    }).catch(function (e) { toast('Couldn’t start sign-in (' + e.message + ').'); });
+    }).catch(function (e) { failToast('Couldn’t start sign-in', e); });   // v2.43
   }
   function saveToken(j, fresh) {
     var old = get(K.token) || {};
@@ -1409,7 +1496,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var g = coolGroup(rel, method);
     if (coolLeft(g)) return Promise.reject(coolErr(g));   // nothing in a paused group is sent
     var url = path.indexOf('http') === 0 ? path : API + path;
-    var key = method === 'GET' && !opts.body ? url : '';
+    var key = method === 'GET' && !opts.body && !opts.netRetry ? url : '';   // v2.43: a retry doesn't wait on itself
     if (key && inflight[key]) return inflight[key];
     var p = accessToken().then(function (tok) {
       if (coolLeft(g)) throw coolErr(g);   // another copy hit the limit while the token renewed
@@ -1420,6 +1507,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         body: opts.body ? JSON.stringify(opts.body) : undefined
       });
     }).then(function (r) {
+      if (state.offline) { setOffline(false); catchUp(true); }   // v2.43: Spotify answered, so the connection is back
       if (r.status === 401) { var t = get(K.token); if (t) { t.expires = 0; set(K.token, t); } }
       if (r.status === 204) return { ok: true, status: 204, json: null };
       return r.text().then(function (txt) {
@@ -1435,7 +1523,21 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         return res;
       });
     }, function (e) {
-      if (e && e.message !== 'signed-out' && !isCool(e)) logError(what, 'network', e.message);
+      if (e && e.message !== 'signed-out' && !isCool(e)) {
+        logError(what, 'network', e.message);   // the raw text ("Load failed") stays in Diagnostics
+        // v2.43: no answer at all (fetch rejects with a TypeError). Within 45 s of coming back to the page, a GET
+        // is asked once more after 2 s, silently; otherwise the page shows the no-internet line.
+        if (e.name === 'TypeError' || /load failed|failed to fetch|networkerror/i.test(e.message || '')) {
+          e.net = true;
+          if (method === 'GET' && !opts.netRetry && Date.now() - netReturnAt < NET_RETURN_MS) {
+            return new Promise(function (res) { setTimeout(res, NET_RETRY_MS); }).then(function () {
+              if (!state.started) throw e;
+              return api(path, Object.assign({}, opts, { netRetry: true }));
+            });
+          }
+          setOffline(true);
+        }
+      }
       throw e;
     });
     if (key) {
@@ -1488,7 +1590,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var count = 0;
     function next(url) {
       return api(url).then(function (r) {
-        if (!r.ok) throw new Error(errMsg(r));
+        if (!r.ok) throw httpError(r);   // v2.43: keeps status and reason
         var j = (root ? r.json && r.json[root] : r.json) || {};
         (j.items || []).forEach(function (it) { var v = pick(it); if (v) out.push(v); });
         count++;
@@ -2153,7 +2255,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }).catch(function (e) {
       if (e && e.message === 'signed-out') { closeNotes(false); renderSignIn(); return; }
       if (isCool(e)) { v.error = coolText(e.group); coolToast(e.group); return; }
-      v.error = 'Couldn’t load the notes (' + ((e && e.message) || 'error') + ').';
+      v.error = failText('Couldn’t load the notes', e);   // v2.43: plain words
     }).then(function () {
       v.loading = false;
       if (seq === notesSeq) renderNotes();
@@ -2435,7 +2537,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     paintHearts();
     api('/me/library?uris=' + encodeURIComponent(uri), { method: save ? 'PUT' : 'DELETE' }).then(function (r) {
       delete state.busy[uri];
-      if (!r.ok) throw new Error(errMsg(r));
+      if (!r.ok) throw httpError(r);   // v2.43: keeps status and reason
       if (!save && (kind === 'track' || kind === 'episode')) shiftNext(kind === 'track' ? 'liked' : 'episodes');   // audit
       saveSavedSession();
       if (save && /^spotify:track:/.test(uri)) likedSince(uri);   // v2.31: Liked songs on the artist page is no longer complete
@@ -2446,7 +2548,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       delete state.busy[uri];
       state.saved[uri] = was;
       paintHearts();
-      onFail(save ? 'Couldn’t save' : 'Couldn’t remove')(e);
+      onFail(save ? 'Couldn’t save' : 'Couldn’t remove', function () { toggleSave(uri, name, kind, forceSave); })(e);   // v2.43: Try again
     });
   }
 
@@ -2543,7 +2645,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var params = new URLSearchParams({ q: q, type: type === 'all' ? 'track,artist,album,playlist,show,episode' : type, limit: String(SEARCH_LIMIT) });
     if (type !== 'all') params.set('offset', String(e.offset));
     return api('/search?' + params.toString()).then(function (r) {
-      if (!r.ok) throw new Error(errMsg(r));
+      if (!r.ok) throw httpError(r);   // v2.43: keeps status and reason
       var j = r.json || {};
       // Spotify can return null entries (playlists especially); the mappers drop them.
       function list(t) { return ((j[STYPE[t].key] && j[STYPE[t].key].items) || []).map(STYPE[t].map).filter(Boolean); }
@@ -2653,7 +2755,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     renderIfRecent();
     api('/me/player/recently-played?limit=50').then(function (r) {
       if (seq !== state.recentSeq) return;
-      if (!r.ok) throw new Error(errMsg(r));
+      if (!r.ok) throw httpError(r);   // v2.43: keeps status and reason
       var seen = {}, out = [], seenAlbum = {}, seenList = {}, jump = [];
       var rItems = (r.json && r.json.items) || [];
       ctxFromRecent(rItems);   // v2.23: fills gaps in the last song heard per album or playlist
@@ -2695,7 +2797,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         state.recentTriedAt = 0;
         state.recent.error = state.filter === 'recent' && !state.recent.items ? coolText(e.group) : '';
         if (state.filter === 'recent' && !state.detail) coolToast(e.group);
-      } else state.recent.error = 'Couldn’t load recently played (' + e.message + ').';
+      } else state.recent.error = failText('Couldn’t load recently played', e);   // v2.43
       renderIfRecent();
     });
   }
@@ -3180,7 +3282,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       var s = shows[i], si = all.indexOf(s);
       running++;
       api('/shows/' + encodeURIComponent(s.id) + '/episodes?limit=' + LATEST_PER_SHOW + '&offset=0').then(function (r) {
-        if (!r.ok || !r.json) throw new Error(errMsg(r));
+        if (!r.ok || !r.json) throw httpError(r);   // v2.43: keeps status and reason
         done[s.id] = true;
         (r.json.items || []).forEach(function (e, k) { keepNotes(e); var x = mapLatest(e, s); if (x) found.push({ x: x, si: si, k: k }); });   // v2.18: notes
         mergeShowEpisodes(s.id, r.json.items || []);   // v2.15: a saved copy of this show takes them too
@@ -3666,7 +3768,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (devicesReq) return devicesReq;   // one request at a time
     devicesReq = api('/me/player/devices').then(function (r) {
       devicesReq = null;
-      if (!r.ok) throw new Error(errMsg(r));
+      if (!r.ok) throw httpError(r);   // v2.43: keeps status and reason
       state.devices = (r.json && r.json.devices) || [];
       state.devicesAt = state.deviceAt = Date.now();
       state.deviceChecked = true;
@@ -3678,10 +3780,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     return devicesReq;
   }
   function checkDevice() {
-    return fetchDevices().then(function (list) { state.deviceError = ''; showStatus(); return list; }, function (e) {
+    return fetchDevices().then(function (list) { state.deviceError = ''; state.deviceErrObj = null; showStatus(); return list; }, function (e) {
       if (e.message === 'signed-out') return renderSignIn();
       if (isCool(e)) return;   // v2.13: nothing was sent; what the page knew stays as it was
-      state.deviceError = e.message;
+      state.deviceError = e.message || 'unknown error';
+      state.deviceErrObj = e;   // v2.43: for plain words
       state.devices = []; state.deviceChecked = true; recomputeDevice();
     });
   }
@@ -3707,7 +3810,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       btn.textContent = d.name + ' · Change';
       btn.setAttribute('aria-label', d.name + ' · Change device');
     } else if (state.deviceError) {
-      $('statusText').textContent = 'Couldn’t check your devices (' + state.deviceError + ').';
+      $('statusText').textContent = failText('Couldn’t check your devices', state.deviceErrObj || { message: state.deviceError });   // v2.43
     } else {
       $('statusText').textContent = 'Spotify isn’t open on any device. Start a song in Spotify, then come back.';
       btn.textContent = 'Devices';
@@ -3774,7 +3877,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       throw httpError(r);
     }).catch(function (e) { schedulePoll(pollEvery()); throw e; });   // audit: a failed play still leaves the regular check running
   }
-  function httpError(r) { var e = new Error(errMsg(r)); e.status = r.status; return e; }
+  function httpError(r) {
+    var e = new Error(errMsg(r)); e.status = r.status;
+    var x = r.json && r.json.error;   // v2.43: Spotify's reason (e.g. PREMIUM_REQUIRED) for plain-words errors
+    if (x && typeof x === 'object' && typeof x.reason === 'string') e.reason = x.reason;
+    return e;
+  }
   function deviceFresh() { return state.device && (Date.now() - state.deviceAt < FRESH_MS); }
   // A recent check found no device at all (not an error): safe to wake Spotify straight from the tap.
   function noDeviceKnown() {
@@ -3797,9 +3905,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         waitForPlay(item, opts);
         return;
       }
-      toast('Couldn’t play (' + e.message + ').', { href: item.url, text: 'Open in Spotify' });
+      failToast('Couldn’t play', e, function () { onItemClick(item, NOEV, opts); }, { href: item.url, text: 'Open in Spotify' });   // v2.43
     });
   }
+  var NOEV = { preventDefault: function () {} };   // v2.43: Try again replays a tap without an event
   function onItemClick(item, ev, opts) {
     // Device known and fresh: play here. Known that nothing is open: wake Spotify now, while
     // still inside the tap (iPhone Safari may refuse to open an app after waiting on the network).
@@ -3821,7 +3930,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (coolLeft('player')) { coolToast('player'); return; }   // the check itself hit the limit: nothing more is sent
       if (state.device) return playNow(item, opts);
       if (state.deviceError) {
-        toast('Couldn’t check your devices (' + state.deviceError + ').', { href: item.url, text: 'Open in Spotify' });
+        failToast('Couldn’t check your devices', state.deviceErrObj || { message: state.deviceError },
+          function () { onItemClick(item, NOEV, opts); }, { href: item.url, text: 'Open in Spotify' });   // v2.43: plain words, Try again
         return;
       }
       // Waiting needs no tap of its own (nothing opens), so start right away.
@@ -4224,7 +4334,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.42 (2026-11-27)';
+  var VERSION = 'v2.43 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -4279,6 +4389,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     line('Device picked: ' + (state.device ? state.device.name + ' (' + state.device.type + ')' : 'none') + (state.deviceError ? ' · error: ' + state.deviceError : ''));
     line('Wake mode: ' + wakeMode() + (isStandalone() ? ' (Home Screen icon)' : ''));   // audit: IPHONE-1
     line('Shortcut link this visit: ' + (linkNote || 'none') + (linkReq ? ' (waiting for the library)' : ''));   // v2.39
+    line('Connection: ' + (state.offline ? 'no internet since ' + clockSec(state.offlineAt) : 'online') + (navigator.onLine === false ? ' (phone says offline)' : ''));   // v2.43
     var pend = readPending();
     line('Pending: ' + (pend ? pend.item.name + ' (' + (pend.mode || 'link') + ', ' + Math.round((Date.now() - pend.at) / 1000) + 's ago' + (pend.manual ? ', waiting for Try again' : '') + (pend.item.kind === 'resume' ? ', resume at ' + fmtTime(pend.item.positionMs || 0) : '') + ')' : 'none'));
     var pl = state.player, lp = readLastPlay();
@@ -4382,8 +4493,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     api('/me/player/queue?uri=' + encodeURIComponent(item.uri) + '&device_id=' + encodeURIComponent(d.id), { method: 'POST' }).then(function (r) {
       if (r.ok) { rememberQueued(item.uri); toast('Added to queue'); return; }
       if (r.status === 404) { toast(NO_DEVICE); return; }
-      throw new Error(errMsg(r));
-    }).catch(onFail('Couldn’t add to queue'));
+      throw httpError(r);   // v2.43: keeps status and reason
+    }).catch(onFail('Couldn’t add to queue'));   // v2.43: plain words; no Try again (it could queue the song twice)
   }
 
   // ---------- Now Playing bar ----------
@@ -4404,6 +4515,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // v2.13 cadence: every 20 s; every 10 s while the full Now Playing screen is open; every 60 s once nothing
   // has played for 10 minutes (Spotify asleep or idle); nothing while the page is hidden.
   function pollEvery() {
+    if (state.offline) return IDLE_POLL_MS;   // v2.43: no internet: one quiet try a minute until an answer comes
     if (Date.now() - state.lastActiveAt > IDLE_AFTER_MS) return IDLE_POLL_MS;
     return npShown() ? NP_POLL_MS : POLL_MS;
   }
@@ -4471,7 +4583,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }).catch(function (e) {
       if (e.message === 'signed-out') { renderSignIn(); return 'stop'; }
       if (isCool(e)) return 'stop';   // the cool-off line says so; afterCool() restarts the checks
-      if (!state.pollFailed) toast('Couldn’t check what’s playing (' + e.message + ').');
+      if (!state.pollFailed && !e.net) failToast('Couldn’t check what’s playing', e);   // v2.43: no internet shows the line instead
       state.pollFailed = true;
     }).then(function (how) {
       // A command made this answer stale and scheduled its own check; don't override it.
@@ -4705,8 +4817,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         else toast(WAKE_FIRST);
         return;
       }
-      throw new Error(errMsg(r));
-    }).catch(onFail('Couldn’t control playback')).then(function () { schedulePoll(500, true); });
+      throw httpError(r);   // v2.43: keeps status and reason
+    }).catch(onFail('Couldn’t control playback', method === 'PUT' && path.indexOf('/me/player/seek') !== 0 ? function () { command(method, path, optimistic); } : null)).then(function () { schedulePoll(500, true); });   // v2.43: Try again for PUTs only (Next/Previous could skip twice; a seek's spot is stale by then)
   }
 
   // v2.17: Pause. The music stopping is the goal, so a 404 is not an error here. If the request named a device,
@@ -4737,14 +4849,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }
     return api('/me/player/pause' + (dev ? '?device_id=' + encodeURIComponent(dev) : ''), { method: 'PUT' }).then(function (r) {
       if (r.ok || pausedAlready(r)) return accepted();
-      if (r.status !== 404) throw new Error(errMsg(r));
+      if (r.status !== 404) throw httpError(r);   // v2.43: keeps status and reason
       if (!dev) return asleep();
       return api('/me/player/pause', { method: 'PUT' }).then(function (r2) {
         if (r2.ok || pausedAlready(r2)) return accepted();   // it was playing under another id: the check below finds it
         if (r2.status === 404) return asleep();
-        throw new Error(errMsg(r2));
+        throw httpError(r2);   // v2.43
       });
-    }).catch(onFail('Couldn’t control playback')).then(function () { schedulePoll(nextIn, force); });
+    }).catch(onFail('Couldn’t control playback', function () { pauseNow(); })).then(function () { schedulePoll(nextIn, force); });   // v2.43
   }
 
   // ---------- feature permissions (v2.25) ----------
@@ -4819,7 +4931,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     fetchDevices().catch(function (e) {
       if (e.message === 'signed-out') { closeSheet(); return renderSignIn(); }
       if (isCool(e)) { if (!(state.devices || []).length) state.sheetError = coolText(e.group); coolToast(e.group); return; }   // v2.13
-      state.sheetError = 'Couldn’t load devices (' + e.message + ').';
+      state.sheetError = failText('Couldn’t load devices', e);   // v2.43
     }).then(function () { state.sheetLoading = false; renderSheet(); });
   }
   function renderSheet() {
@@ -4846,13 +4958,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var wasPlaying = !!(state.player && state.player.is_playing);
     state.pollSeq++;
     api('/me/player', { method: 'PUT', body: { device_ids: [d.id], play: wasPlaying } }).then(function (r) {
-      if (!r.ok) throw new Error(r.status === 404 ? 'device not found; refresh the list' : errMsg(r));
+      if (!r.ok) throw r.status === 404 ? new Error('device not found; refresh the list') : httpError(r);
       set(K.device, d.id);
       state.active = d; state.deviceAt = Date.now();
       recomputeDevice();
       closeSheet();
       toast('Now using ' + d.name);
-    }).catch(onFail('Couldn’t switch to ' + d.name)).then(function () { schedulePoll(600, true); });
+    }).catch(onFail('Couldn’t switch to ' + d.name, function () { transferTo(d); })).then(function () { schedulePoll(600, true); });
   }
 
   // ---------- Now playing options: from what plays to the album, playlist, Liked Songs or show ----------
@@ -4873,7 +4985,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (known) return Promise.resolve(known);
     if (!plMemo[id]) {
       plMemo[id] = api('/playlists/' + encodeURIComponent(id)).then(function (r) {
-        if (!r.ok || !r.json) throw new Error(errMsg(r));
+        if (!r.ok || !r.json) throw httpError(r);   // v2.43: keeps status and reason
         var m = mapPlaylist(r.json);
         if (!m) throw new Error('unreadable answer');
         plKnown[id] = m;
@@ -5500,7 +5612,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       else if (r.ok) queueView.data = { current: r.json.currently_playing || null, queue: r.json.queue || [] };
       else {
         if ((r.status === 401 || r.status === 403) && missingScopes().indexOf('user-read-currently-playing') !== -1) queueView.scope = true;
-        throw new Error(errMsg(r));
+        throw httpError(r);   // v2.43: keeps status and reason
       }
       renderQueue();
     }).catch(function (e) {
@@ -5508,7 +5620,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (e && e.message === 'signed-out') { closeQueue(false); closeNp(false); return renderSignIn(); }
       queueView.loading = false;
       if (isCool(e)) coolToast(e.group);
-      queueView.error = isCool(e) ? coolText(e.group) : queueView.scope ? 'Up next needs one more sign-in.' : 'Couldn’t load the queue (' + (e && e.message ? e.message : 'unknown error') + ').';
+      queueView.error = isCool(e) ? coolText(e.group) : queueView.scope ? 'Up next needs one more sign-in.' : failText('Couldn’t load the queue', e);   // v2.43
       renderQueue();
     });
   }
@@ -5608,8 +5720,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }, function (e) {
       b.removeAttribute('aria-busy');
       if (e && e.message === 'signed-out') { closeNp(false); return renderSignIn(); }
-      if (isCool(e)) return coolToast(e.group);
-      toast('Couldn’t open the playlist (' + (e && e.message ? e.message : 'unknown error') + ').');
+      failToast('Couldn’t open the playlist', e, function () { if (!$('np').hidden) npChoose(o, b); });   // v2.43
     });
   }
 
@@ -7079,7 +7190,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         if (failed.message === 'signed-out') { if (state.started) renderSignIn(); return; }
         if (state.detail === d) {
           if (isCool(failed)) coolToast(failed.group);
-          else toast('Couldn’t load every ' + (isPod(d.item) ? 'episode' : 'song') + ' (' + (failed.message || 'unknown error') + ').');
+          else failToast('Couldn’t load every ' + (isPod(d.item) ? 'episode' : 'song'), failed);   // v2.43: plain words (Search all stays below the list)
         }
       }
       if (state.detail === d) { paintDetailSort(); paintDetailFoot(); }
@@ -7089,7 +7200,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         (function (i) {
           active++;
           (cat ? apiCached : api)(urls[i]).then(function (r) {
-            if (!r.ok || !r.json) throw new Error(errMsg(r));
+            if (!r.ok || !r.json) throw httpError(r);   // v2.43: keeps status and reason
             got[i] = r.json;
           }).catch(function (e) { if (!failed) failed = e || new Error('unknown error'); }).then(function () {
             active--;
@@ -7227,7 +7338,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (state.device) { playNow(item); return; }
       var box = document.querySelector('.sembed-box');
       if (box) { dropEmbed(d); box.parentNode.removeChild(box); paintDetailFoot(); }
-      if (state.deviceError) { toast('Couldn’t check your devices (' + state.deviceError + ').', { href: item.url, text: 'Open in Spotify' }); return; }
+      if (state.deviceError) { failToast('Couldn’t check your devices', state.deviceErrObj || { message: state.deviceError }, null, { href: item.url, text: 'Open in Spotify' }); return; }   // v2.43: plain words
       var mode = wakeMode() === 'shortcut' ? 'shortcut' : 'link';
       toast('Spotify isn’t open on any device.', null, {
         text: mode === 'shortcut' ? 'Wake Spotify' : 'Open Spotify',
@@ -7286,7 +7397,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       d.loading = false;
       var cur = state.detail === d;
       if (r.status === 403 && d.item.kind === 'playlist') { noList[d.item.id] = true; d.restricted = true; if (cur) { paintDetailSort(); paintDetailFoot(); } return; }
-      if (!r.ok || !r.json) throw new Error(errMsg(r));
+      if (!r.ok || !r.json) throw httpError(r);   // v2.43: keeps status and reason
       d.next = r.json.next || null;
       if (typeof r.json.total === 'number') d.total = r.json.total;
       if (kind === 'album' || kind === 'show') {
@@ -7339,7 +7450,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         d.error = coolText(e.group); if (state.detail === d) { paintDetailFoot(); coolToast(e.group); } return;
       }
       d.autoCheck = false;
-      d.error = 'Couldn’t load ' + (isPod(d.item) ? 'episodes' : 'songs') + ' (' + (e && e.message ? e.message : 'unknown error') + ').';
+      d.error = failText('Couldn’t load ' + (isPod(d.item) ? 'episodes' : 'songs'), e);   // v2.43: plain words (Try again is below it)
       if (state.detail === d) paintDetailFoot();
     }).then(function () { d.autoCheck = false; });
   }
@@ -7443,7 +7554,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function editRefused(r, prefix, btn) {
     if (featureDenied('edit', r)) { openPerm('edit', btn); return; }   // the permission is missing or was taken back
     if (r.status === 403) { toast('Spotify didn’t allow this change from this page (' + errMsg(r) + ').'); return; }
-    toast(prefix + ' (' + errMsg(r) + ').');
+    failToast(prefix, httpError(r));   // v2.43: plain words; no Try again for edits (a repeat could add twice)
   }
   // True when a change can be sent now (otherwise the reason is already on screen).
   function editReady(btn) {
@@ -8039,7 +8150,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var url = '/search?type=track&limit=' + SEARCH_PAGE + '&offset=' + (d.sOff || 0) + '&q=' + encodeURIComponent(albumQuery(d.item));
     api(url).then(function (r) {
       d.loading = false;
-      if (!r.ok || !r.json) throw new Error(errMsg(r));
+      if (!r.ok || !r.json) throw httpError(r);   // v2.43: keeps status and reason
       var page = r.json.tracks || {};
       var have = {}, added = 0;
       d.raw.forEach(function (x) { have[x.id] = true; });
@@ -8059,7 +8170,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }).catch(function (e) {
       d.loading = false;
       if (e && e.message === 'signed-out') { if (state.started) renderSignIn(); return; }
-      d.error = isCool(e) ? coolText(e.group) : 'Couldn’t search for this album’s songs (' + (e && e.message ? e.message : 'unknown error') + ').';
+      d.error = isCool(e) ? coolText(e.group) : failText('Couldn’t search for this album’s songs', e);   // v2.43
       if (cur()) { paintDetailFoot(); if (isCool(e)) coolToast(e.group); }
     });
   }
@@ -8577,7 +8688,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }
     apiCached(releaseUrl(d)).then(function (r) {
       d.loading = false;
-      if (!r.ok || !r.json) throw new Error(errMsg(r));
+      if (!r.ok || !r.json) throw httpError(r);   // v2.43: keeps status and reason
       var seen = {};
       d.items.forEach(function (x) { seen[x.id] = true; });
       var got = (r.json.items || []).map(mapRelease).filter(function (x) { if (!x || seen[x.id]) return false; seen[x.id] = true; return true; });
@@ -8597,7 +8708,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       d.loading = false;
       if (e && e.message === 'signed-out') { if (state.started) renderSignIn(); return; }
       if (isCool(e)) { d.error = coolText('catalog'); d.infoAsked = !!d.img; if (state.detail === d) { paintArtistFoot(d); coolToast('catalog'); } return; }
-      d.error = 'Couldn’t load releases (' + (e && e.message ? e.message : 'unknown error') + ').';
+      d.error = failText('Couldn’t load releases', e);   // v2.43
       if (state.detail === d) paintArtistFoot(d);
     });
   }
@@ -8925,7 +9036,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         done();
         if (featureDenied('follow', r)) { openPerm('follow', from && document.body.contains(from) ? from : null); return; }
         if (r.status === 400) { toast('Spotify didn’t accept ' + (on ? 'following' : 'unfollowing') + ' from this page (' + errMsg(r) + ').'); return; }
-        toast((on ? 'Couldn’t follow “' : 'Couldn’t unfollow “') + name + '” (' + errMsg(r) + ').');
+        failToast((on ? 'Couldn’t follow “' : 'Couldn’t unfollow “') + name + '”', httpError(r), function () { toggleFollow(item, null, on); });   // v2.43
         return;
       }
       setFollowed(item, on);
@@ -8940,7 +9051,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       else toast(on ? 'Following “' + name + '”' : 'Unfollowed “' + name + '”', null, undo);
     }).catch(function (e) {
       done();
-      onFail(on ? 'Couldn’t follow “' + name + '”' : 'Couldn’t unfollow “' + name + '”')(e);
+      onFail(on ? 'Couldn’t follow “' + name + '”' : 'Couldn’t unfollow “' + name + '”', function () { toggleFollow(item, null, on); })(e);   // v2.43
     });
   }
 
@@ -8960,6 +9071,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     $('top').classList.remove('detail');
     $('top').hidden = true;
     $('banner').hidden = true;
+    paintNet();   // v2.43: hides the no-internet line (state.started is false now)
     closeSheet();
     closeQueue(false);
     closeNp(false);
@@ -9023,8 +9135,19 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (e.message === 'signed-out') return renderSignIn();
       var cool = isCool(e);   // v2.13: the library loads again after the cool-off (afterCool) if nothing was cached
       if (!state.data && !state.detail && state.filter !== 'search' && state.filter !== 'recent') {
-        $('main').textContent = ''; $('main').appendChild(el('p', { class: 'err', text: cool ? coolText(e.group) : 'Couldn’t load your library: ' + e.message }));
-      } else if (!cool) toast('Couldn’t refresh: ' + e.message);
+        $('main').textContent = ''; $('main').appendChild(el('p', { class: 'err', text: cool ? coolText(e.group) : failText('Couldn’t load your library', e) }));
+        if (!cool && plainErr(e).retry) {   // v2.43: Try again next to the error (never during a pause)
+          var again = el('button', { class: 'btn secondary libretry', type: 'button', text: 'Try again' });
+          again.addEventListener('click', function () {
+            again.disabled = true;
+            refresh().then(function () {   // v2.43: audit focus: failing again puts focus on the new Try again, not on body
+              var nb = $('main').querySelector('button.libretry'), ae = document.activeElement;
+              if (nb && (!ae || ae === document.body || !document.body.contains(ae))) nb.focus();
+            });
+          });
+          $('main').appendChild(again);
+        }
+      } else if (!cool && !e.net) failToast('Couldn’t refresh', e, refresh);   // v2.43: no internet shows the line instead
     });
   }
   function startApp() {
@@ -9047,6 +9170,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     state.bgHoldUntil = Date.now() + 4000;
     paintCool();          // a cool-off another copy (or an earlier visit) started still applies
     var place = kpTake();   // v2.42: where you were before Safari reloaded this tab (filter, Podcasts tab, filter text)
+    if (navigator.onLine === false) setOffline(true); else paintNet();   // v2.43
     setFilter(state.filter);
     if (place) kpRestore(place);   // v2.42: the open lists and scroll positions
     if (!coolLeft('player')) checkDevice();
@@ -9198,7 +9322,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       delete linkLooks[lk.uri];
     }).catch(function (e) {
       if (e && e.message === 'signed-out') { delete linkLooks[lk.uri]; return renderSignIn(); }
-      var msg = isCool(e) ? coolText(e.group) : (e && (e.status === 404 || e.status === 400)) ? 'Spotify doesn’t know this link.' : 'Couldn’t look it up (' + ((e && e.message) || 'error') + ').';
+      var msg = isCool(e) ? coolText(e.group) : (e && (e.status === 404 || e.status === 400)) ? 'Spotify doesn’t know this link.' : failText('Couldn’t look it up', e);   // v2.43: plain words
       if (isCool(e)) coolToast(e.group);
       linkLooks[lk.uri] = { busy: false, error: msg };
     }).then(function () {
@@ -9238,8 +9362,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }, function (e) {
       if (from) from.removeAttribute('aria-busy');
       if (e && e.message === 'signed-out') return renderSignIn();
-      if (isCool(e)) return coolToast(e.group);
-      toast('Couldn’t open the playlist (' + (e && e.message ? e.message : 'unknown error') + ').');
+      failToast('Couldn’t open the playlist', e, function () { if (linkOnScreen(lk)) openLink(lk, from && document.body.contains(from) ? from : null); });   // v2.43: plain words, Try again
     });
   }
   // From the name box: true when it holds a link (shown instead of a name filter or search, which don't run).
@@ -9456,12 +9579,22 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // v2.13: coming back to the page. The visible copy takes the player check; devices are checked at most
   // once per 15 s; the player check runs now unless it ran in the last 5 s; the background extras follow a
   // few seconds later (bgReady). During a cool-off none of these send anything.
+  // v2.43: the device and player checks wait RETURN_DELAY_MS (iOS can stall a fetch sent the instant the page shows,
+  // then fail it with "Load failed"), and a GET that fails that way in the next 45 s is asked once more (api()).
+  // The wake check (resumePending) still starts right away: it retries every few seconds on its own.
+  var returnTimer = null;
   function onReturn() {
     if (!state.started || !get(K.token)) return;
     takePoller();
     paintCool();
-    bgCheckDevice();
-    schedulePoll(Date.now() - state.lastPollAt < 5000 ? 5000 : 0);
+    netReturnAt = Date.now();
+    clearTimeout(returnTimer);
+    returnTimer = setTimeout(function () {
+      returnTimer = null;
+      if (!state.started || document.hidden) return;
+      bgCheckDevice();
+      if (!state.pollTimer || Date.now() - state.lastPollAt >= 5000) schedulePoll(Date.now() - state.lastPollAt < 5000 ? 5000 : 0);
+    }, RETURN_DELAY_MS);
     resumePending(false);
     state.bgHoldUntil = Math.max(state.bgHoldUntil, Date.now() + 3000);
     bgReady();   // then recently played (Home), resume points, Latest (each only when due)
@@ -9472,6 +9605,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (document.hidden) {
       kpSave();   // v2.42: iOS may discard the tab while it's in the background
       clearTimeout(state.pollTimer); state.pollTimer = null;
+      clearTimeout(returnTimer); returnTimer = null;   // v2.43
       stopNpTick();
       if (state.wake.running) stopWake();   // pause the wake check; it starts fresh on return
       releasePoller();                      // a hidden copy never polls; another visible copy can take over

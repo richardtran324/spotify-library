@@ -650,7 +650,7 @@ tests.push(function () {
       return H.wait(50);
     }).then(function () {
       var f = $(tab, 'dfoot');
-      check('16 error shown', /Couldn’t search for this album’s songs \(Server boom\)\./.test(f.textContent), f.textContent);
+      check('16 error shown', /Couldn’t search for this album’s songs\. Spotify isn’t answering right now\./.test(f.textContent), f.textContent);   // #41: plain words
       check('16 Try again offered', dfootBtn() && dfootBtn().textContent === 'Try again');
       tab.calls.length = 0;
       click(tab, dfootBtn());

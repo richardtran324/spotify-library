@@ -657,7 +657,7 @@ tests.push(function () {
       t.openDetail(showItem('pe'));
       return settle(100);
     }).then(function () {
-      check('17 error says what failed, offers Try again', /Couldn’t load episodes \(/.test(q(tab, '#dfoot').textContent) && !!footBtn(tab, 'Try again'), q(tab, '#dfoot').textContent);
+      check('17 error says what failed, offers Try again', /Couldn’t load episodes\. Spotify isn’t answering right now\./.test(q(tab, '#dfoot').textContent) && !!footBtn(tab, 'Try again'), q(tab, '#dfoot').textContent);   // #41: plain words
       check('17 nothing saved after an error', store.getItem('lib-cache-show:pe') === null);
       fail = false;
       click(tab, footBtn(tab, 'Try again'));
@@ -877,7 +877,7 @@ tests.push(function () {
     var t = tab.t();
     t.openDetail(artistItem('ar2', 'x.jpg'));
     return settle(150).then(function () {
-      check('23 error says what failed, offers Try again', /Couldn’t load releases \(/.test(q(tab, '#afoot').textContent) && !!footBtn(tab, 'Try again', '#afoot'), q(tab, '#afoot').textContent);
+      check('23 error says what failed, offers Try again', /Couldn’t load releases\. Spotify isn’t answering right now\./.test(q(tab, '#afoot').textContent) && !!footBtn(tab, 'Try again', '#afoot'), q(tab, '#afoot').textContent);   // #41: plain words
       mode = 'ok';
       click(tab, footBtn(tab, 'Try again', '#afoot'));
       return settle(150);
