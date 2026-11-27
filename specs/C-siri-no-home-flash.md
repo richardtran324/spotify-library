@@ -229,3 +229,7 @@ It is the only design that avoids the Spotify app entirely, but it moves playbac
 - https://support.spotify.com/article/spotify-iphone-widget/ (Lock Screen widget opens the app)
 - https://dbushell.com/2023/03/20/ios-pwa-media-session-api/ (Safari Media Session and Lock Screen controls)
 - https://developer.spotify.com/documentation/web-playback-sdk (Web Playback SDK, iOS Safari support and limits)
+
+## Third pass: ways around it (Nov 27)
+
+See `research/home-flash-pass3.md`. Verdict unchanged: no page-started path skips Spotify's Home on a cold start, and nothing Spotify shipped through November 2026 changes that. New: a Back Tap or Action button shortcut with one Play/Pause action is the cheapest way to make the play press that wakes Spotify in the background (iPhone check H1). v2.29 adds a Diagnostics guide for it, rewrites the Wake Spotify shortcut recipe around Play/Pause (check H4, replacing C6), and says plainly which wake options show Home. Since iOS 26.5 an x-callback shortcut link reports an error instead of success, so the page keeps the plain `run-shortcut` link.
