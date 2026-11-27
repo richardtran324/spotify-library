@@ -2968,10 +2968,17 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- auto-wake: start Spotify, then play the tapped item when it shows up ----------
+  // audit: IPHONE-1. The Home Screen icon runs as a standalone web app (manifest "display": "standalone").
+  // A link opened from Shortcuts goes to Safari, which keeps its own storage, so the shortcut's ?wake=1
+  // can never find a tap saved here. matchMedia is guarded (jsdom and old browsers lack it).
+  function isStandalone() {
+    try { return navigator.standalone === true || !!(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches); } catch (e) { return false; }
+  }
   function wakeMode() {
     var v = null;
     try { v = localStorage.getItem(K.wake); } catch (e) {}
-    if (v === 'shortcut' || v === '"shortcut"') return 'shortcut';
+    // audit: IPHONE-1. From the Home Screen icon a saved 'shortcut' acts as 'wait'; the stored choice is kept for a Safari tab.
+    if (v === 'shortcut' || v === '"shortcut"') return isStandalone() ? 'wait' : 'shortcut';
     if (v === 'link' || v === '"link"') return 'link';
     return 'wait';   // default: wait for a press of play in Control Center or on the lock screen
   }
@@ -3171,9 +3178,19 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
 
   // ---------- diagnostics ----------
   var VERSION = 'v2.27 (2026-11-27)';
+  var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
-    var m = wakeMode();
-    document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
+    var m = wakeMode(), sa = isStandalone();
+    document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) {
+      r.checked = r.value === m;
+      if (r.value !== 'shortcut') return;
+      // audit: IPHONE-1. Greyed out with a note in the Home Screen icon; the original note comes back in a tab.
+      r.disabled = sa;
+      var note = r.parentNode.querySelector('.setnote');
+      if (!note) return;
+      if (note.getAttribute('data-note') === null) note.setAttribute('data-note', note.textContent);
+      note.textContent = sa ? SHORTCUT_STANDALONE_NOTE : note.getAttribute('data-note');
+    });
   }
   // Appearance: 'auto' follows the phone; Light or Dark sets data-theme on <html> (the CSS has a block for each).
   function themeMode() { var v = get(K.theme); return v === 'light' || v === 'dark' ? v : 'auto'; }
@@ -3203,7 +3220,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var miss = missingScopes();
     line('Permissions missing: ' + (miss.length ? miss.join(', ') : 'none'));
     line('Device picked: ' + (state.device ? state.device.name + ' (' + state.device.type + ')' : 'none') + (state.deviceError ? ' · error: ' + state.deviceError : ''));
-    line('Wake mode: ' + wakeMode());
+    line('Wake mode: ' + wakeMode() + (isStandalone() ? ' (Home Screen icon)' : ''));   // audit: IPHONE-1
     var pend = readPending();
     line('Pending: ' + (pend ? pend.item.name + ' (' + (pend.mode || 'link') + ', ' + Math.round((Date.now() - pend.at) / 1000) + 's ago' + (pend.manual ? ', waiting for Try again' : '') + (pend.item.kind === 'resume' ? ', resume at ' + fmtTime(pend.item.positionMs || 0) : '') + ')' : 'none'));
     var pl = state.player, lp = readLastPlay();
