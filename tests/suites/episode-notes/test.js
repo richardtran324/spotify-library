@@ -54,7 +54,7 @@ function stamps(tab) { return [].slice.call(d(tab).querySelectorAll('#notesBody 
 function bodyText(tab) { return d(tab).getElementById('notesBody').textContent; }
 function reqs(tab, method, path) { return tab.calls.filter(function (c) { return c.method === method && (path instanceof RegExp ? path.test(c.path) : c.path === path); }); }
 function click(tab, node) { node.dispatchEvent(new tab.w.MouseEvent('click', { bubbles: true, cancelable: true })); }
-// v2.45: Episode notes moved from its own row button into the row's ⋯ menu: open the menu, return its Notes row.
+// v2.53: Episode notes moved from its own row button into the row's ⋯ menu: open the menu, return its Notes row.
 function moreBtn(tab, id) { return d(tab).querySelector('li[data-puri="spotify:episode:' + id + '"] button.more'); }
 function menuNotes(tab, id) { var m = moreBtn(tab, id); if (!m) return null; click(tab, m); return d(tab).querySelector('#rmList [data-act="notes"]'); }
 
@@ -320,7 +320,7 @@ tests.push(function () {
   });
 });
 
-// 12. Songs get no Notes; episode rows keep three buttons: heart, +, and ⋯ (which holds Notes since v2.45).
+// 12. Songs get no Notes; episode rows keep three buttons: heart, +, and ⋯ (which holds Notes since v2.53).
 tests.push(function () {
   return setup(H.seedStore()).then(function (tab) {
     var t = tab.t();

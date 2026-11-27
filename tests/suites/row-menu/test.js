@@ -1,5 +1,5 @@
 'use strict';
-// Row menu (v2.45) tests: the ⋯ button on song and episode rows and its sheet. jsdom, mocked fetch,
+// Row menu (v2.53) tests: the ⋯ button on song and episode rows and its sheet. jsdom, mocked fetch,
 // shared localStorage, mocked navigator.share / navigator.clipboard. Requests are counted per endpoint.
 // Run: node tests/run.js row-menu  (or, after npm ci in tests/: node test.js [path to index.html])
 if (process.argv[2]) process.env.SRC = process.argv[2];
@@ -114,9 +114,9 @@ var tests = [];
 tests.push(function () {
   return setup(store0()).then(function (tab) {
     var t = tab.t();
-    check('1 version', /^v2\.45 /.test(t.VERSION), t.VERSION);
+    check('1 version', /^v2\.53 /.test(t.VERSION), t.VERSION);
     var html = fs.readFileSync(SRC, 'utf8');
-    check('1 ⋯ is 44 px with -2 px margins (net 40 px, like the old notes button)', html.indexOf('.act.more { width: 44px; height: 44px; margin: 0 -2px 0 -2px; }') !== -1);
+    check('1 ⋯ is a plain 44 px row button (no width rule of its own)', html.indexOf('.act.more {') === -1 && /\.act \{[^}]*width: 44px; height: 44px/.test(html));
     check('1 menu rows are at least 44 px tall', /\.rmrow \{[^}]*min-height: 48px/.test(html));
     var rm = q(tab, '#rowmenu');
     check('1 menu is a modal dialog named by its title', rm.getAttribute('role') === 'dialog' && rm.getAttribute('aria-modal') === 'true' && rm.getAttribute('aria-labelledby') === 'rmTitle' && rm.hidden);
@@ -131,7 +131,7 @@ tests.push(function () {
     check('2 Recent song row has heart, +, ⋯', !!r && r.querySelectorAll('.acts button').length === 3 && !!r.querySelector('.acts .heart') &&
       !!r.querySelector('button[aria-label="Add “Song One” to queue"]') && !!r.querySelector('.acts button.more'), r && r.querySelectorAll('.acts button').length);
     var mb = more(tab, 'spotify:track:t1');
-    check('2 ⋯ label and popup', mb.getAttribute('aria-label') === 'More for “Song One”' && mb.getAttribute('aria-haspopup') === 'dialog' && mb.type === 'button');
+    check('2 ⋯ label and popup', mb.getAttribute('aria-label') === 'More for “Song One” by Followed Artist, New Artist' && mb.getAttribute('aria-haspopup') === 'dialog' && mb.type === 'button');
     var before = keys(store);
     click(tab, mb);
     check('2 menu open', menuOpen(tab));
@@ -266,6 +266,9 @@ tests.push(function () {
     return H.wait(200).then(function () {
       check('7 album view opened', t.state.detail && t.state.detail.item.id === 'alb1');
       check('7 no album request while catalog is paused', reqs(tab, 'GET', /^\/albums\//).length === 0, tab.calls);
+      var sr = reqs(tab, 'GET', /^\/search$/);
+      check('7 the usual search fallback instead: one search request', sr.length === 1 && /type=track/.test(sr[0].q) && /album%3A%22Big\+Album%22|album%3A%22Big%20Album%22/.test(sr[0].q), tab.calls);
+      check('7 nothing else but the heart check', web(tab).every(function (c) { return c.path === '/search' || c.path === '/me/library/contains'; }), web(tab));
     });
   });
 });
@@ -434,6 +437,7 @@ tests.push(function () {
     store.setItem = orig;
     check('16 no crash on a full store', !threw);
     check('16 checkbox shows the + is still on', box.checked);
+    check('16 says it couldn\'t be saved', tab.toasts().indexOf('Couldn’t save that setting: this phone’s storage is full.') !== -1, tab.toasts());
     check('16 nothing stored, + still shown', store.getItem('lib-row-plus') === null && t.rowPlusShown() && !!row(tab, 'spotify:track:t1').querySelector('button[aria-label="Add “Song One” to queue"]'));
     click(tab, more(tab, 'spotify:track:t1'));
     check('16 menu still opens', menuOpen(tab));
@@ -450,6 +454,115 @@ tests.push(function () {
     check('17 menu from a mapped search row (album known from the answer)', opts(tab).indexOf('Go to album · Big Album') !== -1, opts(tab));
     check('17 no requests', tab.calls.length === 0, tab.calls);
     t.closeRowMenu();
+  });
+});
+
+// 18. Mark does what its label said even if the mark changed while the menu was open (the player check clears marks);
+//     focus lands on the redrawn row's ⋯.
+tests.push(function () {
+  return setup(store0({ filter: 'podcasts' })).then(function (tab) {
+    var t = tab.t();
+    var mb = more(tab, 'spotify:episode:e1');
+    click(tab, mb); click(tab, opt(tab, 'mark'));
+    var a = d(tab).activeElement;
+    check('18 list redrawn by the mark', !d(tab).body.contains(mb));
+    check('18 focus on the redrawn row\'s ⋯', !!a && a === more(tab, 'spotify:episode:e1'), a && a.outerHTML);
+    click(tab, more(tab, 'spotify:episode:e1'));
+    check('18 label says unplayed', opt(tab, 'mark').textContent === 'Mark as unplayed');
+    t.writeMark('spotify:episode:e1', null); t.marksChanged();   // what the player check does when the episode plays again
+    check('18 menu stays open over the redraw', menuOpen(tab));
+    click(tab, opt(tab, 'mark'));
+    var m = t.markOf('spotify:episode:e1');
+    check('18 Mark as unplayed leaves it unplayed (not flipped to played)', !(m && m.played), m);
+    check('18 toast says unplayed', /as unplayed on this phone/.test(tab.toasts().slice(-1)[0] || ''), tab.toasts());
+    check('18 focus back on the row\'s ⋯ after Escape-free close', d(tab).activeElement === more(tab, 'spotify:episode:e1'));
+    click(tab, more(tab, 'spotify:episode:e1'));
+    t.renderList();   // a redraw while open: Close still finds the row
+    click(tab, q(tab, '#rmClose'));
+    check('18 Close after a redraw: focus on the new ⋯', d(tab).activeElement === more(tab, 'spotify:episode:e1'));
+  });
+});
+
+// 19. Opening a song's own album (whose songs carry no album or artist ids) doesn't take Go to album / artist away elsewhere.
+tests.push(function () {
+  var store = store0({ savedAlb9: true });
+  store.setItem('lib-cache-album:alb9', JSON.stringify({ at: Date.now() - 60000, total: 1, items: [{ id: 't2', uri: 'spotify:track:t2', name: 'Song Two', artists: [{ name: 'Followed Artist' }], track_number: 1, disc_number: 1, duration_ms: 1000 }] }));
+  return setup(store).then(function (tab) {
+    var t = tab.t();
+    click(tab, more(tab, 'spotify:track:t2'));
+    var before = opts(tab);
+    click(tab, opt(tab, 'album'));
+    return H.wait(200).then(function () {
+      click(tab, more(tab, 'spotify:track:t2'));
+      check('19 inside the album: artist from the album, no Go to album', !opt(tab, 'album') && opts(tab).indexOf('Go to artist · Followed Artist') !== -1, opts(tab));
+      t.closeRowMenu();
+      t.goBack(); return H.wait(200);
+    }).then(function () {
+      click(tab, more(tab, 'spotify:track:t2'));
+      check('19 back in Recent: same menu as before', opts(tab).join('|') === before.join('|') && !!opt(tab, 'album'), [before, opts(tab)]);
+    });
+  });
+});
+
+// 20. Double tap: a real tap within 400 ms of opening or closing is ignored (on the sheet and on the page behind).
+tests.push(function () {
+  return setup(store0()).then(function (tab) {
+    var t = tab.t();
+    click(tab, more(tab, 'spotify:track:t1'));
+    check('20 a real tap right after opening is too soon', t.rmTooSoon({ isTrusted: true }));
+    check('20 script clicks are never held back', !t.rmTooSoon({ isTrusted: false }) && !t.rmTooSoon(null));
+    t.rmGuard.at = Date.now() - 500;
+    check('20 after 400 ms taps count again', !t.rmTooSoon({ isTrusted: true }));
+    t.rmGuard.ms = 1e9;   // keep the window open for the trusted-tap checks below
+    var ev = { isTrusted: true, defaultPrevented: false, preventDefault: function () { this.defaultPrevented = true; } };
+    var blocked = { isTrusted: true };
+    // A real event can't be made in jsdom; check the guard the handlers use, then a script click still works.
+    check('20 guard used by the menu rows', t.rmTooSoon(ev) && t.rmTooSoon(blocked));
+    t.rmGuard.ms = 400;
+    click(tab, opt(tab, 'queue'));
+    return H.wait(60).then(function () {
+      check('20 script click on a row still runs', reqs(tab, 'POST', /queue/).length === 1, tab.calls);
+    });
+  });
+});
+
+// 21. Back (popstate) closes the menu.
+tests.push(function () {
+  return setup(store0()).then(function (tab) {
+    click(tab, more(tab, 'spotify:track:t1'));
+    tab.w.dispatchEvent(new tab.w.PopStateEvent('popstate', { state: null }));
+    check('21 Back closes the menu', !menuOpen(tab));
+    check('21 page unlocked', !d(tab).body.classList.contains('sheetopen'));
+  });
+});
+
+// 22. Scroll lock: the page behind stays still while the menu is open (main's sheetopen).
+tests.push(function () {
+  return setup(store0()).then(function (tab) {
+    click(tab, more(tab, 'spotify:track:t1'));
+    check('22 locked while open', d(tab).body.classList.contains('sheetopen'));
+    d(tab).dispatchEvent(new tab.w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    check('22 unlocked after close', !d(tab).body.classList.contains('sheetopen'));
+  });
+});
+
+// 23. The setting redraws an open song list (not only library lists), keeping the list.
+tests.push(function () {
+  var store = store0({ savedAlb9: true });
+  return setup(store).then(function (tab) {
+    var t = tab.t();
+    click(tab, more(tab, 'spotify:track:t2')); click(tab, opt(tab, 'album'));
+    return H.wait(200).then(function () {
+      var r = row(tab, 'spotify:track:x9');
+      check('23 album row has + first', !!r && !!r.querySelector('button[aria-label^="Add “"]'));
+      t.openDiag();
+      var box = q(tab, '#rowPlus');
+      box.checked = false; box.dispatchEvent(new tab.w.Event('change', { bubbles: true }));
+      t.closeDiag();
+      r = row(tab, 'spotify:track:x9');
+      check('23 open song list redrawn without +', t.state.detail && t.state.detail.item.id === 'alb9' && !!r && !r.querySelector('button[aria-label^="Add “"]') && !!r.querySelector('button.more'));
+      check('23 no requests for the redraw', cat(tab).length === 0, cat(tab));
+    });
   });
 });
 

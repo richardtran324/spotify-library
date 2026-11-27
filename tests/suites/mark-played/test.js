@@ -74,7 +74,7 @@ function click(tab, node) { node.dispatchEvent(new tab.w.MouseEvent('click', { b
 function clUris(tab) { return qa(tab, 'ul.cl li[data-puri]').map(function (li) { return li.getAttribute('data-puri'); }); }
 function listRow(tab, id) { return q(tab, 'ul.list li[data-puri="spotify:episode:' + id + '"]'); }
 function rowSub(tab, id) { var r = listRow(tab, id); return r ? r.querySelector('.sub').textContent : null; }
-// v2.45: Episode notes moved from its own row button into the row's ⋯ menu: open the menu, return its Notes row.
+// v2.53: Episode notes moved from its own row button into the row's ⋯ menu: open the menu, return its Notes row.
 function menuNotes(tab, more) { if (!more) return null; click(tab, more); return q(tab, '#rmList [data-act="notes"]'); }
 function notesBtn(tab, id) { return menuNotes(tab, q(tab, 'ul.list li[data-puri="spotify:episode:' + id + '"] button.more')); }
 function markBtn(tab) { return q(tab, '#notesMark'); }

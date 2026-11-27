@@ -293,9 +293,8 @@ li.dischead h3 { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; t
 }
 .notes-text .ts:active { background: var(--chip); }
 .notes-note { font-size: 0.85rem; color: var(--muted); margin: 0; }
-/* v2.45: ⋯ on song and episode rows, and its menu. The button is 44 px but takes the 40 px (plus gap) the notes
-   button used: it starts at the ＋'s edge and reaches 2 px into the side margin, so names keep their room. */
-.act.more { width: 44px; height: 44px; margin: 0 -2px 0 -2px; }
+/* v2.53: ⋯ on song and episode rows (a plain 44 px .act, so episode rows keep the width the notes button had;
+   song rows get one more button, about 46 px), and its menu. */
 #rmTitle { overflow-wrap: anywhere; }
 .rm-meta { font-size: 0.85rem; color: var(--muted); margin-top: -6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rm-meta:empty { display: none; }
@@ -835,7 +834,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     queueHide: 'lib-queue-hide', // false shows the whole queue; anything else hides Spotify's own additions
     theme: 'lib-theme',          // 'light' | 'dark'; unset = match the phone
     searchFirst: 'lib-search-first', // the group shown first in Search Spotify → All
-    rowPlus: 'lib-row-plus',     // v2.45: false hides ＋ on song and episode rows (Add to queue stays in the ⋯ menu); unset = shown
+    rowPlus: 'lib-row-plus',     // v2.53: false hides ＋ on song and episode rows (Add to queue stays in the ⋯ menu); unset = shown
     lastplay: 'lib-lastplay',    // v2.10: {item, context, positionMs, deviceId, at[, shuffle, repeat, frozenAt]}: the last song or episode seen playing
     epHistory: 'lib-ep-history', // v2.11: [{uri, id, name, show:{id, name, images}, duration_ms, positionMs, played, at[, checkedAt]}], newest first
     epNotes: 'lib-ep-notes',     // v2.18: [{id, t, at[, cut]}], newest first: notes of episodes you opened or played (40, 4,000 characters each)
@@ -1015,7 +1014,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     back15: svg('<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M5.2 8.5A8 8 0 1 1 4 12"/><path fill="currentColor" d="M3.5 4v6h6z"/><text x="12.5" y="15.5" font-size="7.5" font-weight="700" text-anchor="middle" fill="currentColor" font-family="-apple-system, system-ui, sans-serif">15</text>'),
     fwd30: svg('<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M18.8 8.5A8 8 0 1 0 20 12"/><path fill="currentColor" d="M20.5 4v6h-6z"/><text x="11.5" y="15.5" font-size="7.5" font-weight="700" text-anchor="middle" fill="currentColor" font-family="-apple-system, system-ui, sans-serif">30</text>'),
     check: svg('<path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M5 12.5l4.5 4.5L19 7.5"/>'),   // v2.21
-    more: svg('<circle cx="5.5" cy="12" r="1.9" fill="currentColor"/><circle cx="12" cy="12" r="1.9" fill="currentColor"/><circle cx="18.5" cy="12" r="1.9" fill="currentColor"/>'),   // v2.45
+    more: svg('<circle cx="5.5" cy="12" r="1.9" fill="currentColor"/><circle cx="12" cy="12" r="1.9" fill="currentColor"/><circle cx="18.5" cy="12" r="1.9" fill="currentColor"/>'),   // v2.53
     notes: svg('<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M6 3h9l4 4v14H6z"/><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" d="M9 11h7M9 14.5h7M9 18h4"/>'),   // v2.18
     share: svg('<path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 3v12M8 7l4-4 4 4M8 10H6v11h12V10h-2"/>'),   // v2.20
     volume: svg('<path fill="currentColor" d="M4 9h4l5-4v14l-5-4H4z"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12"/>')
@@ -1706,11 +1705,16 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     return best.url || '';
   }
   function names(list) { return (list || []).map(function (x) { return x && x.name; }).filter(Boolean).join(', '); }
-  var rowRaw = {};   // v2.45: song or episode URI -> the Spotify object its row was mapped from (references only, this visit)
+  var rowRaw = {};   // v2.53: song or episode URI -> the Spotify object its row was mapped from (references only, this visit)
+  // v2.53: a poorer copy (an album's own songs carry no album, saved lists keep artist names only) never replaces a richer one.
+  function rawScore(t) {
+    return (t.type ? 1 : 0) + (t.album && t.album.id ? 2 : 0) + ((t.artists || []).some(function (a) { return a && a.id; }) ? 2 : 0) + (t.show && t.show.id ? 1 : 0);
+  }
+  function keepRaw(t) { var old = rowRaw[t.uri]; if (!old || old === t || rawScore(t) >= rawScore(old)) rowRaw[t.uri] = t; }
   function mapTrack(t, o) {
     o = o || {};
     if (!t || !t.uri || !t.id) return null;
-    rowRaw[t.uri] = t;   // v2.45: album and artists for the row menu (a reference, this visit only)
+    keepRaw(t);   // v2.53: album and artists for the row menu (a reference, this visit only)
     var ep = t.type === 'episode';
     var by = ep ? ((t.show && t.show.name) || 'Podcast') : names(t.artists);
     var sub = o.sub != null ? o.sub : ((ep ? 'Episode · ' : 'Song · ') + by + (!ep && t.album && t.album.name ? ' · ' + t.album.name : ''));
@@ -2162,7 +2166,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // showName: true uses the episode's show name (saved episodes); otherwise the release date.
   function mapEpisode(e, showName) {
     if (!e || !e.uri || !e.id) return null;
-    rowRaw[e.uri] = e;   // v2.45: for the row menu (Add to playlist), this visit only
+    keepRaw(e);   // v2.53: for the row menu (Add to playlist), this visit only
     keepNotes(e);   // v2.18: Saved episodes and search answers carry the notes
     var rs = resumeOf(e);
     var dur = e.duration_ms || 0;
@@ -2434,10 +2438,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // ---------- Mark as played / unplayed (v2.21; on this phone only, see markOf) ----------
   // ep: {uri, name, sp}, sp being played as known without this phone's mark.
   function shownPlayed(ep) { var m = markOf(ep.uri); return m ? m.played : !!ep.sp; }
-  function toggleMark(ep) {
+  function toggleMark(ep, want) {   // want (v2.53, row menu): the value to set; without it the mark flips
     if (!ep || !/^spotify:episode:/.test(ep.uri || '')) return;
     var before = markOf(ep.uri);
-    var played = !shownPlayed(ep);
+    var played = typeof want === 'boolean' ? want : !shownPlayed(ep);
     var m = { played: played, at: Date.now() };
     var p = state.player;
     if (p && p.item && p.item.uri === ep.uri) m.pos = Math.round(curPos());   // on screen now: only a play away from here clears it
@@ -4669,7 +4673,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.45 (2026-11-27)';
+  var VERSION = 'v2.53 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -4698,7 +4702,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var rw = rewindOn() ? 'on' : 'off';   // v2.44
     document.querySelectorAll('input[name="rewind"]').forEach(function (r) { r.checked = r.value === rw; });
     $('searchFirst').value = searchFirst();
-    $('rowPlus').checked = rowPlusShown();   // v2.45
+    $('rowPlus').checked = rowPlusShown();   // v2.53
     $('slInfo').textContent = slStatsText();   // v2.15
   }
   var diagReturn = null;   // audit: A11Y-5 focus goes back to the opener on close
@@ -6153,9 +6157,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (canSave(item)) out.push(heartBtn(item));
     var song = item.kind === 'track' || item.kind === 'episode';
     if (song && rowPlusShown()) out.push(iconBtn(ICON.plus, 'Add “' + item.name + '” to queue', function () { addToQueue(item); }));
-    // v2.45: ⋯ holds the rest (Episode notes moved in from its own row button, so episode rows keep three buttons).
+    // v2.53: ⋯ holds the rest (Episode notes moved in from its own row button, so episode rows keep three buttons).
     if (song && item.uri) {
-      var mb = iconBtn(ICON.more, 'More for “' + item.name + '”', function (ev) { openRowMenu(item, ev.currentTarget); });
+      var by = item.kind === 'episode' ? (item.showName || '') : (item.artist || '');
+      var mb = iconBtn(ICON.more, 'More for “' + item.name + '”' + (by ? ' by ' + by : ''), function (ev) { openRowMenu(item, ev.currentTarget); });
       mb.className = 'act more';
       mb.setAttribute('aria-haspopup', 'dialog');
       out.push(mb);
@@ -6165,13 +6170,18 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     // v2.12: no › button; the row itself opens albums, playlists, podcasts and artists.
     return out;
   }
-  // ---------- row menu (v2.45) ----------
+  // ---------- row menu (v2.53) ----------
   // ⋯ on song and episode rows (every list, search, Recent, Home) opens a small sheet: Add to queue, Add to
   // playlist, Go to album, Go to artist, Episode notes, Mark as played, Share, Copy link, Open in Spotify.
   // Opening it sends nothing. Each action reuses the page's existing path and costs what it costs there: Go to
   // album opens the album like any album row (nothing when it's saved on the phone or kept for this visit), Go
   // to artist is v2.19's artist page, Add to playlist is v2.26's sheet, notes and marks are v2.18 and v2.21.
   var rowMenu = null;   // {item, raw, ret} while the row menu is open
+  // A fast double tap on ⋯ (or on a menu row) would land its second tap on the sheet, or on the list behind it once
+  // the sheet closes. Real taps within this time of the menu opening or closing are ignored (made-up clicks, such as
+  // a script's, aren't: they have no second tap).
+  var rmGuard = { at: 0, ms: 400 };
+  function rmTooSoon(ev) { return !!(ev && ev.isTrusted) && Date.now() - rmGuard.at < rmGuard.ms; }
   function rowPlusShown() { return get(K.rowPlus) !== false; }
   // The Spotify object a row was mapped from; rows built from the page's own records (podcast history, Latest)
   // get a small stand-in with what Add to playlist needs.
@@ -6219,7 +6229,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }
     if (ep && item.id) {
       out.push({ act: 'notes', label: 'Episode notes' });
-      out.push({ act: 'mark', label: shownPlayed(notesEp(item)) ? 'Mark as unplayed' : 'Mark as played' });
+      var was = shownPlayed(notesEp(item));   // the label says what the tap does, even if the mark changes meanwhile
+      out.push({ act: 'mark', label: was ? 'Mark as unplayed' : 'Mark as played', played: !was });
     }
     var url = shareUrl(item);
     if (url) {
@@ -6245,26 +6256,36 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       box.appendChild(b);
     });
     $('rowmenu').hidden = false;
+    rmGuard.at = Date.now();
+    syncSheetLock();   // main's scroll lock for open sheets
     $('rmClose').focus();
+  }
+  // Back to the row's ⋯; if the list was redrawn meanwhile (a mark, the player check), the same row's new ⋯.
+  function rowMenuRefocus(ret, uri) {
+    var r = ret && document.body.contains(ret) ? ret : null;
+    if (!r && uri) r = document.querySelector('li[data-puri="' + String(uri).replace(/["\\]/g, '') + '"] button.more');
+    if (r && r.focus) r.focus({ preventScroll: true });
   }
   function closeRowMenu(restore) {
     if ($('rowmenu').hidden) return;
     $('rowmenu').hidden = true;
-    var r = rowMenu && rowMenu.ret;
+    rmGuard.at = Date.now();
+    syncSheetLock();
+    var r = rowMenu && rowMenu.ret, uri = rowMenu && rowMenu.item.uri;
     rowMenu = null;   // the old rows stay until the next open: removing Open in Spotify mid-tap would cancel its link
-    if (restore !== false && r && r.focus && document.body.contains(r)) r.focus({ preventScroll: true });
+    if (restore !== false) rowMenuRefocus(r, uri);
   }
   // Runs straight from the tap (Share needs that), after closing the menu.
   function rowMenuDo(o, ev) {
     var v = rowMenu;
     if (!v) return;
+    if (rmTooSoon(ev)) { ev.preventDefault(); return; }   // the second tap of a double tap on ⋯
     var item = v.item, raw = v.raw, ret = v.ret;
-    var back = o.act === 'queue' || o.act === 'mark' || o.act === 'share' || o.act === 'copy';
-    closeRowMenu(back);
-    if (o.act === 'queue') return addToQueue(item);
-    if (o.act === 'mark') return toggleMark(notesEp(item));
-    if (o.act === 'share') return shareLink(item.name + (rowBy(item, raw) ? ' · ' + rowBy(item, raw) : ''), o.url);
-    if (o.act === 'copy') return copyLink(o.url);
+    closeRowMenu(false);
+    if (o.act === 'queue') { addToQueue(item); return rowMenuRefocus(ret, item.uri); }
+    if (o.act === 'mark') { rowMark(item, o.played); return rowMenuRefocus(ret, item.uri); }   // the mark redraws the list
+    if (o.act === 'share') { shareLink(item.name + (rowBy(item, raw) ? ' · ' + rowBy(item, raw) : ''), o.url); return rowMenuRefocus(ret, item.uri); }
+    if (o.act === 'copy') { copyLink(o.url); return rowMenuRefocus(ret, item.uri); }
     if (o.act === 'open') return;   // the link itself opens Spotify
     if (ev) ev.preventDefault();
     if (o.act === 'addpl') return openPl({ mode: 'add', item: raw, q: '' }, ret);
@@ -6279,6 +6300,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       var bk = document.querySelector('.dhead .back');
       if (bk) bk.focus({ preventScroll: true });
     }
+  }
+  // Mark as played / unplayed to the value the menu showed. If this phone's storage is full the mark holds for this
+  // visit only, and the toast says so.
+  function rowMark(item, played) {
+    var ep = notesEp(item);
+    toggleMark(ep, played);
+    var st = get(K.epMarks), m = st && st[ep.uri];
+    if (played ? !(m && m.played) : (m && m.played)) toast('Marked for this visit only: this phone’s storage is full.');
   }
   function coverFor(item, extra) {
     var round = item.kind === 'artist' ? ' round' : '';
@@ -9558,7 +9587,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     closeQueue(false);
     closeNp(false);
     closePl(); closePerm();   // v2.28: Add to playlist and the permission sheet close on sign-out too
-    closeRowMenu(false); rowRaw = {};   // v2.45
+    closeRowMenu(false); rowRaw = {};   // v2.53
     paintPlayer();
   }
   function renderSetup(errMsgText) {
@@ -9929,7 +9958,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
     if (!$('sheet').hidden) closeSheet();
-    else if (!$('rowmenu').hidden) closeRowMenu();   // v2.45
+    else if (!$('rowmenu').hidden) closeRowMenu();   // v2.53
     else if (!$('perm').hidden) closePerm();   // v2.25
     else if (!$('plsheet').hidden) closePl();   // v2.26
     else if (!$('notes').hidden) closeNotes();   // v2.18
@@ -9948,12 +9977,24 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   $('notesClose').addEventListener('click', function () { closeNotes(); });   // v2.18
   $('notesBack').addEventListener('click', function () { closeNotes(); });
   $('permGo').addEventListener('click', permGo);   // v2.25
-  $('rmClose').addEventListener('click', function () { closeRowMenu(); });   // v2.45
-  $('rmBack').addEventListener('click', function () { closeRowMenu(); });
-  $('rowPlus').addEventListener('change', function () {
-    if ($('rowPlus').checked) del(K.rowPlus); else set(K.rowPlus, false);
-    $('rowPlus').checked = rowPlusShown();   // a full store keeps the + (and says so here)
-    if (state.started) renderList();
+  $('rmClose').addEventListener('click', function (ev) { if (!rmTooSoon(ev)) closeRowMenu(); });   // v2.53
+  $('rmBack').addEventListener('click', function (ev) { if (!rmTooSoon(ev)) closeRowMenu(); });
+  // v2.53: right after the menu closes, a real tap on the page behind (the double tap's second half) does nothing.
+  document.addEventListener('click', function (ev) {
+    if (!$('rowmenu').hidden || !rmTooSoon(ev)) return;
+    if (ev.target && ev.target.closest && ev.target.closest('.sheet')) return;
+    ev.preventDefault(); ev.stopPropagation();
+  }, true);
+  $('rowPlus').addEventListener('change', function () {   // v2.53
+    var want = $('rowPlus').checked;
+    if (want) del(K.rowPlus); else if (!set(K.rowPlus, false)) toast('Couldn’t save that setting: this phone’s storage is full.');
+    $('rowPlus').checked = rowPlusShown();   // a full store keeps the +, and the box shows it
+    if (!state.started) return;
+    var d = state.detail, y = window.pageYOffset || document.documentElement.scrollTop || 0;
+    if (!d) renderList();
+    else if (d.kind === 'artist') renderArtist(d);
+    else if ($('dlist')) paintDetailList();   // an open song list redraws its rows in place
+    window.scrollTo(0, y);
   });
   $('permClose').addEventListener('click', function () { closePerm(); });
   $('permBack').addEventListener('click', function () { closePerm(); });
@@ -10067,6 +10108,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // Back (button or swipe) closes one view per history entry: an album opened from an artist, then the artist,
   // then the list. Entries are {detail, depth}; older ones without depth count as 1.
   window.addEventListener('popstate', function () {
+    closeRowMenu(false);   // v2.53: Back (or the back swipe) closes the row menu with the view under it
     var cur = state.detail ? state.detailStack.length + 1 : 0;
     var want = location.hash === '#detail' ? Math.max(1, (history.state && history.state.depth) || 1) : 0;
     if (want >= cur) {
