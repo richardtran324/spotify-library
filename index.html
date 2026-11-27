@@ -4840,6 +4840,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     opts = opts || {};
     var y = window.pageYOffset || document.documentElement.scrollTop || 0;
     var old = state.detail;
+    // audit: A11Y-2 — the focused row or card is removed by the redraw; remember it so Back can return to it
+    var fa0 = document.activeElement;
+    var retHref = (fa0 && fa0.matches && fa0.matches('#main a.item, #main a.clcard')) ? fa0.getAttribute('href') : null;
     dropEmbed(old);   // v2.27
     var d = item.kind === 'artist'
       ? { kind: 'artist', item: item, img: '', items: [], offset: 0, more: false, total: null, loading: false, error: '', lastGot: 0 }
@@ -4851,6 +4854,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       d.returnScroll = y; d.pushed = false;
     } else if (old) {
       d.returnScroll = old.returnScroll; d.pushed = old.pushed;   // takes over the replaced view's history entry
+      if (!retHref) retHref = old.retHref;   // audit: A11Y-2 — and the row Back returns focus to
     } else {
       state.detailStack = [];
       d.returnScroll = y; d.pushed = false;
@@ -4859,8 +4863,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!d.pushed) {
       try { history.pushState({ detail: true, depth: state.detailStack.length + 1 }, '', '#detail'); d.pushed = true; } catch (e) { d.pushed = false; }
     }
+    d.retHref = retHref;
     renderDetail();
     window.scrollTo(0, 0);
+    // audit: A11Y-2 — focus fell to the page (the row was redrawn away): move it to Back, as openArtistPage does.
+    // Focus that is still in the page (a sheet, the player bar) is left alone.
+    if (!fa0 || fa0 === document.body || !document.body.contains(fa0)) { var bk = document.querySelector('.dhead .back'); if (bk) bk.focus({ preventScroll: true }); }
     if (canSave(item)) requestSaved([item.uri]);
     if (d.kind === 'artist') loadArtist(d);
     else startDetail(d);
@@ -4880,6 +4888,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       state.detail = state.detailStack.pop();
       renderDetail();   // from what that view already loaded; nothing is asked again
       window.scrollTo(0, d.returnScroll || 0);
+      refocusRow(d);   // audit: A11Y-2
       return;
     }
     state.detail = null;
@@ -4887,6 +4896,16 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (location.hash === '#detail') { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} }
     renderList();
     window.scrollTo(0, d.returnScroll || 0);
+    refocusRow(d);   // audit: A11Y-2
+  }
+  // audit: A11Y-2 — after Back, focus the row or card the closed view was opened from, if focus fell to the page.
+  // Compares hrefs in a loop (no CSS.escape needed).
+  function refocusRow(d) {
+    var a = document.activeElement;
+    if (a && a !== document.body && document.body.contains(a)) return;
+    if (!d.retHref) return;
+    var ls = document.querySelectorAll('#main a.item, #main a.clcard');
+    for (var i = 0; i < ls.length; i++) if (ls[i].getAttribute('href') === d.retHref) { ls[i].focus({ preventScroll: true }); return; }
   }
   function backButton() {
     var below = state.detailStack[state.detailStack.length - 1];
