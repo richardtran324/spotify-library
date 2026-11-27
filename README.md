@@ -51,6 +51,11 @@ Optional: Share → **Add to Home Screen**. The page brings its own icon (`apple
   - **Back** returns to the link; pressing **Done** (or **Search**) on the keyboard opens it again. Clear the box to get your list or search back.
   - Short `spotify.link` links can't be opened (the page would need to follow Spotify's redirect); the page says so and offers **Open in Spotify**. Links to anything else (Liked Songs, audiobooks, profiles, other sites such as YouTube) show a short message and are never searched by name.
   - The page never reads the clipboard on its own; paste into the box. Nothing is stored on the phone.
+- **Compact view (v2.43):** more of the list fits on screen.
+  - The filter chips sit in one row that scrolls sideways instead of wrapping onto a second row. The chip you picked is always scrolled into view (including Search Spotify, the last one).
+  - Scrolling down a list (including a song list) slides the **Library** title row and the status line out of view; the search box and chips stay. Scrolling up, or getting near the top, brings them back. They stay put while you're typing (the keyboard is up), and they always show while the wake message ("Press play in Control Center…", "Spotify didn't wake up yet") is up. With **Reduce Motion** on, they appear and disappear instantly instead of sliding.
+  - **Compact player** (**Diagnostics → Settings**, off by default): the Now Playing bar becomes one row: cover, title, **Play/Pause** and **Next**. Up next, the heart, Shuffle, Previous and Repeat stay on the full **Now Playing** screen (tap the title). The space kept free at the bottom of the page, and toasts, follow the shorter bar. While Spotify is asleep, the bar's message is cut to one line; the full message is on the Now Playing screen. The setting is stored only on this phone; if Safari won't store it, it applies until you reload and the page says so.
+  - None of this sends anything to Spotify.
 - **Buttons on each row** (the row itself opens or plays the item, as above):
   - **Heart:** like a song, or save an album or someone else's playlist. A filled heart means it's in your library. Removing something shows **Undo** for a few seconds. Your own playlists, artists and Liked Songs have no heart.
   - **+:** add a song to the queue. Spotify must be open on a device.
@@ -252,7 +257,7 @@ Add `?play=…` to the page's address and the page plays that item when it opens
 
 ### Appearance
 
-**Diagnostics → Settings → Appearance:** **Match phone** (default), **Light** or **Dark**. Light and Dark apply right away and override the phone's setting.
+**Diagnostics → Settings → Appearance:** **Match phone** (default), **Light** or **Dark**. Light and Dark apply right away and override the phone's setting. **Compact player** (v2.43, below Appearance) makes the Now Playing bar one row; see **Compact view** above. Diagnostics' report lists it after Appearance.
 
 ### Spotify's request limit (v2.13, per part since v2.14)
 
