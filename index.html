@@ -4769,6 +4769,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (at) at.albumName = parent.name || '';   // v2.22: Find in list matches the album name
       return at;
     }
+    if (parent.kind === 'liked') likedCount(it);   // v2.28: every Liked Songs entry counts (local files too), to know when all are in
     if (it.is_local) return null;
     var t = it.item || it.track;
     if (!t) return null;
@@ -6647,11 +6648,22 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // artist", so Play, Shuffle and a tapped song send a list of song URIs (the first LIKEDBY_PLAY): playback
   // continues through those songs only, and Now Playing shows no album or playlist for them.
   var LIKEDBY_PLAY = 100;
-  var likedSeen = { me: '', by: {}, n: 0 };   // uri -> {m, i}: Liked Songs rows mapped this visit (i: first seen)
+  // by: uri -> {m, i}: Liked Songs rows mapped this visit (i: first seen). all: every entry seen, local files and
+  // songs without an ID included (they have no row), so `count` can reach Liked Songs' total.
+  var likedSeen = { me: '', by: {}, n: 0, all: {}, count: 0 };
+  function likedFor() {
+    var me = state.data && state.data.me, id = (me && me.id) || '';
+    if (likedSeen.me !== id) likedSeen = { me: id, by: {}, n: 0, all: {}, count: 0 };   // another account: start over
+    return likedSeen;
+  }
+  function likedCount(it) {
+    var t = it && (it.track || it.item), ls = likedFor();
+    var key = (t && t.uri) || ((it && it.added_at) || '') + '\n' + ((t && t.name) || '');
+    if (!ls.all[key]) { ls.all[key] = true; ls.count++; }
+  }
   function likedNote(m, t) {
     m.artistIds = (t.artists || []).map(function (a) { return a && a.id ? String(a.id) : ''; }).filter(Boolean);
-    var me = state.data && state.data.me, id = (me && me.id) || '';
-    if (likedSeen.me !== id) likedSeen = { me: id, by: {}, n: 0 };   // another account: start over
+    likedFor();
     var w = likedSeen.by[m.uri];
     if (w) w.m = m; else likedSeen.by[m.uri] = { m: m, i: likedSeen.n++ };
   }
@@ -6669,12 +6681,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (d.items.length && !d.next && !d.loading && !d.error) best = d;
     });
     if (best) return { items: best.items, complete: true, total: best.items.length };
-    var me = data.me, id = (me && me.id) || '', list = [];
+    var me = data.me, id = (me && me.id) || '', list = [], n = 0;
     if (likedSeen.me === id) {
       for (var u in likedSeen.by) list.push(likedSeen.by[u]);
       list.sort(function (a, b) { return cmpDesc(a.m.added || '', b.m.added || '') || a.i - b.i; });   // newest liked first
+      n = likedSeen.count;   // every entry, local files included
     }
-    var n = list.length;
     return { items: list.map(function (w) { return w.m; }), complete: total != null && n >= total, total: total };
   }
   // {songs, complete, loaded, total}, or null to show nothing (not signed in, or no Liked Songs at all).
@@ -6740,6 +6752,17 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // replace: from the artist's song list, Liked Songs takes its place, so Back returns to the artist page.
   function findInLiked(name, replace) {
     if (!state.data) return;
+    // Liked Songs already open under this view: go back to it (nothing asked again) instead of opening it anew.
+    var st = state.detailStack;
+    for (var i = st.length - 1; i >= 0; i--) {
+      var u = st[i];
+      if (!u || u.kind === 'artist' || !u.item || u.item.kind !== 'liked' || u.src !== 'api' || u.restricted) continue;
+      u.find = name || '';
+      var n = st.length - i, hist = location.hash === '#detail' && st.slice(i + 1).concat([state.detail]).every(function (v) { return v.pushed; });
+      if (hist) { try { history.go(-n); return; } catch (e) {} }   // popstate closes the views above it
+      while (n-- > 0) closeDetail();
+      return;
+    }
     openDetail(likedDetailItem(), { push: !replace && !!state.detail });
     var d = state.detail;
     d.find = name || '';
