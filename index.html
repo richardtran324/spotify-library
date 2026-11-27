@@ -2770,20 +2770,41 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       uri: it.uri, id: it.id, kind: it.type, name: it.name || 'Untitled',
       by: ep ? ((it.show && it.show.name) || 'Podcast') : names(it.artists),
       img: img(ep ? (it.images || (it.show && it.show.images)) : (it.album && it.album.images)),
-      url: spotifyUrl(it), pos: Math.round(curPos()), at: at
+      url: spotifyUrl(it), pos: bmPos(it), at: at
     };
     a.unshift(b);
     writeBookmarks(a);
     toast('Bookmarked “' + b.name + '” at ' + fmtTime(b.pos));
     bmChanged();
   }
+  // The spot to save: where the progress bar is, but at least 5 s before the end (a spot at the very end would just
+  // start the next song), or 0:00 for anything shorter.
+  function bmPos(it) {
+    var pos = Math.round(curPos()), dur = it.duration_ms || 0;
+    return dur ? Math.min(pos, Math.max(0, dur - 5000)) : pos;
+  }
+  // Removals since the Undo toast appeared: one Undo brings them all back.
+  var bmRemoved = [], bmToastMsg = null;
   function removeBookmark(b) {
     writeBookmarks(readBookmarks().filter(function (x) { return !(x.at === b.at && x.uri === b.uri); }));
-    toast('Bookmark removed', null, { text: 'Undo', fn: function () {
+    var t = $('toast');
+    if (t.hidden || !bmToastMsg || t.firstChild !== bmToastMsg) bmRemoved = [];   // a new toast: a new Undo list
+    bmRemoved.push(b);
+    var gone = bmRemoved.slice();
+    toast(gone.length > 1 ? gone.length + ' bookmarks removed' : 'Bookmark removed', null, { text: 'Undo', fn: function () {
+      bmRemoved = []; bmToastMsg = null;
       var a = readBookmarks();
-      if (!a.some(function (x) { return x.at === b.at && x.uri === b.uri; })) { a.push(b); writeBookmarks(a); }
+      gone.forEach(function (g) { if (!a.some(function (x) { return x.at === g.at && x.uri === g.uri; })) a.push(g); });
+      writeBookmarks(a);
       bmChanged();
+      // Focus the × of the newest bookmark brought back (Show all if it's past the first few).
+      var top = gone.slice().sort(function (x, y) { return y.at - x.at; })[0];
+      function find() { return document.querySelector('[data-bmat="' + top.at + '"]'); }
+      if (!find() && !bmAll && $('bmMore')) { bmAll = true; bmChanged(); }
+      var nb = find() || document.querySelector('.filters .chip[aria-pressed="true"]');
+      if (nb) nb.focus({ preventScroll: true });
     } });
+    bmToastMsg = t.firstChild;
   }
   // A bookmark as a row item: kind 'track' or 'episode' plays just that item (uris) from positionMs.
   function bmItem(b) {
@@ -2820,7 +2841,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var ul = el('ul', { class: 'list', 'aria-labelledby': 'hBm' });
     var cur = playingUri();
     rows.forEach(function (i, n) {
-      var a = el('a', { class: 'item', href: i.url, 'data-verb': 'Play “' + i.name + '” from ' + fmtTime(i.positionMs), 'data-sub': i.sub }, [
+      var a = el('a', { class: 'item', href: i.url, 'data-verb': 'Play “' + i.name + '”', 'data-sub': i.sub }, [   // the sub line says where
         coverFor(i),
         el('div', { class: 'meta' }, [el('div', { class: 'name', text: i.name }), el('div', { class: 'sub', text: i.sub })])
       ]);
@@ -2834,6 +2855,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         if (nb) nb.focus({ preventScroll: true });
       });
       rm.setAttribute('data-bmrm', String(n));
+      rm.setAttribute('data-bmat', String(i.bm.at));
       var li = el('li', { class: 'row', 'data-puri': i.uri }, [a, el('div', { class: 'acts' }, [rm])]);
       if (cur && cur === i.uri) markPlaying(li, true);
       ul.appendChild(li);
