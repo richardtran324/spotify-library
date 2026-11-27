@@ -22,10 +22,12 @@ function layout(L) {
     def('offsetWidth', function () { return isChip(this) ? 80 : 0; });
     def('clientWidth', function () { return this.classList && this.classList.contains('filters') ? L.stripW : 0; });
     def('offsetTop', function () { return this.id === 'status' ? STATUS_TOP : 0; });
-    def('offsetHeight', function () { return this.id === 'status' ? STATUS_H : 0; });
+    def('offsetHeight', function () { return this.id === 'status' ? (L.statusH || STATUS_H) : 0; });
     Object.defineProperty(P, 'scrollLeft', { configurable: true,
       get: function () { return this._sl || 0; }, set: function (v) { this._sl = v; L.scrollSets++; } });
     Object.defineProperty(w, 'pageYOffset', { configurable: true, get: function () { return L.y; } });
+    Object.defineProperty(w, 'innerWidth', { configurable: true, get: function () { return L.w; } });
+    Object.defineProperty(w, 'innerHeight', { configurable: true, get: function () { return L.h; } });
     if (L.matchMedia) w.matchMedia = L.matchMedia;
   };
 }
@@ -53,7 +55,7 @@ function store0(opts) {
 }
 function setup(store, opts) {
   opts = opts || {};
-  var L = { y: 0, stripW: opts.stripW === undefined ? 300 : opts.stripW, scrollSets: 0, matchMedia: opts.matchMedia };
+  var L = { y: 0, w: 375, h: 700, stripW: opts.stripW === undefined ? 300 : opts.stripW, scrollSets: 0, matchMedia: opts.matchMedia };
   var env = { player: opts.player || null };
   var tab = H.makeTab(store, function (method, path) {
     if (path === '/me/player' && method === 'GET') return env.player ? { status: 200, json: env.player } : { status: 204 };
@@ -447,6 +449,103 @@ tests.push(function () {
     check('15 theme still works next to it', d(tab).documentElement.getAttribute('data-theme') === 'dark' && !d(tab).body.classList.contains('compact-player'));
     tab.t().setFilter('playlists');
     check('15 setFilter still presses only one chip', d(tab).querySelectorAll('.filters .chip[aria-pressed="true"]').length === 1);
+  });
+});
+
+// 16. Review fix: typing near the top. The filter shrinks the list, Safari moves to the top while the search box is
+//     focused: the header comes back at once (and on focusout if no scroll event follows), so a short list isn't stuck.
+tests.push(function () {
+  return setup(store0({ filter: 'all' })).then(function (tab) {
+    var t = tab.t(), box = $(tab, 'search');
+    scrollSteps(tab, 0, 2000, 20);
+    check('16 slim after scrolling down', slimOn(tab));
+    box.focus();
+    scrollTo(tab, 0);
+    check('16 at the top while typing: shown at once', !slimOn(tab));
+    box.blur(); scrollTo(tab, 0);
+    check('16 after blur at the top: shown', !slimOn(tab));
+    // Slim, focused, page moves to the top with no scroll event after blur: focusout shows it.
+    scrollSteps(tab, 0, 2000, 20);
+    box.focus();
+    tab.L.y = 0;   // moved without a scroll event reaching the page
+    check('16 still slim before blur (no event yet)', slimOn(tab));
+    box.blur();
+    return H.wait(20).then(function () {
+      check('16 focusout near the top: shown', !slimOn(tab));
+      scrollTo(tab, 0);
+      check('16 a scroll event with no movement at the top: still shown', !slimOn(tab));
+      scrollSteps(tab, 0, 1500, 20);
+      box.focus(); box.blur();
+      return H.wait(20);
+    }).then(function () {
+      check('16 focusout far down: stays slim', slimOn(tab));
+      var c = counts(tab);   // only the page's own timed player check may run meanwhile
+      check('16 no library, search or catalog requests', c.library === 0 && c.search === 0 && c.catalog === 0, tab.calls);
+    });
+  });
+});
+
+// 17. Review fix: the status line changes length while slim (device check, cool-off line): --slim-h follows.
+tests.push(function () {
+  return setup(store0()).then(function (tab) {
+    var t = tab.t(), top = $(tab, 'top');
+    scrollSteps(tab, 0, 600, 20);
+    check('17 slim with a one-line status', slimOn(tab) && top.style.getPropertyValue('--slim-h') === '72px', top.style.getPropertyValue('--slim-h'));
+    tab.L.statusH = 44;
+    t.state.device = null; t.state.deviceChecked = true;
+    t.showStatus();
+    check('17 status wraps to two lines: re-measured by showStatus', top.style.getPropertyValue('--slim-h') === '94px', top.style.getPropertyValue('--slim-h'));
+    tab.L.statusH = 22;
+    t.paintCool();
+    check('17 re-measured by paintCool', top.style.getPropertyValue('--slim-h') === '72px', top.style.getPropertyValue('--slim-h'));
+    tab.L.statusH = 30;
+    tab.w.dispatchEvent(new tab.w.Event('resize'));
+    check('17 re-measured on resize', top.style.getPropertyValue('--slim-h') === '80px', top.style.getPropertyValue('--slim-h'));
+    scrollTo(tab, 50);
+    tab.L.statusH = 44; t.showStatus();
+    check('17 not slim: showStatus leaves it alone', !slimOn(tab) && top.style.getPropertyValue('--slim-h') === '80px', top.style.getPropertyValue('--slim-h'));
+  });
+});
+
+// 18. Review fix: Safari's toolbar collapsing (height-only resize) keeps a sideways swipe; rotating re-centres.
+tests.push(function () {
+  return setup(store0({ filter: 'home' })).then(function (tab) {
+    strip(tab).scrollLeft = 300;   // the user swiped the chips sideways
+    tab.L.h = 760;
+    tab.w.dispatchEvent(new tab.w.Event('resize'));
+    check('18 toolbar collapse (height only): swipe kept', strip(tab).scrollLeft === 300, strip(tab).scrollLeft);
+    tab.L.w = 667; tab.L.stripW = 600;
+    tab.w.dispatchEvent(new tab.w.Event('resize'));
+    check('18 rotation (width change): selected chip back in view', strip(tab).scrollLeft === 0, strip(tab).scrollLeft);
+    strip(tab).scrollLeft = 120;
+    tab.w.dispatchEvent(new tab.w.Event('resize'));
+    check('18 another height-only resize: swipe kept', strip(tab).scrollLeft === 120, strip(tab).scrollLeft);
+  });
+});
+
+// 19. Review fix: another tab's change applies before sign-in too, and repaints an open Diagnostics checkbox.
+tests.push(function () {
+  var store = H.makeStore();
+  store.setItem('lib-client-id', JSON.stringify('fakeclient'));   // no token: the sign-in screen
+  var tab = H.makeTab(store, function () {}, { beforeParse: layout({ y: 0, w: 375, h: 700, stripW: 300, scrollSets: 0 }) });
+  return H.wait(500).then(function () {
+    var t = tab.t();
+    check('19 signed out', t.state.started === false);
+    store.setItem('lib-compact-player', 'true');
+    tab.w.dispatchEvent(new tab.w.StorageEvent('storage', { key: 'lib-compact-player', newValue: 'true' }));
+    check('19 another tab turned it on before sign-in: applies', d(tab).body.classList.contains('compact-player'));
+    check('19 nothing sent', tab.calls.length === 0, tab.calls);
+    return setup(store0(), { player: H.song() });
+  }).then(function (tab) {
+    var t = tab.t();
+    t.openDiag();
+    return H.wait(200).then(function () {
+      check('19 diag open, unchecked', $(tab, 'compactPlayer').checked === false);
+      tab.dom.window.localStorage.setItem('lib-compact-player', 'true');
+      tab.w.dispatchEvent(new tab.w.StorageEvent('storage', { key: 'lib-compact-player', newValue: 'true' }));
+      check('19 open Diagnostics checkbox repainted', $(tab, 'compactPlayer').checked === true && d(tab).body.classList.contains('compact-player'));
+      t.closeDiag();
+    });
   });
 });
 

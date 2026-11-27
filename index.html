@@ -1473,6 +1473,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       $('cool').hidden = false;
       coolTimer = setTimeout(paintCool, (left % 1000 || 1000) + 30);
     } else $('cool').hidden = true;
+    slimMeasure();   // v2.43
     var pt = paused.indexOf('player') !== -1 ? coolText('player') : '';
     if (pt) { if (n.textContent !== pt) n.textContent = pt; n.hidden = false; } else n.hidden = true;
     var ended = [];
@@ -4112,6 +4113,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       btn.setAttribute('aria-label', 'Choose a device');
     }
     btn.hidden = false;
+    slimMeasure();   // v2.43
   }
   function likedCtx() { var me = state.data && state.data.me; return me && me.id ? 'spotify:user:' + me.id + ':collection' : null; }
   // kind 'resume' (v2.10) is the last song or episode, played again after Spotify went to sleep.
@@ -4708,17 +4710,28 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     slim.on = on;
     top.classList.toggle('slim', on);
   }
-  function onSlimScroll() {
+  function slimY() {
     var de = document.documentElement;
     var y = window.pageYOffset || de.scrollTop || 0;
     var max = Math.max(0, (de.scrollHeight || 0) - (window.innerHeight || 0));
     if (y < 0) y = 0;
     if (max && y > max) y = max;   // Safari's bounce at either end isn't a change of direction
+    return y;
+  }
+  // v2.43 review: the status line changes length (device name, error text, wrapping), so --slim-h is measured again
+  // whenever it may have changed while the header is slim (showStatus, paintCool, resize, ResizeObserver).
+  function slimMeasure() {
+    if (slim && slim.on) $('top').style.setProperty('--slim-h', slimHeight() + 'px');
+  }
+  function onSlimScroll() {
+    var y = slimY();
     var dy = y - slim.lastY;
     slim.lastY = y;
+    // v2.43 review: near the top (or with the wake message up) it always shows, even while typing: a filter that
+    // shrinks the list moves Safari to the top, and a short list could never scroll up to bring the header back.
+    if (y <= SLIM_MIN_Y || !$('wake').hidden) { slim.acc = 0; setSlim(false); return; }
     if (!dy) return;
     if (slimFrozen()) { slim.acc = 0; return; }
-    if (y <= SLIM_MIN_Y || !$('wake').hidden) { slim.acc = 0; setSlim(false); return; }
     if ((dy > 0) !== (slim.acc > 0)) slim.acc = 0;
     slim.acc += dy;
     if (slim.acc >= SLIM_STEP) setSlim(true);
@@ -9906,10 +9919,16 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   $('compactPlayer').addEventListener('change', function () { setCompact($('compactPlayer').checked); });   // v2.43
   applyCompact();
   window.addEventListener('scroll', onSlimScroll, { passive: true });   // v2.43
+  var slimW = window.innerWidth;
   window.addEventListener('resize', function () {   // v2.43: rotating the phone changes the strip's width
-    chipIntoView(document.querySelector('.filters .chip[aria-pressed="true"]'));
-    if (slim.on) $('top').style.setProperty('--slim-h', slimHeight() + 'px');
+    // Safari's toolbar collapsing or expanding fires resize too (height only): that keeps a sideways swipe of the chips.
+    if (window.innerWidth !== slimW) { slimW = window.innerWidth; chipIntoView(document.querySelector('.filters .chip[aria-pressed="true"]')); }
+    slimMeasure();
   });
+  document.addEventListener('focusout', function () {   // v2.43 review: the keyboard closed near the top: show it again
+    setTimeout(function () { if (!slimFrozen() && slimY() <= SLIM_MIN_Y) { slim.acc = 0; setSlim(false); } }, 0);
+  });
+  if (window.ResizeObserver) { try { new ResizeObserver(slimMeasure).observe($('status')); } catch (e) {} }   // v2.43 review
   document.querySelectorAll('input[name="theme"]').forEach(function (r) {
     r.addEventListener('change', function () {
       if (!r.checked) return;
@@ -10074,9 +10093,13 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   window.addEventListener('pagehide', function () { kpSave(); releasePoller(); });   // v2.42: kpSave
   // v2.13: other copies of the page (same storage) share the cool-off and the player answer.
   window.addEventListener('storage', function (e) {
+    if (e.key === K.compactPlayer) {   // v2.43: changed in another tab (applies before sign-in too)
+      compactMem = null; applyCompact();
+      if (!$('diag').hidden) $('compactPlayer').checked = compactPlayer();
+      return;
+    }
     if (!state.started) return;
-    if (e.key === K.compactPlayer) { compactMem = null; applyCompact(); }   // v2.43: changed in another tab
-    else if (e.key === K.cool) paintCool();
+    if (e.key === K.cool) paintCool();
     else if (e.key === K.playerCache && !document.hidden) applyPlayerCache(get(K.playerCache));
   });
   // Safari can report focus a moment before the visibility change; start looking for Spotify right away.
