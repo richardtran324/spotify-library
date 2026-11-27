@@ -296,6 +296,14 @@ li.dischead h3 { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; t
 }
 .prow { display: flex; align-items: center; gap: 10px; }
 .pcover { width: 44px; height: 44px; border-radius: 4px; background: var(--chip); object-fit: cover; flex: none; }
+/* v2.55: swipe the bar's main row (left Next, right Previous, up Now Playing). The row handles its own pans so the
+   page doesn't scroll under the fixed bar; taps still click. The cover slides briefly to show a skip registered. */
+.prow { touch-action: none; }
+.pcover.pslide-l { animation: pSlideL 0.24s ease-out; }
+.pcover.pslide-r { animation: pSlideR 0.24s ease-out; }
+@keyframes pSlideL { 0% { transform: none; opacity: 1; } 45% { transform: translateX(-18px); opacity: 0.35; } 100% { transform: none; opacity: 1; } }
+@keyframes pSlideR { 0% { transform: none; opacity: 1; } 45% { transform: translateX(18px); opacity: 0.35; } 100% { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .pcover.pslide-l, .pcover.pslide-r { animation: none; } }
 .pctl { display: flex; justify-content: center; align-items: center; gap: 20px; margin-top: 2px; }
 .act.big { width: 44px; height: 44px; background: var(--fg); color: var(--bg); }
 .act.big:active { background: var(--fg); opacity: 0.7; }
@@ -5000,7 +5008,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.54 (2026-11-27)';
+  var VERSION = 'v2.55 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -6029,6 +6037,35 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     npTick = (npShown() && !document.hidden) ? setInterval(paintProgress, 500) : null;
   }
   function stopNpTick() { clearInterval(npTick); npTick = null; }
+  // v2.55: bar swipes. Skips need more than 60px sideways with less than 30px up/down drift; opening needs more
+  // than 40px up, mostly upward. Anything else (a tap, a short or diagonal drag, a swipe down) does nothing.
+  var BAR_SKIP_PX = 60, BAR_DRIFT_PX = 30, BAR_UP_PX = 40;
+  var BAR_EDGE_PX = 24, BAR_MOVED_PX = 10;   // Safari's back swipe starts at the left edge; a tap moves less than 10px
+  function barSwipeKind(dx, dy, drift, sideways) {
+    if (drift == null) drift = Math.abs(dy);
+    if (sideways == null) sideways = Math.abs(dx);
+    if (Math.abs(dx) > BAR_SKIP_PX && drift < BAR_DRIFT_PX) return dx < 0 ? 'next' : 'prev';
+    if (-dy > BAR_UP_PX && sideways < -dy) return 'open';
+    return '';
+  }
+  function reduceMotion() {
+    try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); } catch (e) { return false; }
+  }
+  function slideCover(dir) {
+    var c = $('pCover');
+    c.classList.remove('pslide-l', 'pslide-r');
+    if (reduceMotion()) return;
+    void c.offsetWidth;   // restart the animation on back-to-back swipes
+    c.classList.add(dir === 'next' ? 'pslide-l' : 'pslide-r');
+    clearTimeout(slideCover.t);
+    slideCover.t = setTimeout(function () { c.classList.remove('pslide-l', 'pslide-r'); }, 300);
+  }
+  function barSwipe(kind) {
+    if (kind === 'open') return openNp();
+    if (kind !== 'next' && kind !== 'prev') return;
+    if (!state.playerIdle && !coolLeft('player')) slideCover(kind);   // no slide when nothing is sent
+    return command('POST', kind === 'next' ? '/me/player/next' : '/me/player/previous');
+  }
   function openNp() {
     var p = state.player;
     if (!p || !p.item) return;
@@ -10567,6 +10604,49 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     else closeNp();
   });
   $('pInfo').addEventListener('click', openNp);
+  // v2.55: swipes on the bar's main row. Left = Next, right = Previous (the same command as the buttons, so asleep,
+  // no device, 429 and a paused player group behave exactly as a button tap: 1 player request per skip at most);
+  // up = open the full Now Playing screen (no request of its own). Starts only on one finger inside .prow and not on
+  // its buttons (Up next, heart); the cover/title button counts as the row. A tap still opens Now Playing.
+  (function () {
+    var row = document.querySelector('#player .prow'), g = null, guard = false, guardT = null;
+    function unguard() { guard = false; clearTimeout(guardT); guardT = null; }
+    row.addEventListener('touchstart', function (e) {
+      g = null;
+      unguard();
+      if (e.touches.length !== 1 || $('player').hidden || $('player').hasAttribute('inert')) return;
+      if (e.target.closest && e.target.closest('.act')) return;
+      var t = e.touches[0];
+      if (t.clientX < BAR_EDGE_PX) return;   // leave edge swipes to Safari's back gesture (taps there still click)
+      g = { x: t.clientX, y: t.clientY, drift: 0, sideways: 0 };
+    }, { passive: true });
+    row.addEventListener('touchmove', function (e) {
+      if (!g) return;
+      if (e.touches.length !== 1) { g = null; return; }
+      var t = e.touches[0];
+      g.drift = Math.max(g.drift, Math.abs(t.clientY - g.y));
+      g.sideways = Math.max(g.sideways, Math.abs(t.clientX - g.x));
+    }, { passive: true });
+    row.addEventListener('touchcancel', function () { g = null; }, { passive: true });
+    row.addEventListener('touchend', function (e) {
+      if (!g) return;
+      var t = e.changedTouches[0], s = g;
+      g = null;
+      var dx = t.clientX - s.x, dy = t.clientY - s.y;
+      var drift = Math.max(s.drift, Math.abs(dy)), sideways = Math.max(s.sideways, Math.abs(dx));
+      // A moved touch mustn't also count as a tap on the cover/title. iOS usually sends no click then, so the guard
+      // lasts only until the next touch or 250 ms (iOS sends its click right after touchend), whichever comes first.
+      if (Math.max(drift, sideways) > BAR_MOVED_PX) { guard = true; clearTimeout(guardT); guardT = setTimeout(unguard, 250); }
+      var kind = barSwipeKind(dx, dy, drift, sideways);
+      if (kind) barSwipe(kind);
+    }, { passive: true });
+    // A swipe that ends over the cover/title button mustn't also count as a tap on it.
+    row.addEventListener('click', function (e) {
+      if (!guard || !(e.target.closest && e.target.closest('#pInfo'))) return;
+      unguard();
+      e.preventDefault(); e.stopPropagation();
+    }, true);
+  })();
   $('npClose').addEventListener('click', function () { closeNp(); });
   $('npDev').addEventListener('click', function () { openSheet($('npDev')); });
   $('pQueue').addEventListener('click', function () { openQueue($('pQueue')); });
