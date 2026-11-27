@@ -363,7 +363,7 @@ header.top.detail .schips { display: none; }
 .sortlbl { font-size: 0.8rem; font-weight: 600; color: var(--muted); margin-right: 2px; }
 .sortbar .chip { font-size: 0.85rem; padding: 5px 11px; min-height: 34px; }
 .snote { font-size: 0.8rem; color: var(--muted); margin: 6px 2px 0; }
-.sortdir { margin-left: 4px; }   /* v2.31: ↑ or ↓ on a chosen sort that turns around */
+.sortdir { margin-left: 4px; }   /* v2.32: ↑ or ↓ on a chosen sort that turns around */
 /* Full Now Playing screen: slides up over everything except the sheets (device picker, Up next) and the toast */
 body.npopen { overflow: hidden; }
 .npfull {
@@ -773,7 +773,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // Search Spotify result types. key: the page object in the /search answer; map: row mapper.
   var SEARCH_TYPES = ['all', 'track', 'artist', 'album', 'playlist', 'show', 'episode'];
   var STYPE = {
-    track: { key: 'tracks', label: 'Songs', map: function (t) { var m = mapTrack(t); if (m && t.album) { m.albumName = t.album.name || ''; m.released = relDay(t.album.release_date); } return m; } },   // v2.31: album and date for sorting
+    track: { key: 'tracks', label: 'Songs', map: function (t) { var m = mapTrack(t); if (m && t.album) { m.albumName = t.album.name || ''; m.released = relDay(t.album.release_date); } return m; } },   // v2.32: album and date for sorting
     artist: { key: 'artists', label: 'Artists', map: function (a) { var m = mapArtist(a); if (m) m.sub = 'Artist'; return m; } },
     album: { key: 'albums', label: 'Albums', map: function (a) { return mapAlbum(a); } },
     playlist: { key: 'playlists', label: 'Playlists', map: function (p) { return mapPlaylist(p); } },
@@ -1418,7 +1418,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // ---------- sorting: one chip row per view, the choice stored per view ('lib-sort-<view>') ----------
   // The first option of each view is its default, which is always the order the page used before sorting existed.
   // Detail views (song and episode lists) start with 'd-'. They sort only the rows loaded so far.
-  // v2.31: a sort in SORT_FLIP turns around when its chip is tapped again; the reversed choice is stored as '<option>:rev'.
+  // v2.32: a sort in SORT_FLIP turns around when its chip is tapped again; the reversed choice is stored as '<option>:rev'.
   var SORTS = {
     playlists: [['default', 'Default'], ['az', 'A–Z'], ['songs', 'Most songs']],
     albums: [['saved', 'Recently saved'], ['az', 'A–Z'], ['artist', 'Artist A–Z'], ['released', 'Release date']],
@@ -1443,19 +1443,19 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function sortText(s) { return String(s || '').replace(/^the\s+/i, ''); }
   function cmpText(a, b) { return sortText(a).localeCompare(sortText(b), undefined, { sensitivity: 'base', numeric: true }); }
   function byName(a, b) { return cmpText(a.name, b.name); }
-  // v2.31: a release date as YYYY, YYYY-MM or YYYY-MM-DD (month 01–12, day 01–31); anything else (Spotify's "0000"
+  // v2.32: a release date as YYYY, YYYY-MM or YYYY-MM-DD (month 01–12, day 01–31); anything else (Spotify's "0000"
   // for unknown, a zero month or day) is ''.
   function relDay(s) { return /^\d{4}(-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?)?$/.test(s || '') && !/^0000/.test(s) ? s : ''; }
   // Dates and times as strings (ISO or YYYY[-MM[-DD]]); a missing value always goes last.
   function cmpDesc(x, y) { if (x === y) return 0; if (!x) return 1; if (!y) return -1; return x < y ? 1 : -1; }
   function cmpAsc(x, y) { if (x === y) return 0; if (!x) return 1; if (!y) return -1; return x < y ? -1 : 1; }
-  // v2.31: song sorts that turn around: [first tap, tap again], each [how the chip's label says the order, arrow].
+  // v2.32: song sorts that turn around: [first tap, tap again], each [how the chip's label says the order, arrow].
   var SORT_FLIP = {
     dur: [['shortest first', '↑'], ['longest first', '↓']],
     album: [['A–Z', '↑'], ['Z–A', '↓']],
     rel: [['newest first', '↓'], ['oldest first', '↑']]
   };
-  // v2.31: rev turns the order around; a missing value (no length, album or date) still goes last, and ties keep the default order.
+  // v2.32: rev turns the order around; a missing value (no length, album or date) still goes last, and ties keep the default order.
   function cmpDur(a, b, rev) { var x = a.durMs || 0, y = b.durMs || 0; if (x === y) return 0; if (!x) return 1; if (!y) return -1; return rev ? y - x : x - y; }
   function cmpAlbum(a, b, rev) { var x = a.albumName || '', y = b.albumName || ''; if (!x || !y) return (!x) - (!y); var r = cmpText(x, y); return rev ? -r : r; }
   // Release dates come as YYYY, YYYY-MM or YYYY-MM-DD. Compared part by part: newest first (rev: oldest first), and
@@ -1504,11 +1504,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!opts) return '';
     var v = get('lib-sort-' + view);
     if (v == null && view === 'shows') v = get(K.showSort);   // the Shows choice from v2.7
-    if (typeof v === 'string' && SORT_FLIP[v.replace(/:rev$/, '')]) v = v.replace(/:rev$/, '');   // v2.31
+    if (typeof v === 'string' && SORT_FLIP[v.replace(/:rev$/, '')]) v = v.replace(/:rev$/, '');   // v2.32
     for (var i = 0; i < opts.length; i++) { if (opts[i][0] === v) return v; }
     return opts[0][0];
   }
-  // v2.31: true when the chosen sort was tapped again ('dur:rev' stored).
+  // v2.32: true when the chosen sort was tapped again ('dur:rev' stored).
   function sortRev(view) { var m = sortMode(view); return !!SORT_FLIP[m] && get('lib-sort-' + view) === m + ':rev'; }
   function sortIsDefault(view) { return !SORTS[view] || sortMode(view) === SORTS[view][0][0]; }
   function sortList(view, list) {
@@ -1529,7 +1529,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     SORTS[view].forEach(function (s) {
       var b = el('button', { class: 'chip', type: 'button', 'data-sort': s[0], 'aria-pressed': String(cur === s[0]), text: s[1] });
       var flip = SORT_FLIP[s[0]];
-      if (flip && cur === s[0]) {   // v2.31: the chosen one shows its direction: "Duration ↑", read as "Duration, shortest first"
+      if (flip && cur === s[0]) {   // v2.32: the chosen one shows its direction: "Duration ↑", read as "Duration, shortest first"
         var f = flip[sortRev(view) ? 1 : 0];
         b.setAttribute('aria-label', s[1] + ', ' + f[0]);
         b.appendChild(el('span', { class: 'sortdir', 'aria-hidden': 'true', text: f[1] }));
@@ -1537,7 +1537,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       b.addEventListener('click', function () {
         var same = sortMode(view) === s[0];
         if (same && !flip) return;
-        set('lib-sort-' + view, same && !sortRev(view) ? s[0] + ':rev' : s[0]);   // v2.31: tapped again, it turns around
+        set('lib-sort-' + view, same && !sortRev(view) ? s[0] + ':rev' : s[0]);   // v2.32: tapped again, it turns around
         rerender();
         var nb = document.querySelector('.sortbar[data-view="' + view + '"] [data-sort="' + s[0] + '"]');
         if (nb) nb.focus();
@@ -1546,7 +1546,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     });
     return g;
   }
-  // v2.31: while a Duration or Release date sort is on, each row's second line ends with that value ("· 3:45",
+  // v2.32: while a Duration or Release date sort is on, each row's second line ends with that value ("· 3:45",
   // "· May 1999"). Drawn on copies, so nothing stored or matched changes.
   function sortShown(view, list) {
     var m = sortMode(view);
@@ -3217,7 +3217,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.31 (2026-11-27)';
+  var VERSION = 'v2.32 (2026-11-27)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -4820,7 +4820,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var m = mapTrack(t, { sub: sub, ctx: parent.kind === 'liked' ? likedCtx() : parent.uri });
     if (m && it.added_at) m.added = it.added_at;   // when it was added to the playlist (or liked), for sorting
     if (m && t.album && t.album.name) m.albumName = t.album.name;   // v2.22: for Find in list
-    if (m && t.album) m.released = relDay(t.album.release_date);   // v2.31: for the Release date sort
+    if (m && t.album) m.released = relDay(t.album.release_date);   // v2.32: for the Release date sort
     if (m && parent.kind === 'liked' && state.saved[m.uri] === undefined) state.saved[m.uri] = true;
     return m;
   }
