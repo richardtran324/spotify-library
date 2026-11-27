@@ -1364,7 +1364,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   var catMemo = {};
   function apiCached(url) {
     if (catMemo[url]) return Promise.resolve(catMemo[url]);
-    return api(url).then(function (r) { if (r.ok && r.json && coolGroup(url) === 'catalog') catMemo[url] = r; return r; });
+    return api(url).then(function (r) { if (r.ok && r.json && coolGroup(url) === 'catalog') { r.at = Date.now(); catMemo[url] = r; } return r; });   // audit: at = when Spotify sent it (editStale)
   }
   // Kept in localStorage too, so errors survive a reload and show up in Diagnostics.
   var errorLog = (function () { var v = get('lib-errors'); return Array.isArray(v) ? v.slice(-12) : []; })();
@@ -5857,9 +5857,24 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       var items = raw.slice(p.off, last ? p.off + lim : keep[k + 1].off);
       var next = !last ? p.r.json.next
         : p.off + items.length < total ? API + plItemsPath(id) + '?offset=' + (p.off + items.length) + '&limit=' + lim : null;
-      catMemo[p.key] = { ok: true, status: p.r.status || 200, json: Object.assign({}, p.r.json, { items: items, total: total, offset: p.off, next: next }), snap: snap || null };
+      catMemo[p.key] = { ok: true, status: p.r.status || 200, json: Object.assign({}, p.r.json, { items: items, total: total, offset: p.off, next: next }), snap: snap || null, at: p.r.at };
     });
     return { total: total };
+  }
+  // audit: a move is by position, so positions from pages kept for hours can move the wrong song when the playlist
+  // changed elsewhere. Stale = no change made in this view yet (or arrows locked) and page 1 is over a minute old.
+  function editStale(d) {
+    if (d.moveLock) return true;
+    if (d.snap !== undefined) return false;
+    var pages = memoPages(d.item.id);
+    return !pages.length || Date.now() - (pages[0].r.at || 0) > 60000;
+  }
+  // Loads page 1 again (one catalog request); rows past it come back with Load more.
+  function reloadForEdit(d) {
+    memoPages(d.item.id).forEach(function (p) { delete catMemo[p.key]; });
+    d.items = []; d.next = null; d.moveLock = false;
+    delete d.snap;   // an older change's snapshot doesn't go with the new positions
+    loadDetail(detailUrl(d.item));
   }
   // The snapshot the loaded positions belong to: the last change's answer, or none (Spotify then uses the
   // playlist as it is now, which is what the page loaded).
@@ -6034,7 +6049,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         d.total += 1;
         if (total == null) total = d.total;
       }
-      d.snap = snap;
+      if (d.snap !== undefined) d.snap = snap;   // audit: an add doesn't make old positions current (editStale); the kept pages hold its snapshot
       if (state.detail === d && $('dlist')) { paintDetailList(); paintDetailSort(); paintDetailFoot(); }
     }
     if (total == null) { var lp = libraryPlaylist(id); if (lp && typeof lp.count === 'number') total = lp.count + 1; }
@@ -6058,7 +6073,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     done.addEventListener('click', function () { setEditing(d, false); });
     box.appendChild(el('div', { class: 'editbar' }, [
       el('p', { class: 'sethint', text: 'Shown in playlist order. Tap − to remove a song, or the arrows to move it.' +
-        (d.next ? ' Songs move only among the ' + d.items.length + ' loaded so far; Load more for the rest.' : '') }),
+        (d.next ? ' Songs move only among the ' + d.items.length + ' loaded so far; Load more for the rest.' : '') +
+        (d.moveLock ? ' Moving songs needs a fresh copy of the list' + (coolLeft('catalog') ? ', and Spotify paused updates until ' + clock(coolUntil('catalog')) : '') + '. Tap Done, then Edit, to try again.' : '') }),
       done
     ]));
     setEditLock(plEdit.busy || d.loading);
@@ -6066,6 +6082,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function setEditing(d, on) {
     if (state.detail !== d) return;
     if (on) stopFind(d);   // v2.26: a running Search all stops; what it loaded stays
+    // audit: old positions are loaded again first; while that can't be sent (paused, or a page is loading),
+    // Remove still works (it goes by song) but the arrows are off.
+    if (on && editStale(d)) { if (!d.loading && !coolLeft('catalog')) reloadForEdit(d); else d.moveLock = true; }
     d.editing = on;
     paintDetailSort(); paintDetailList(); paintDetailFoot();
     var f = $(on ? 'deditDone' : 'deditBtn');
@@ -6087,8 +6106,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var li = el('li', { class: 'row editrow', 'data-puri': x.uri }, [
       el('div', { class: 'item' }, [coverFor(x), el('div', { class: 'meta' }, [el('div', { class: 'name', text: x.name }), el('div', { class: 'sub', text: x.sub })])]),
       el('div', { class: 'acts' }, [
-        btn(EDIT_ICON.up, 'up', 'Move “' + x.name + '” up', !ok || !prev || typeof prev.pos !== 'number', function (ev) { moveSong(d, k, -1, ev.currentTarget); }),
-        btn(EDIT_ICON.down, 'down', 'Move “' + x.name + '” down', !ok || !next || typeof next.pos !== 'number', function (ev) { moveSong(d, k, 1, ev.currentTarget); }),
+        btn(EDIT_ICON.up, 'up', 'Move “' + x.name + '” up', !ok || d.moveLock || !prev || typeof prev.pos !== 'number', function (ev) { moveSong(d, k, -1, ev.currentTarget); }),
+        btn(EDIT_ICON.down, 'down', 'Move “' + x.name + '” down', !ok || d.moveLock || !next || typeof next.pos !== 'number', function (ev) { moveSong(d, k, 1, ev.currentTarget); }),
         btn(EDIT_ICON.minus, 'rm', 'Remove “' + x.name + '” from this playlist', !ok, function (ev) { askRemove(d, k, ev.currentTarget); })
       ])
     ]);
@@ -6122,7 +6141,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function moveSong(d, k, dir, btn) {
     var x = d.items[k], y = d.items[k + dir];
-    if (!x || !y || typeof x.pos !== 'number' || typeof y.pos !== 'number' || d.loading || state.detail !== d) return;
+    if (!x || !y || typeof x.pos !== 'number' || typeof y.pos !== 'number' || d.loading || d.moveLock || state.detail !== d) return;
     if (!editReady(btn)) return;
     // One place up or down, past any rows the list doesn't show (local files): before the song above it,
     // or after the song below it.
