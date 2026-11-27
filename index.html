@@ -708,6 +708,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       <label class="setrow"><input type="radio" name="theme" value="light"><span><span class="setname">Light</span></span></label>
       <label class="setrow"><input type="radio" name="theme" value="dark"><span><span class="setname">Dark</span></span></label>
     </fieldset>
+    <fieldset class="setgroup" id="rewindModes">
+      <legend>Rewind when resuming an episode</legend>
+      <label class="setrow"><input type="radio" name="rewind" value="on"><span><span class="setname">On</span><span class="setnote">An episode this page played before starts a little before where you stopped: 10 s after 5 minutes away, 15 s after an hour, 30 s after a day.</span></span></label>
+      <label class="setrow"><input type="radio" name="rewind" value="off"><span><span class="setname">Off</span><span class="setnote">Starts exactly where you stopped.</span></span></label>
+    </fieldset>
     <label class="setgroup" for="searchFirst"><span class="setname">Search Spotify: show first in All</span></label>
     <select class="field" id="searchFirst">
       <option value="track">Songs</option>
@@ -805,6 +810,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     epNotes: 'lib-ep-notes',     // v2.18: [{id, t, at[, cut]}], newest first: notes of episodes you opened or played (40, 4,000 characters each)
     epMarks: 'lib-ep-marks',     // v2.21: {uri: {played, at, pos}}: Mark as played / unplayed, this phone only (400, 180 days)
     playLog: 'lib-play-log',     // v2.30: {e: [[playedAt ms, track id], …] newest first, t: {track id: [name, artists, album, cover]}}: songs from Recently played, kept past its last 50 (1,500 plays, 90 days; names cut at 80 characters with …; covers without the i.scdn.co prefix)
+    rewind: 'lib-rewind',        // v2.44: 'off' turns off the rewind when the page resumes an episode; unset = on
     ctxLast: 'lib-ctx-last',     // v2.23: {album or playlist URI | 'liked': {uri, id, name, positionMs, durMs, at}}: the last song heard in each list (40, 30 days)
     bookmarks: 'lib-bookmarks',  // v2.32: [{uri, id, kind: 'track'|'episode', name, by, img, url, pos, at}], newest first: Bookmarks saved on Now Playing (200, 2 years); local only
     introSkip: 'lib-intro-skip', // v2.33: {show URI: {s, at}}: Skip intro per podcast, s = 15|30|45|60|90|120 seconds, at = last set or used (100 shows, 365 days)
@@ -843,6 +849,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   var HOME_BM = 5;                            // v2.32: bookmarks shown on Home before "Show all"
   var MARK_MOVED_MS = 30000;                  // seen playing this far from where it was marked: played again, the mark goes
   // v2.14: no automatic resume-point checks (GET /episodes/{id}); Continue listening uses the page's own history.
+  // v2.44: rewind on resume. When the page resumes an episode from its saved spot, it starts this much earlier,
+  // by how long ago the page last heard it: [heard less than this long ago, ms back]; 30 s otherwise. Not when the page
+  // doesn't know (never heard here, or Spotify's resume point is from listening elsewhere since): no rewind then.
+  var REWIND_STEPS = [[5 * 60 * 1000, 0], [60 * 60 * 1000, 10000], [24 * 60 * 60 * 1000, 15000]];
+  var REWIND_MAX_MS = 30000;
   var LASTPLAY_MS = 6 * 60 * 60 * 1000;   // the last playback stays on screen (as paused) this long after Spotify goes idle
   var HOME_RECENT_MS = 15 * 60 * 1000;    // Home: recently played is asked for at most this often (v2.13: was 10 min)
   var HOME_JUMP = 8, HOME_LATEST = 5, HOME_PLAYLISTS = 6;
@@ -3391,7 +3402,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   // A tap on this page started an episode: record it now if the page knows its show; otherwise the
   // player check a moment later records it with the full details.
-  function noteStarted(item) {
+  function noteStarted(item, sentPos) {   // v2.44: sentPos, the spot the play request sent (after any rewind)
     if (!item || item.linkStub || !/^spotify:episode:/.test(item.uri || '')) return;   // v2.36: no placeholder names in the history
     if (markOf(item.uri)) { writeMark(item.uri, null); marksChanged(); }   // v2.21: played again from this page
     var h = histByUri()[item.uri], info = null;
@@ -3404,7 +3415,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       else if (s && s.showName) info = { show: { id: '', name: s.showName, images: s.img ? [{ url: s.img }] : [] }, dur: s.durMs };
     }
     if (!info) return;
-    noteEpisode({ type: 'episode', uri: item.uri, id: item.id, name: item.name, duration_ms: info.dur || 0, show: info.show }, item.positionMs || 0, true);
+    noteEpisode({ type: 'episode', uri: item.uri, id: item.id, name: item.name, duration_ms: info.dur || 0, show: info.show }, typeof sentPos === 'number' ? sentPos : (item.positionMs || 0), true);
   }
   // A new episode at the top (or one just finished) redraws the lists that show it, keeping the scroll position.
   function epHistChanged() {
@@ -3829,8 +3840,41 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     else if (item.kind === 'track' || item.kind === 'episode' || item.kind === 'resume') b = { uris: [item.uri] };
     else return { context_uri: item.uri };
     if (item.positionMs > 0 || (item.exactPos && item.positionMs === 0)) b.position_ms = Math.round(item.positionMs);   // resume where you left off (v2.18: a "0:00" timestamp starts at the beginning)
+    if (b.position_ms > 0) b.position_ms -= rewindMs(item);   // v2.44: an episode resumed after a break starts a little earlier
     return b;
   }
+  // ---------- v2.44: rewind on resume ----------
+  // Only episodes the page resumes from a saved spot (Continue listening, episode rows, Jump back in, Pinned, Play
+  // newest, Play while asleep). Not a tapped timestamp in Episode notes or a spot you dragged to while asleep
+  // (exactPos), and never songs. Sent in the play body the page sends anyway: no extra request.
+  function rewindOn() { return get(K.rewind) !== 'off'; }
+  var REWIND_MATCH_MS = 60000;   // the history's spot must be this close to the spot resumed for its time to count
+  // When the page last heard this episode playing at about this spot (its podcast history), or 0 when it doesn't know.
+  function lastHeardAt(uri, pos) {
+    var h = histByUri()[uri];
+    if (!h || typeof h.at !== 'number' || h.played) return 0;
+    return Math.abs((h.positionMs || 0) - (pos || 0)) <= REWIND_MATCH_MS ? h.at : 0;
+  }
+  function rewindFor(awayMs) {
+    for (var i = 0; i < REWIND_STEPS.length; i++) { if (awayMs < REWIND_STEPS[i][0]) return REWIND_STEPS[i][1]; }
+    return REWIND_MAX_MS;
+  }
+  function rewindMs(item) {
+    if (!item || item.exactPos || !(item.positionMs > 0) || !/^spotify:episode:/.test(item.uri || '') || !rewindOn()) return 0;
+    var at = typeof item.rwHeardAt === 'number' ? item.rwHeardAt : lastHeardAt(item.uri, item.positionMs);
+    if (!(at > 0)) return 0;                                       // unknown: Spotify's own spot, as before
+    return Math.min(rewindFor(Date.now() - at), Math.round(item.positionMs));   // never before the start
+  }
+  // Notes when the episode was last heard at the moment of the tap: while a tap waits for Spotify to wake, Control
+  // Center's play can start the same episode and the history would then say "just now". Returns a copy (rows are reused).
+  function stampHeard(item) {
+    if (!item || item.exactPos || typeof item.rwHeardAt === 'number' || !(item.positionMs > 0) || !/^spotify:episode:/.test(item.uri || '')) return item;
+    var c = {};
+    for (var k in item) { if (Object.prototype.hasOwnProperty.call(item, k)) c[k] = item[k]; }
+    c.rwHeardAt = lastHeardAt(item.uri, item.positionMs);
+    return c;
+  }
+  function rewindText(ms) { return ms > 0 ? ' · back ' + Math.round(ms / 1000) + ' s' : ''; }
   function play(item, opts) {
     opts = opts || {};
     var d = state.device;
@@ -3854,11 +3898,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       };
     }
     var pre = opts.shuffle ? shuffle().then(function (r) { shuffleOk = r.ok; }, function () { shuffleOk = false; }) : Promise.resolve();
+    var back = (item.positionMs > 0 && body.position_ms != null) ? Math.round(item.positionMs) - body.position_ms : 0;   // v2.44
     function done(sent) {
-      toast((opts.shuffle ? 'Shuffling “' : 'Playing “') + item.name + '” on ' + d.name + (item.introSecs ? ' from ' + fmtTime(item.introSecs * 1000) : ''));   // v2.33
+      // v2.33: Skip intro says where it started; v2.44: a rewound resume says how far back (never both: intro is for starts at 0 only)
+      toast((opts.shuffle ? 'Shuffling “' : 'Playing “') + item.name + '” on ' + d.name + (item.introSecs ? ' from ' + fmtTime(item.introSecs * 1000) : '') + rewindText(back));
       // Shuffle on a device that wasn't active yet can fail; try again now that it plays.
       if (opts.shuffle && !shuffleOk) shuffle().catch(function () {});
-      noteStarted(item);   // v2.11: an episode goes into the podcast history right away
+      noteStarted(item, sent.position_ms);   // v2.11: an episode goes into the podcast history right away (v2.44: at the spot sent)
       state.lastActiveAt = Date.now();
       expectAfter(started(sent));
       schedulePoll(600, true);   // v2.13: this copy checks once even if another copy is the poller
@@ -3917,6 +3963,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     ev.preventDefault();
     item = introStart(item);   // v2.33: Skip intro (a start from 0:00 begins at the show's setting instead)
     if (coolBlocked('player')) return;   // v2.13: nothing is sent while playback is paused by Spotify
+    item = stampHeard(item);   // v2.44: when it was last heard, as of this tap (not a Skip intro start: exactPos)
     var mine = ++tapSeq;
     if (deviceFresh()) { playNow(item, opts); return; }
     if (noDeviceKnown()) {
@@ -3978,6 +4025,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       mode: mode || 'link'
     };
     if (item.uris) p.item.uris = item.uris.slice(0, LIKEDBY_PLAY);   // v2.31: a song list (Liked songs by an artist), 100 at most
+    if (typeof item.rwHeardAt === 'number') p.item.rwHeardAt = item.rwHeardAt;   // v2.44
     set(K.pending, p);
     return p;
   }
@@ -4063,9 +4111,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         if (!w.running || w.gen !== gen) return;
         if (d) {
           if (!mine()) { stopWake(); return; }
+          var cur = readPending() || p;   // v2.44: the stored tap, so a drag while asleep (exact spot, no rewind) counts
           del(K.pending);   // claim it before playing, so nothing can play it twice
           stopWake();
-          return playNow(p.item, p.opts);
+          return playNow(cur.item, cur.opts);
         }
         if (Date.now() + gap() > until) {
           stopWake();
@@ -4073,7 +4122,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
             del(K.pending);
             toast('Spotify still isn’t showing up. Start something in Spotify, then tap again.');
           } else {
-            p.manual = true; set(K.pending, p);
+            var cur = readPending();   // v2.44: update only the flag on the stored tap, so a drag during the wait is kept
+            if (cur && cur.at === p.at) { cur.manual = true; set(K.pending, cur); }
             toast('Spotify didn’t show up yet.', null, { text: 'Try again', fn: function () { resumePending(true); } });
           }
           return;
@@ -4122,9 +4172,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         if (!w.running || w.gen !== gen) return;
         if (d) {
           if (!mine()) { stopWake(); return; }
+          var cur = readPending() || p;   // v2.44: the stored tap, so a drag while asleep (exact spot, no rewind) counts
           del(K.pending);   // claim it before playing, so nothing can play it twice
           stopWake();
-          return playNow(p.item, p.opts);
+          return playNow(cur.item, cur.opts);
         }
         if (Date.now() + WAIT_POLL_MS > until) {
           stopWake();
@@ -4133,7 +4184,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
             del(K.pending);
             toast('Spotify still didn’t wake up. Start something in Spotify, then tap again.');
           } else {
-            p.manual = true; set(K.pending, p);
+            var cur = readPending();   // v2.44: update only the flag on the stored tap, so a drag during the wait is kept
+            if (cur && cur.at === p.at) { cur.manual = true; set(K.pending, cur); }
             showWaitTimeout();
           }
           return;
@@ -4334,7 +4386,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.43 (2026-11-27)';
+  var VERSION = 'v2.44 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -4360,6 +4412,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function paintSettings() {
     var t = themeMode();
     document.querySelectorAll('input[name="theme"]').forEach(function (r) { r.checked = r.value === t; });
+    var rw = rewindOn() ? 'on' : 'off';   // v2.44
+    document.querySelectorAll('input[name="rewind"]').forEach(function (r) { r.checked = r.value === rw; });
     $('searchFirst').value = searchFirst();
     $('slInfo').textContent = slStatsText();   // v2.15
   }
@@ -4410,6 +4464,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       ' · Marked played or unplayed on this phone: ' + markCount());   // v2.21
     line('Resume points: from this page’s own podcast history (no automatic Spotify checks)');
     line('Keep place (v2.42): ' + kpInfo + ' · this page load: ' + (kpBoot.nav || 'unknown') + (kpBoot.hash ? ', ' + kpBoot.hash : ''));
+    line('Rewind on resume: ' + (rewindOn() ? 'on (0 s under 5 min away, 10 s under 1 hour, 15 s under 1 day, 30 s after; none when this page didn’t hear it)' : 'off'));   // v2.44
     var npi = pl && pl.item;   // v2.18: does Spotify's Now Playing answer carry the episode's notes?
     line('Episode notes: ' + readNotes().length + ' on this phone, ' + (Object.keys(epNotes).length + Object.keys(epNotesRaw).length) + ' this visit' +
       (npi && npi.type === 'episode' ? ' · Now playing: ' + (typeof npi.description === 'string' ? npi.description.length + ' characters' : 'no description in the answer') +
@@ -4624,10 +4679,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function clearLastPlay() { lastPlayMem = null; del(K.lastplay); }
   // Moves the saved position only (not its time): where a frozen song got to, or a seek while asleep.
-  function setLastPos(ms) {
+  function setLastPos(ms, seeked) {
     var o = readLastPlay();
     if (!o) return;
     o.positionMs = Math.max(0, Math.round(ms));
+    if (seeked) o.seeked = true;   // v2.44: a spot you chose; Play starts exactly there (no rewind)
     lastPlayMem = o;
     set(K.lastplay, o);
   }
@@ -4704,7 +4760,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var it = p.item;
     var c = p.context;
     var ctx = (c && c.uri && (c.type === 'album' || c.type === 'playlist' || c.type === 'collection' || isLikedCtx(c))) ? c.uri : null;
-    return { kind: 'resume', id: it.id, name: it.name || 'Untitled', uri: it.uri, url: spotifyUrl(it), ctx: ctx, positionMs: Math.round(p.progress_ms || 0) };
+    var r = { kind: 'resume', id: it.id, name: it.name || 'Untitled', uri: it.uri, url: spotifyUrl(it), ctx: ctx, positionMs: Math.round(p.progress_ms || 0) };
+    var lp = readLastPlay();
+    if (lp && lp.seeked && lp.item && lp.item.uri === it.uri) r.exactPos = true;   // v2.44: dragged there while asleep: no rewind
+    return r;
   }
   function resumeFromIdle(ev) {
     var item = resumeItem();
@@ -5177,9 +5236,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (state.playerIdle) {
       // Asleep: just move the saved position; the next Play resumes from here.
       p.progress_ms = ms; state.playerAt = Date.now();
-      setLastPos(ms);
+      setLastPos(ms, true);
       var pd = readPending();
-      if (pd && pd.item && pd.item.kind === 'resume' && pd.item.uri === p.item.uri) { pd.item.positionMs = ms; set(K.pending, pd); }
+      if (pd && pd.item && pd.item.kind === 'resume' && pd.item.uri === p.item.uri) { pd.item.positionMs = ms; pd.item.exactPos = true; set(K.pending, pd); }   // v2.44: exactPos, no rewind
       paintProgress();
       paintIdle();
       return;
@@ -9470,6 +9529,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   $('sclShuffle').addEventListener('change', function () {   // v2.39
     if ($('sclShuffle').checked) set(K.linkShuffle, true); else del(K.linkShuffle);
     paintShortcutLinks();
+  });
+  document.querySelectorAll('input[name="rewind"]').forEach(function (r) {   // v2.44
+    r.addEventListener('change', function () {
+      if (!r.checked) return;
+      if (r.value === 'off') set(K.rewind, 'off'); else del(K.rewind);
+    });
   });
   $('slClear').addEventListener('click', function () {   // v2.15
     clearSavedLists();
