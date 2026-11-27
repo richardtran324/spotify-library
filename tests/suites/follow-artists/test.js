@@ -399,7 +399,7 @@ tests.push(function () {
         check('9 502 without a body: same plain words', lastToast(tab) === 'Couldn’t follow “New Artist”. Spotify isn’t answering right now.', tab.toasts());   // #41
         return tap({ status: 400, json: { error: { status: 400, message: 'Invalid uri' } } });
       }).then(function () {
-        check('9 400: didn’t accept following from this page', lastToast(tab) === 'Spotify didn’t accept following from this page (Invalid uri).', tab.toasts());
+        check('9 400: didn’t accept following from this page', lastToast(tab) === 'Spotify didn’t accept following from this page.', tab.toasts());
         check('9 400: nothing changed', b.textContent === 'Follow' && !t.isFollowed('new1') && JSON.stringify(cacheArtists(s)) === cache0);
         return tap({ throws: 'Load failed' });
       }).then(function () {
@@ -416,7 +416,7 @@ tests.push(function () {
         // Unfollow failing keeps Following.
         return tap({ status: 400, json: { error: { status: 400, message: 'Nope' } } });
       }).then(function () {
-        check('9 unfollow 400: didn’t accept unfollowing', lastToast(tab) === 'Spotify didn’t accept unfollowing from this page (Nope).', tab.toasts());
+        check('9 unfollow 400: didn’t accept unfollowing', lastToast(tab) === 'Spotify didn’t accept unfollowing from this page.', tab.toasts());
         check('9 unfollow 400: still Following', b.textContent === 'Following' && t.isFollowed('new1'));
         return tap({ status: 500 });
       }).then(function () {

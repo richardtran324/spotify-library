@@ -1083,6 +1083,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   var IDLE_POLL_MS = 60 * 1000;
   var DEV_COALESCE_MS = 15 * 1000;          // device checks on return to the page: at most one per 15 s
   var LATEST_MANUAL_MS = 5 * 60 * 1000;     // Latest episodes Refresh: at most once per 5 minutes
+  var LATEST_RETRY_MS = 60 * 1000;          // …but 1 minute after a try that failed (nothing was updated)
   var MY_ID = Math.random().toString(36).slice(2, 10);   // this copy of the page, for the one-poller lock
   // v2.11 podcast listening history: Spotify's recently played leaves out podcast episodes, so the page keeps its own.
   var EP_HIST_MAX = 60;                      // entries kept
@@ -1325,6 +1326,8 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     if (e && e.net) return { text: 'No internet connection.', retry: true, net: true };
     var s = e && e.status, m = (e && e.message) || '', reason = (e && e.reason) || '';
     if (reason === 'PREMIUM_REQUIRED' || (s === 403 && /premium/i.test(m))) return { text: 'Spotify Premium is needed to control playback.', retry: false };
+    // A 403 "Restriction violated" (e.g. Next/Previous Spotify won't do just now): plain words, no Try again.
+    if (s === 403 && /restriction/i.test(m)) return { text: 'Spotify didn’t allow that right now.', retry: false };
     if ((s === 403 || s === 404 || s === 451) && (reason === 'UNAVAILABLE' || /market|region|country|not available|unavailable/i.test(m))) return { text: 'That item isn’t available in your country.', retry: false };
     if (s >= 500 && s < 600) return { text: 'Spotify isn’t answering right now.', retry: true };
     return { text: m || 'unknown error', retry: false, raw: true };
@@ -1503,7 +1506,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
                 : 'Sign-in was cancelled. You’re still signed in.');
       return Promise.resolve(true);
     }
-    if (err) { renderSignIn('Spotify sign-in was cancelled or failed (' + err + ').'); return Promise.resolve(false); }
+    if (err) { renderSignIn(err === 'access_denied' ? 'Sign-in was cancelled.' : 'Spotify sign-in was cancelled or failed (' + err + ').'); return Promise.resolve(false); }
     if (params.get('state') !== get(K.state)) {
       // audit: lib-state and lib-verifier stay: a mismatch can mean another tab's sign-in is still in progress.
       if (get(K.token)) { toast('Sign-in check failed. You’re still signed in.'); return Promise.resolve(true); }
@@ -3778,14 +3781,16 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   // and then only the podcasts the library's episode counts say have new episodes, plus the ones not asked for
   // 3 days (see latestPlan). Never while catalog is paused, never before this visit's library answer (the counts)
   // arrives, at most once per 5 minutes, and never past the automatic part of the hour's catalog budget (catRoom).
-  // A Refresh that leaving the page cut short before it asked anything goes on as a Refresh (stoppedHidden 'manual').
+  // A Refresh that leaving the page cut short before it asked anything goes on as a Refresh (stoppedHidden 'manual',
+  // or 'retry' when that Refresh was retrying a failed try).
   function maybeLoadLatest() {
     var L = state.latest;
     if (!onLatestView() || document.hidden || L.loading) return;
     syncLatest();
     if (coolLeft('catalog') || state.libLoading) return;
     if (Date.now() - L.triedAt < LATEST_MANUAL_MS && L.triedAt <= Date.now()) return;
-    loadLatest(L.stoppedHidden === 'manual' ? 'manual' : 'auto');
+    var sh = L.stoppedHidden;
+    loadLatest(sh === 'manual' || sh === 'retry' ? 'manual' : 'auto', sh === 'retry');
   }
   // The Refresh link next to "Updated … ago": at most once per 5 minutes. v2.45: it first re-reads your podcasts'
   // episode counts (one library request per 50 podcasts, unless read in the last 2 minutes), then asks only the
@@ -3793,11 +3798,15 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   function refreshLatest() {
     var L = state.latest;
     if (L.loading || coolBlocked('catalog')) return;
-    var last = Math.max(L.triedAt || 0, (L.cache && !L.cache.partial && L.cache.at) || 0);
-    var wait = last + LATEST_MANUAL_MS - Date.now();
+    // The last try failed: nothing was updated, so it can be tried again after a minute (the catalog cool-off
+    // still applies). After a good load the 5-minute rule stays.
+    var failed = !!L.error;
+    var last = failed ? (L.triedAt || 0) : Math.max(L.triedAt || 0, (L.cache && !L.cache.partial && L.cache.at) || 0);
+    var wait = last + (failed ? LATEST_RETRY_MS : LATEST_MANUAL_MS) - Date.now();
     if (wait > 0 && last <= Date.now()) {
       var m = Math.max(1, Math.ceil(wait / 60000));
-      toast('Updated a moment ago. Try again in ' + m + (m === 1 ? ' minute.' : ' minutes.'));
+      toast(failed ? 'The last try didn’t work. Try again in a minute.'
+                   : 'Updated a moment ago. Try again in ' + m + (m === 1 ? ' minute.' : ' minutes.'));
       return;
     }
     L.loading = true; L.error = ''; L.triedAt = Date.now();
@@ -3807,8 +3816,9 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       if (seq !== L.seq) return;
       L.loading = false;
       // audit: left the page while the counts loaded: nothing was asked yet, so the Refresh goes on when you come back
-      if (document.hidden) { L.triedAt = 0; L.stoppedHidden = 'manual'; setTimeout(rerenderLatest, 0); return; }
-      loadLatest('manual');
+      // (as a retry of the failed podcasts if this Refresh was one)
+      if (document.hidden) { L.triedAt = 0; L.stoppedHidden = failed ? 'retry' : 'manual'; setTimeout(rerenderLatest, 0); return; }
+      loadLatest('manual', failed);
       setTimeout(rerenderLatest, 0);
     }, function (e) {
       if (seq !== L.seq) return;
@@ -3919,7 +3929,9 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     setTimeout(rerenderLatest, 0);
   }
   // mode: 'auto' (opening Latest) or 'manual' (its Refresh).
-  function loadLatest(mode) {
+  // retryFailed (a Refresh after a failed try): the podcasts whose last request failed are asked again too
+  // (otherwise they wait 12 hours), so the retry really retries.
+  function loadLatest(mode, retryFailed) {
     var L = state.latest;
     var manual = mode === 'manual';
     var all = state.data && state.data.shows;
@@ -3934,6 +3946,13 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     if (!state.libAt) {
       // This visit hasn't read the counts (library paused or failed): the podcasts asked longest ago fill up.
       ask = ask.concat(plan.rest.filter(function (s) { return ask.indexOf(s) === -1; }));
+    }
+    if (manual && retryFailed) {
+      var chk0 = (L.cache && L.cache.checks) || {}, now0 = Date.now();
+      ask = ask.concat(plan.rest.filter(function (s) {
+        var r = chk0[s.id];
+        return ask.indexOf(s) === -1 && Array.isArray(r) && r[1] === null && now0 - r[0] < LATEST_MS;
+      }));
     }
     if (!ask.length) {
       L.triedAt = Date.now(); L.held = false; L.error = ''; latestUpToDate(manual ? Date.now() : state.libAt);
@@ -6420,7 +6439,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       // Never leave a half-drawn screen covering the page.
       logError('Now Playing', 'open', err && err.message ? err.message : String(err));
       closeNp(false);
-      toast('Couldn’t open Now Playing (' + (err && err.message ? err.message : 'error') + ').');
+      toast('Couldn’t open Now Playing. Try again.');   // the reason is in Diagnostics (logged above)
       return;
     }
     $('npClose').focus({ preventScroll: true });
@@ -9239,7 +9258,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   }
   function editRefused(r, prefix, btn) {
     if (featureDenied('edit', r)) { openPerm('edit', btn); return; }   // the permission is missing or was taken back
-    if (r.status === 403) { toast('Spotify didn’t allow this change from this page (' + errMsg(r) + ').'); return; }
+    if (r.status === 403) { toast('Spotify didn’t allow this change from this page.'); return; }   // Spotify's text is in Diagnostics (api logs it)
     failToast(prefix, httpError(r));   // v2.43: plain words; no Try again for edits (a repeat could add twice)
   }
   // True when a change can be sent now (otherwise the reason is already on screen).
@@ -10730,7 +10749,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       if (!r.ok) {
         done();
         if (featureDenied('follow', r)) { openPerm('follow', from && document.body.contains(from) ? from : null); return; }
-        if (r.status === 400) { toast('Spotify didn’t accept ' + (on ? 'following' : 'unfollowing') + ' from this page (' + errMsg(r) + ').'); return; }
+        if (r.status === 400) { toast('Spotify didn’t accept ' + (on ? 'following' : 'unfollowing') + ' from this page.'); return; }   // Spotify's text is in Diagnostics
         failToast((on ? 'Couldn’t follow “' : 'Couldn’t unfollow “') + name + '”', httpError(r), function () { toggleFollow(item, null, on); });   // v2.43
         return;
       }
@@ -10780,10 +10799,17 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     closeRowMenu(false); rowRaw = {};   // v2.51
     paintPlayer();
   }
+  // Change Client ID (from the Sign in screen) opens this with the saved ID still saved: the box shows it, Back to
+  // sign in goes back with nothing changed, and the old sign-in is dropped only when a different ID is saved.
   function renderSetup(errMsgText) {
     stopApp();
     var main = $('main'); main.textContent = '';
+    var old = get(K.client);
+    old = typeof old === 'string' ? old : '';
     var input = el('input', { class: 'field', id: 'clientId', type: 'text', placeholder: 'Paste your Client ID', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'aria-label': 'Client ID', 'aria-describedby': 'clientIdErr' });
+    if (old) input.value = old;
+    var back = old ? el('button', { class: 'btn secondary', type: 'button', text: 'Back to sign in' }) : null;
+    if (back) back.addEventListener('click', function () { renderSignIn(); });
     var save = el('button', { class: 'btn', type: 'button', text: 'Save and sign in with Spotify' });
     var copy = el('button', { class: 'btn secondary', type: 'button', text: 'Copy this address' });
     var addr = el('div', { class: 'mono', id: 'redirect', text: REDIRECT });
@@ -10797,6 +10823,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       // audit AUTH-6: the error is a role=alert region and focus moves to the field, so VoiceOver speaks it
       if (!/^[0-9a-f]{32}$/i.test(v)) { err.textContent = 'That doesn’t look like a Client ID. It’s 32 letters and numbers, from your app’s Settings page.'; input.setAttribute('aria-invalid', 'true'); input.focus(); return; }
       input.removeAttribute('aria-invalid');
+      if (old && v.toLowerCase() !== old.toLowerCase()) del(K.token);   // the old sign-in belongs to the old app
       set(K.client, v); login();
     });
     var err = el('p', { class: 'err', id: 'clientIdErr', role: 'alert', text: errMsgText || '' });
@@ -10805,7 +10832,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       el('p', { text: 'In your Spotify developer app, set the Redirect URI to this exact address:' }),
       addr, copy,
       el('p', { text: 'Then paste the app’s Client ID here. It isn’t a password; it only identifies your app.' }),
-      input, save, err
+      input, save, err, back
     ]));
   }
   function renderSignIn(msg) {
@@ -10814,7 +10841,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     var go = el('button', { class: 'btn', type: 'button', text: 'Sign in with Spotify' });
     go.addEventListener('click', login);
     var reset = el('button', { class: 'btn secondary', type: 'button', text: 'Change Client ID' });
-    reset.addEventListener('click', function () { del(K.client); del(K.token); renderSetup(); });
+    reset.addEventListener('click', function () { renderSetup(); });   // nothing is forgotten until a new ID is saved
     main.appendChild(el('section', { class: 'card' }, [
       el('h2', { text: 'Sign in' }),
       el('p', { text: 'Sign in once on this phone. You’ll stay signed in until Spotify asks again (about every 6 months).' }),
@@ -11126,14 +11153,26 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   document.querySelectorAll('.schip').forEach(function (c) {
     c.addEventListener('click', function () { if (c.dataset.stype !== state.stype) setSearchType(c.dataset.stype, false); });
   });
+  // The button itself says "Refreshing…" (aria-busy) while the library loads and ignores taps until it's done.
+  // No toast: one would cover an Undo or a playback message, and a failure shows its own.
+  var refreshBusy = false;
+  var REFRESH_BUSY_MAX_MS = 60 * 1000;
   $('refreshBtn').addEventListener('click', function () {
+    if (refreshBusy) return;
     // v2.14: refreshes what isn't paused; album and podcast pages kept for this visit are asked again when opened.
     if (coolLeft('player') && coolLeft('library')) { coolToast('library'); return; }
     catMemo = {}; findMemo = {};
     plTrustFrom = Date.now();   // v2.37: saved playlists wait for the library's new snapshots
     if (!coolLeft('player')) { checkDevice(); schedulePoll(0, true); }
-    if (!coolLeft('library')) { likedFirst = null; refresh(); }   // v2.57: Recently liked songs waits for Liked Songs to open again
-    toast('Refreshing…');
+    if (coolLeft('library')) return;   // only the player check runs: nothing to wait for
+    likedFirst = null;   // v2.57: Recently liked songs waits for Liked Songs to open again
+    var b = $('refreshBtn');
+    b.textContent = 'Refreshing…'; b.setAttribute('aria-busy', 'true');
+    var cap = null, run = {};   // this run: a late answer from an earlier run changes nothing
+    refreshBusy = run;
+    var idle = function () { clearTimeout(cap); if (refreshBusy !== run) return; refreshBusy = false; b.textContent = 'Refresh'; b.removeAttribute('aria-busy'); };
+    cap = setTimeout(idle, REFRESH_BUSY_MAX_MS);   // a request that never answers can't leave the button stuck
+    refresh().then(idle, idle);   // refresh() never rejects (its catch shows the error)
   });
   $('bannerBtn').addEventListener('click', login);
   $('devBtn').addEventListener('click', openSheet);

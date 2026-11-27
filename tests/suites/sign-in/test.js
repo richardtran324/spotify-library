@@ -230,14 +230,16 @@ tests.push(function () {
   });
 });
 
-// 7. Sign-in screen: Change Client ID forgets the id and any token and returns to setup.
+// 7. Sign-in screen: Change Client ID opens setup and forgets nothing yet (plain-messages: the old ID and token stay
+// until a different ID is saved; see suites/plain-messages).
 tests.push(function () {
   var store = clientStore();
   return setup(store).then(function (tab) {
     store.setItem('lib-token', JSON.stringify({ access: 'x', refresh: 'y', expires: 0, scope: '' }));
+    var id0 = store.getItem('lib-client-id');
     click(tab, btn(tab, 'Change Client ID'));
-    check('7 Client ID removed', store.getItem('lib-client-id') === null);
-    check('7 token removed', store.getItem('lib-token') === null);
+    check('7 Client ID kept until a new one is saved', store.getItem('lib-client-id') === id0 && id0 !== null);
+    check('7 token kept until a new ID is saved', store.getItem('lib-token') !== null);
     check('7 setup screen shown', heading(tab) === 'One-time setup', heading(tab));
     check('7 nothing opened', navs(tab).length === 0);
   });
@@ -342,7 +344,7 @@ tests.push(function () {
 tests.push(function () {
   var store = clientStore({ 'lib-verifier': 'V'.repeat(64), 'lib-state': 'st1' });
   return setup(store, { url: BASE + '?error=access_denied&state=st1', token: okToken('A1') }).then(function (tab) {
-    check('13 cancelled message', heading(tab) === 'Sign in' && errText(tab) === 'Spotify sign-in was cancelled or failed (access_denied).', errText(tab));
+    check('13 cancelled message', heading(tab) === 'Sign in' && errText(tab) === 'Sign-in was cancelled.', errText(tab));
     check('13 nothing sent', tab.env.req.length === 0, tab.env.req);
     check('13 URL cleaned', tab.w.location.href === BASE && tab.w.location.search === '', tab.w.location.href);
     check('13 no token, not started', store.getItem('lib-token') === null && tab.t().state.started === false);
