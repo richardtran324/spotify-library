@@ -313,6 +313,14 @@ body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px));
 .lbar .btn svg { width: 18px; height: 18px; display: block; }
 .lnote { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 0.85rem; color: var(--muted); margin: 10px 2px 0; }
 .lnote .err { font-size: 0.85rem; }
+/* v2.24: Make a copy (playlists you don't own) */
+.dcopy { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 0 0 12px; overflow-wrap: anywhere; }
+.dcopy p { margin: 0; }
+.dcopy [tabindex="-1"]:focus, .dname[tabindex="-1"]:focus { outline: none; }
+.copysteps { margin: 0; padding-left: 1.4em; display: flex; flex-direction: column; gap: 4px; }
+.copynote { font-size: 0.85rem; color: var(--muted); }
+.lnote .copyline { min-width: 0; overflow-wrap: anywhere; }
+.lnote .copychg { flex-basis: 100%; }
 .newdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-right: 6px; vertical-align: 0.1em; }
 /* Now Playing bar: cover + title is a button that opens the "Now playing" sheet */
 .pinfo {
@@ -659,6 +667,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     searchType: 'lib-searchtype', // Search Spotify result type: 'all' (default) or one of SEARCH_TYPES
     showSort: 'lib-showsort',    // v2.7 Shows order; read only when 'lib-sort-shows' is unset (see sortMode)
     pins: 'lib-pins',            // [{kind, id, name, uri, url, img, sub[, ownerId, collaborative]}], oldest pin first; local only
+    plCopies: 'lib-pl-copies',   // v2.24: {original id: {copyId, name, ownerName, ownerId, uri, img, snap, count, at}}, 50 at most; local only
+    copyWatch: 'lib-copy-watch', // v2.24: {origId, name, at, known: [ids] | null, snap, count, ownerName, ownerId, uri, img[, no]}: set by Make a copy, 24 h
     recentSearches: 'lib-recent-searches', // [{q, at}], newest first
     queued: 'lib-queued',        // [{uri, at}]: what this page added to the queue with ＋ (last 24 h)
     queueHide: 'lib-queue-hide', // false shows the whole queue; anything else hides Spotify's own additions
@@ -1264,6 +1274,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       url: 'https://open.spotify.com/playlist/' + p.id,
       img: img(p.images),
       ownerId: (p.owner && p.owner.id) || '', collaborative: !!p.collaborative,
+      ownerName: (p.owner && p.owner.display_name) || '', snap: p.snapshot_id || '',   // v2.24: for Make a copy ('' = unknown)
       count: count,   // number of songs, for Most songs
       sub: 'Playlist' + (p.owner && p.owner.display_name ? ' · ' + p.owner.display_name : '') + (count ? ' · ' + count + ' songs' : '')
     };
@@ -2836,7 +2847,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.18 (2026-11-26)';
+  var VERSION = 'v2.24 (2026-11-27)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -2878,6 +2889,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var lc = state.latest.cache;
     line('Appearance: ' + themeMode() + ' · Search shows first: ' + searchFirst());
     line('Pinned: ' + readPins().length + ' · Queued with ＋ (24 h): ' + readQueued().length + ' · Recent searches: ' + recentSearches().length);
+    line('Playlist copies linked: ' + Object.keys(readCopies()).length + (readCopyWatch() ? ' · watching for a new copy' : ''));   // v2.24
     line('Latest episodes: ' + (lc ? lc.items.length + ' cached, updated ' + ago(new Date(lc.at).toISOString()) + (lc.failed ? ', ' + lc.failed + ' show(s) failed' : '') : 'not loaded') +
       ' · Latest: refreshes only when you open it (up to ' + LATEST_SHOWS + ' shows, cache ' + Math.round(LATEST_MS / 3600000) + ' h)');
     var eh = epHistory();
@@ -3926,13 +3938,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function itemRow(item) {
     var opens = opensOnTap(item);
-    var a = el('a', { class: 'item', href: item.url, 'data-verb': (opens ? 'Open “' : 'Play “') + item.name + '”', 'data-sub': item.sub || '', 'data-new': item.fresh ? '' : null }, [
+    var sub = (item.sub || '') + copySub(item);   // v2.24: " · You have a copy" / " · Copy" (shown only, never stored)
+    var a = el('a', { class: 'item', href: item.url, 'data-verb': (opens ? 'Open “' : 'Play “') + item.name + '”', 'data-sub': sub, 'data-new': item.fresh ? '' : null }, [
       coverFor(item),
       el('div', { class: 'meta' }, [
         item.fresh
           ? el('div', { class: 'name' }, [el('span', { class: 'newdot', role: 'img', 'aria-label': 'New' }), document.createTextNode(item.name)])
           : el('div', { class: 'name', text: item.name }),
-        el('div', { class: 'sub', text: item.sub })
+        el('div', { class: 'sub', text: sub })
       ])
     ]);
     paintRowLabel(a, false);
@@ -4402,6 +4415,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     main.appendChild(el('div', { id: 'dsort' }));
     main.appendChild(el('ul', { class: 'list compact', id: 'dlist' }));
     main.appendChild(el('div', { class: 'dfoot', id: 'dfoot' }));
+    main.appendChild(el('div', { class: 'dcopy', id: 'dcopy', hidden: true }));   // v2.24: Make a copy
     paintDetailSort();
     paintDetailList();
     paintDetailFoot();
@@ -4470,6 +4484,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!d || !f) return;
     paintDetailSum();
     paintDetailNote();
+    paintDetailCopy();   // v2.24: its own box, so the steps never redraw #dfoot or reload an open player
     if (d.restricted && d.embed && f.querySelector('iframe.sembed')) return;   // v2.16: keep the open player (redrawing would reload it)
     f.textContent = '';
     if (d.restricted) {
@@ -4915,12 +4930,234 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
           else link('Check for new episodes', function (dd) { checkNewEpisodes(dd, false); });
         }
       }
-    }
+    } else if (kind === 'playlist') copyNoteParts(d, parts, link);   // v2.24
     parts.forEach(function (p, i) {
       if (i && p.tagName === 'BUTTON') n.appendChild(el('span', { 'aria-hidden': 'true', text: '·' }));
       n.appendChild(p);
     });
     n.hidden = !parts.length;
+  }
+
+  // ---------- Make a copy (v2.24) ----------
+  // Spotify only lets personal apps list songs in playlists you own or collaborate on, and the page can't read
+  // anyone else's playlist to copy it. So Make a copy shows how to copy it in the Spotify app. After Refresh the
+  // page links the copy to the original on this phone (lib-pl-copies) and says when the original has changed,
+  // from the /me/playlists answer it already loads. Nothing here sends a request.
+  var COPY_MAX = 50;
+  var COPY_WATCH_MS = 24 * 60 * 60 * 1000;
+  // The Spotify app's wording is unverified on the current iPhone app: if its menu differs, change these strings only.
+  var COPY_TEXT = {
+    intro: 'Copy it in the Spotify app, and the copy will list its songs here:',
+    steps: ['Tap Open in Spotify below.', 'Tap ⋯ under the playlist’s name.', 'Tap Add to other playlist.', 'Tap New playlist at the top.', 'Come back here and tap Refresh.'],
+    open: 'Open in Spotify',
+    note: function (owner) {
+      return 'Your copy won’t change when ' + owner + ' changes theirs. Keep this playlist in your library and the page will tell you when it changes. Tap its heart to remove it if you only want your copy.';
+    }
+  };
+  function readCopies() {
+    var m = get(K.plCopies), out = {};
+    if (!m || typeof m !== 'object' || Array.isArray(m)) return out;
+    Object.keys(m).forEach(function (k) {
+      var c = m[k];
+      if (c && typeof c === 'object' && typeof c.copyId === 'string' && c.copyId && c.copyId !== k) out[k] = c;
+    });
+    return out;
+  }
+  function writeCopies(m) {
+    var keys = Object.keys(m);
+    if (keys.length > COPY_MAX) {
+      keys.sort(function (a, b) { return (m[b].at || 0) - (m[a].at || 0); }).slice(COPY_MAX).forEach(function (k) { delete m[k]; });
+    }
+    set(K.plCopies, m);
+  }
+  // The original whose copy is copyId: {id, rec}, or null.
+  function copyOrigin(copyId, m) {
+    m = m || readCopies();
+    var keys = Object.keys(m);
+    for (var i = 0; i < keys.length; i++) { if (m[keys[i]].copyId === copyId) return { id: keys[i], rec: m[keys[i]] }; }
+    return null;
+  }
+  function libPlaylist(id) {
+    var list = (state.data && state.data.playlists) || [];
+    for (var i = 0; i < list.length; i++) { if (list[i] && list[i].id === id) return list[i]; }
+    return null;
+  }
+  // The copy of an original, when that copy is one of your current playlists: the copy's playlist, or null.
+  function linkedCopy(origId) {
+    var c = readCopies()[origId];
+    return c ? libPlaylist(c.copyId) : null;
+  }
+  function copySub(item) {
+    if (!item || item.kind !== 'playlist' || !item.id) return '';
+    var m = readCopies();
+    if (m[item.id]) return ' · You have a copy';
+    return copyOrigin(item.id, m) ? ' · Copy' : '';
+  }
+  function ownPlaylists(data) {
+    if (!data || !data.me || !data.me.id || !Array.isArray(data.playlists)) return null;   // can't tell yours apart
+    return data.playlists.filter(function (p) { return p && p.id && p.ownerId === data.me.id; });
+  }
+  function readCopyWatch() {
+    var w = get(K.copyWatch);
+    if (!w || typeof w !== 'object' || typeof w.origId !== 'string' || !w.origId || typeof w.at !== 'number') return null;
+    var age = Date.now() - w.at;
+    if (age < 0 || age > COPY_WATCH_MS) return null;
+    if (w.known !== null && !Array.isArray(w.known)) return null;
+    return w;
+  }
+  function copyNorm(s) { return String(s || '').toLowerCase().replace(/\s+/g, ' ').trim(); }
+  function startCopyWatch(item) {
+    var lib = libPlaylist(item.id) || item;
+    var own = ownPlaylists(state.data);
+    set(K.copyWatch, {
+      origId: item.id, name: lib.name || item.name || '', at: Date.now(),
+      known: own ? own.map(function (p) { return p.id; }) : null,
+      snap: lib.snap || '', count: lib.count || 0,
+      ownerName: lib.ownerName || item.ownerName || '', ownerId: lib.ownerId || item.ownerId || '',
+      uri: lib.uri || item.uri || '', img: lib.img || item.img || ''
+    });
+  }
+  // Links copyId to the watched original (a newer link replaces the older one) and ends the watch.
+  function linkCopy(w, copyId) {
+    if (!copyId || copyId === w.origId) return;
+    var m = readCopies();
+    Object.keys(m).forEach(function (k) { if (m[k].copyId === copyId) delete m[k]; });
+    var lib = libPlaylist(w.origId);   // a baseline the watch didn't have (opened from a pin or an older cache)
+    m[w.origId] = {
+      copyId: copyId, name: w.name || (lib && lib.name) || '', ownerName: w.ownerName || '', ownerId: w.ownerId || '',
+      uri: w.uri || ('spotify:playlist:' + w.origId), img: w.img || '',
+      snap: w.snap || (lib && lib.snap) || '', count: w.count || (lib && lib.count) || 0, at: Date.now()
+    };
+    writeCopies(m);
+    del(K.copyWatch);
+  }
+  // After each full library load (refresh): drop links whose copy is gone, then link a new copy by name.
+  function matchCopies(data) {
+    var own = ownPlaylists(data);
+    if (!own) return;
+    var ownIds = {}, lib = {};
+    own.forEach(function (p) { ownIds[p.id] = true; });
+    data.playlists.forEach(function (p) { if (p && p.id) lib[p.id] = p; });
+    var m = readCopies(), changed = false;
+    Object.keys(m).forEach(function (k) {
+      var c = m[k];
+      if (!ownIds[c.copyId]) { delete m[k]; changed = true; return; }
+      var o = lib[k];   // the original is still in your library: keep its name and cover current (snap and count stay the baseline)
+      if (o) {
+        var upd = { name: o.name || c.name, img: o.img || c.img, ownerName: o.ownerName || c.ownerName, ownerId: o.ownerId || c.ownerId, uri: o.uri || c.uri };
+        Object.keys(upd).forEach(function (f) { if (upd[f] !== c[f]) { c[f] = upd[f]; changed = true; } });
+      }
+    });
+    if (changed) writeCopies(m);
+    var w = readCopyWatch();
+    if (w && Array.isArray(w.known)) {
+      var known = {}, key = copyNorm(w.name);
+      w.known.forEach(function (id) { known[id] = true; });
+      var hits = key ? own.filter(function (p) { return !known[p.id] && p.id !== w.origId && copyNorm(p.name) === key; }) : [];
+      if (hits.length === 1) {
+        linkCopy(w, hits[0].id);
+        if (readCopies()[w.origId]) toast('Linked your copy of “' + w.name + '”.');
+      }
+    }
+    if (state.detail && state.detail.kind !== 'artist') { paintDetailNote(); paintDetailCopy(); }
+  }
+  function copyFocus(sel) {
+    var n = sel && document.querySelector(sel);
+    if (!n) return;
+    if (!n.hasAttribute('tabindex') && !/^(A|BUTTON)$/.test(n.tagName)) n.setAttribute('tabindex', '-1');
+    try { n.focus({ preventScroll: true }); } catch (e) {}
+  }
+  function repaintCopy(focusSel) { paintDetailNote(); paintDetailCopy(); copyFocus(focusSel); }
+  function unlinkCopy(origId) {
+    var m = readCopies();
+    delete m[origId];
+    writeCopies(m);
+  }
+  // The #dnote line for playlists: an original with a copy, a copy, or "Is this your copy?" while a watch is on.
+  function copyNoteParts(d, parts, link) {
+    var it = d.item;
+    if (!it || !it.id) return;
+    function tag(attr) { parts[parts.length - 1].setAttribute('data-copy', attr); }
+    var copy = linkedCopy(it.id);
+    if (copy) {
+      parts.push(el('span', { class: 'copyline', text: 'You have a copy' }));
+      link('Open your copy', function () { var p = libPlaylist(copy.id); if (p) openDetail(p); else repaintCopy('.dname'); });   // gone since: redraw
+      tag('open-copy');
+      link('Unlink', function () { unlinkCopy(it.id); repaintCopy('#dcopy [data-copy="make"], #dcopy [data-copy="intro"]'); });
+      tag('unlink');
+      return;
+    }
+    var o = copyOrigin(it.id);
+    if (o) {
+      var r = o.rec;
+      parts.push(el('span', { class: 'copyline', text: 'Copy of “' + (r.name || 'a playlist') + '”' + (r.ownerName ? ' by ' + r.ownerName : '') }));
+      link('Open original', function () {
+        var name = r.name || 'Playlist';
+        openDetail(libraryPlaylist(o.id) || {
+          kind: 'playlist', id: o.id, name: name, uri: r.uri || ('spotify:playlist:' + o.id), url: 'https://open.spotify.com/playlist/' + o.id,
+          img: r.img || '', ownerId: r.ownerId || '', ownerName: r.ownerName || '', collaborative: false, count: 0,
+          sub: 'Playlist' + (r.ownerName ? ' · ' + r.ownerName : '')
+        });
+      });
+      tag('open-orig');
+      link('Unlink', function () { unlinkCopy(o.id); repaintCopy('.dname'); });
+      tag('unlink');
+      var cur = libPlaylist(o.id);   // only from the library you already loaded; an unfollowed original isn't checked
+      if (cur && ((r.snap && cur.snap && r.snap !== cur.snap) || (r.count > 0 && cur.count > 0 && r.count !== cur.count))) {
+        parts.push(el('span', { class: 'copyline copychg', text: 'The original has changed since you copied it.' }));
+      }
+      return;
+    }
+    var w = readCopyWatch();
+    if (w && isOwn(it) && it.id !== w.origId && (!w.known || w.known.indexOf(it.id) === -1) && !(Array.isArray(w.no) && w.no.indexOf(it.id) !== -1)) {
+      parts.push(el('span', { class: 'copyline', text: 'Is this your copy of “' + (w.name || 'that playlist') + '”?' }));
+      link('Link it', function () {
+        var ww = readCopyWatch();
+        if (!ww || ww.origId !== w.origId) { repaintCopy('.dname'); return; }   // the watch ended or changed since this was drawn
+        linkCopy(ww, it.id);
+        if (readCopies()[ww.origId]) toast('Linked your copy of “' + ww.name + '”.');
+        repaintCopy('#dnote [data-copy="open-orig"]');
+      });
+      tag('link');
+      link('No', function () {
+        var ww = readCopyWatch();
+        if (ww && ww.origId === w.origId) {
+          if (Array.isArray(ww.known)) ww.known = ww.known.concat([it.id]);
+          else ww.no = (Array.isArray(ww.no) ? ww.no : []).concat([it.id]);
+          set(K.copyWatch, ww);
+        }
+        repaintCopy('.dname');
+      });
+      tag('no');
+    }
+  }
+  // The box under #dfoot in the view of someone else's playlist: Make a copy, then the steps.
+  function paintDetailCopy() {
+    var d = state.detail, box = $('dcopy');
+    if (!box) return;
+    var it = d && d.kind !== 'artist' ? d.item : null;
+    var show = !!(it && d.restricted && it.kind === 'playlist' && it.id && !isOwn(it) && !it.collaborative && !linkedCopy(it.id));
+    var a = document.activeElement;
+    var had = a && box.contains(a) ? a.getAttribute('data-copy') : null;
+    box.textContent = '';
+    box.hidden = !show;
+    if (!show) { if (had) copyFocus('#dnote [data-copy="open-copy"]'); return; }   // linked meanwhile: focus moves to its link
+    if (!d.copyHelp) {
+      var b = el('button', { class: 'btn secondary', type: 'button', 'data-copy': 'make', text: 'Make a copy' });
+      b.addEventListener('click', function () {
+        d.copyHelp = true;
+        startCopyWatch(it);
+        if (state.detail === d) { paintDetailCopy(); copyFocus('#dcopy [data-copy="intro"]'); }
+      });
+      box.appendChild(b);
+    } else {
+      box.appendChild(el('p', { 'data-copy': 'intro', tabindex: '-1', text: COPY_TEXT.intro }));
+      box.appendChild(el('ol', { class: 'copysteps' }, COPY_TEXT.steps.map(function (s) { return el('li', { text: s }); })));
+      box.appendChild(el('a', { class: 'btn secondary', 'data-copy': 'open', href: it.url || ('https://open.spotify.com/playlist/' + it.id), text: COPY_TEXT.open }));
+      var r = libPlaylist(it.id) || it;
+      box.appendChild(el('p', { class: 'copynote', text: COPY_TEXT.note(r.ownerName || it.ownerName || 'the owner') }));
+    }
+    if (had) copyFocus('#dcopy [data-copy="' + had + '"]');
   }
 
   // ---------- artist view (v2.12) ----------
@@ -5134,6 +5371,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function refresh() {
     return loadData().then(function (d) {
       state.data = d;
+      matchCopies(d);   // v2.24: link a new copy, drop links to deleted copies (no requests)
       seedSaved(d, true);
       renderList();
       paintHearts();
