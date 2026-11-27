@@ -272,7 +272,8 @@ ul.list.compact .cover.num { width: 28px; }
   display: flex; gap: 12px; align-items: center;
 }
 body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px)); }
-.toast a { color: var(--bg); font-weight: 700; overflow-wrap: anywhere; }
+.toast a { color: var(--bg); font-weight: 700; }
+.toast .tsel { font-weight: 700; min-width: 0; overflow-wrap: anywhere; -webkit-user-select: all; user-select: all; }   /* v2.20: one tap selects the link */
 .toastbtn {
   font: inherit; font-weight: 700; color: var(--bg); background: none;
   border: 1px solid currentColor; border-radius: 8px; padding: 6px 12px; min-height: 40px; cursor: pointer; flex: none;
@@ -3442,7 +3443,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     } else copyLink(url);
   }
   function copyLink(url) {
-    function byHand() { toast('Copy this link:', { href: url, text: url }); }
+    // Last resort: the link as plain text (one tap selects it, a link would open Spotify), up for 15 s or until Close.
+    function byHand() {
+      toast('Copy this link:', null, { text: 'Close', fn: function () {} });
+      var t = $('toast');
+      t.insertBefore(el('span', { class: 'tsel', text: url }), t.querySelector('.toastbtn'));
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(function () { t.hidden = true; }, 15000);
+    }
     var c = navigator.clipboard;
     if (!c || !c.writeText) return byHand();
     var p;
