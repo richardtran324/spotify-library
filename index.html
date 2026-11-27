@@ -1067,7 +1067,8 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     linkShuffle: 'lib-link-shuffle', // v2.39: true adds &shuffle=1 to copied shortcut links (Diagnostics)
     // v2.45: smarter Latest and the catalog budget guard
     catMeter: 'lib-cat-meter',   // {minute index: catalog requests}, last 60 minutes, all copies (the budget guard)
-    showSeen: 'lib-show-seen'    // {showId: episode count when you last opened it}, saved podcasts only ("N new")
+    showSeen: 'lib-show-seen',   // {showId: episode count when you last opened it}, saved podcasts only ("N new")
+    jump: 'lib-jump'             // {at, jump: [card, …]}: Home's last Jump back in cards from Recently played (HOME_JUMP at most), shown on the next open for 24 h
   };
   // v2.13 rate limits. Spotify counts an app's requests in a rolling 30-second window (and Development Mode apps
   // have a separate, unpublished quota); either one answers 429. v2.14: the quota is counted per kind of request
@@ -2149,7 +2150,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   }
   // v2.56: Recents. When each playlist, album or podcast was last played, from what the page already holds:
   // the last song heard per album or playlist (lib-ctx-last, which also takes in Recently played), Home's
-  // Recently played contexts (state.recent.jump, memory only) and the podcast history (lib-ep-history).
+  // Recently played contexts (state.recent.jump; on open, the saved lib-jump cards) and the podcast history (lib-ep-history).
   // No requests. Items never seen playing keep the default order after the played ones.
   function recentKey(view, x) {
     if (!x || !x.id) return '';
@@ -3343,7 +3344,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     state.recentTriedAt = Date.now();
     logShow = LOG_ROWS;   // v2.30: the log opens at its newest rows again
     state.recent = { items: state.recent.items, jump: state.recent.jump, loading: true, error: '' };
-    renderIfRecent();
+    if (!state.detail && state.filter === 'recent') renderList();   // only Recent shows "Loading…"; Home would redraw for nothing
     api('/me/player/recently-played?limit=50').then(function (r) {
       if (seq !== state.recentSeq) return;
       if (!r.ok) throw httpError(r);   // v2.43: keeps status and reason
@@ -3377,8 +3378,11 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
         var m = mapTrack(t);
         if (m) { var when = ago(it.played_at); if (when) m.sub += ' · ' + when; m.at = at; out.push(m); }
       });
+      var jumpWas = jumpKey(state.recent.jump);
       state.recent = { items: out, jump: jump, loading: false, error: '' };
-      renderIfRecent();
+      set(K.jump, { at: Date.now(), jump: jump.slice(0, HOME_JUMP) });   // Home's next open starts with these cards
+      // Home redraws only when its cards changed (or a name filter shows more than the first few).
+      if (state.filter === 'recent' || state.query.trim() || jumpKey(jump) !== jumpWas) renderIfRecent();
     }).catch(function (e) {
       if (seq !== state.recentSeq) return;
       if (e.message === 'signed-out') return renderSignIn();
@@ -3390,6 +3394,21 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
         if (state.filter === 'recent' && !state.detail) coolToast(e.group);
       } else state.recent.error = failText('Couldn’t load recently played', e);   // v2.43
       renderIfRecent();
+    });
+  }
+  // The first HOME_JUMP Jump back in cards as [song uri, played at] pairs: equal keys draw the same cards.
+  function jumpKey(j) { return JSON.stringify((j || []).slice(0, HOME_JUMP).map(function (c) { return [c && c.uri, c && c.at]; })); }
+  // Saved cards from an earlier open (K.jump, under 24 h old). A playlist card opens the playlist as the library has it
+  // now, and is left out if it's no longer in your library; Liked Songs reads its count again.
+  var JUMP_KEEP_MS = 24 * 60 * 60 * 1000;
+  function savedJump() {
+    var jc = get(K.jump), now = Date.now();
+    if (!jc || !Array.isArray(jc.jump) || typeof jc.at !== 'number' || jc.at > now || now - jc.at >= JUMP_KEEP_MS) return null;
+    return jc.jump.filter(function (c) {
+      if (!c || typeof c !== 'object' || !c.uri) return false;
+      if (c.playlist) { c.playlist = c.playlist.id ? inLibraryPlaylist(c.playlist.id) : null; return !!c.playlist; }
+      if (c.liked) c.liked = likedDetailItem();
+      return true;
     });
   }
   // Home: at most one recently-played request per 15 minutes (v2.13), and only while Home is on screen.
@@ -7360,10 +7379,32 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     requestSaved(savableUris(shown.filter(function (i) { return i.kind !== 'track' || fresh[i.uri]; })));
   }
   // v2.42: every list redraw also tries a waiting scroll restore and updates Jump to playing.
-  function renderList() { renderListNow(); kpTryList(); kpPaintJump(); }
+  function renderList() { renderListNow(); stripRestore(); kpTryList(); kpPaintJump(); }
+  // Card strips (Pinned, Continue listening, Jump back in, Your playlists) keep their sideways scroll when the list
+  // redraws (a changed library, Latest, marks, Back from a list), per filter, this visit. Not while the name box filters.
+  var stripX = {};        // 'filter key:strip heading id' -> scrollLeft
+  var stripKey = null;    // the filter key whose strips #main shows now (null: a song list, a filtered view or nothing)
+  function stripSave() {
+    if (stripKey == null) return;
+    document.querySelectorAll('#main ul.cl[aria-labelledby]').forEach(function (ul) {
+      stripX[stripKey + ':' + ul.getAttribute('aria-labelledby')] = ul.scrollLeft || 0;
+    });
+  }
+  function stripRestore() {
+    if (state.detail) return;
+    stripKey = state.query.trim() ? null : kpKey();   // filtered strips are neither restored nor saved
+    if (stripKey == null) return;
+    document.querySelectorAll('#main ul.cl[aria-labelledby]').forEach(function (ul) {
+      var x = stripX[stripKey + ':' + ul.getAttribute('aria-labelledby')];
+      if (!x) return;
+      var max = (ul.scrollWidth || 0) - (ul.clientWidth || 0);
+      ul.scrollLeft = max > 0 ? Math.min(x, max) : x;
+    });
+  }
   function renderListNow() {
     if (state.detail) return;   // the song list view owns the page
     var main = $('main');
+    stripSave();
     main.textContent = '';
     azHide();   // v2.58: shown again below when this list qualifies
     var plk = linkOf($('search').value);   // v2.36: a pasted Spotify link replaces the list
@@ -8121,6 +8162,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     var fa0 = document.activeElement;
     var retHref = (fa0 && fa0.matches && fa0.matches('#main a.item, #main a.clcard')) ? fa0.getAttribute('href') : null;
     dropEmbed(old);   // v2.27
+    if (!old) { stripSave(); stripKey = null; }   // leaving the list: Back brings its card strips back where they were
     var d = item.kind === 'artist'
       ? { kind: 'artist', item: item, img: '', items: [], offset: 0, more: false, total: null, loading: false, error: '', lastGot: 0 }
       : { item: item, items: [], next: null, loading: false, error: '', restricted: false, lastUrl: null,
@@ -10199,7 +10241,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   // After each full library load (refresh): drop links whose copy is gone, then link a new copy by name.
   function matchCopies(data) {
     var own = ownPlaylists(data);
-    if (!own) return;
+    if (!own) return false;
     var ownIds = {}, lib = {};
     own.forEach(function (p) { ownIds[p.id] = true; });
     data.playlists.forEach(function (p) { if (p && p.id) lib[p.id] = p; });
@@ -10221,10 +10263,11 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       var hits = key ? own.filter(function (p) { return !known[p.id] && p.id !== w.origId && copyNorm(p.name) === key; }) : [];
       if (hits.length === 1) {
         linkCopy(w, hits[0].id);
-        if (readCopies()[w.origId]) toast('Linked your copy of “' + w.name + '”.');
+        if (readCopies()[w.origId]) { toast('Linked your copy of “' + w.name + '”.'); changed = true; }
       }
     }
     if (state.detail && state.detail.kind !== 'artist') { paintDetailNote(); paintDetailCopy(); }
+    return changed;   // true: a copy link changed (refresh redraws the list)
   }
   function copyFocus(sel) {
     var n = sel && document.querySelector(sel);
@@ -10828,13 +10871,14 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     return loadData().then(function (d) {
       state.libLoading = false;
       unseedRemoved(state.data, d);   // audit: start-up seeds hearts from the last visit's cached library
+      var same = libSame(state.data, d);   // the answer is what's already on screen (from the saved library)
       state.data = d;
       state.libAt = Date.now();   // v2.45: when the podcast counts were read
       syncSeen();   // v2.45: "N new" starting points
-      matchCopies(d);   // v2.24: link a new copy, drop links to deleted copies (no requests)
+      var copies = matchCopies(d);   // v2.24: link a new copy, drop links to deleted copies (no requests)
       notePlaylists(d);   // v2.52: records playlists seen for the first time (no requests)
       seedSaved(d, true);
-      renderList();
+      if (!same || copies) renderList();   // an unchanged library isn't redrawn under your finger
       paintHearts();
       paintFollows();   // v2.25: the followed list arrived or changed
       if (onLatestView()) maybeLoadLatest();   // v2.14: Latest was open before the shows list arrived
@@ -10859,6 +10903,11 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       } else if (!cool && !e.net) failToast('Couldn’t refresh', e, refresh);   // v2.43: no internet shows the line instead
     });
   }
+  // Two library answers hold the same things (the time they were read aside).
+  function libSame(a, b) {
+    if (!a || !b) return false;
+    try { return JSON.stringify(Object.assign({}, a, { at: 0 })) === JSON.stringify(Object.assign({}, b, { at: 0 })); } catch (e) { return false; }
+  }
   function startApp() {
     state.started = true;
     $('top').hidden = false;
@@ -10870,6 +10919,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     state.data = get(K.cache);
     var lc = get(K.latest);
     state.latest.cache = (lc && Array.isArray(lc.items) && typeof lc.at === 'number') ? lc : null;
+    if (!state.recent.jump) state.recent.jump = savedJump();   // Jump back in is there on the first draw
     loadSavedSession();   // v2.13: saved-state answers from earlier in this browser session
     seedSaved(state.data, false);
     syncSeen();               // v2.45: from the saved library until this visit's answer arrives
