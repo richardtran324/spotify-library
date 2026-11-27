@@ -1,5 +1,5 @@
 'use strict';
-// Recents sort and By you (v2.50) tests: jsdom, mocked fetch, shared localStorage.
+// Recents sort and By you (v2.58) tests: jsdom, mocked fetch, shared localStorage.
 // Recents (Playlists, Albums, Podcasts → Shows) puts what was played most recently first, from what the page already
 // holds (lib-ctx-last, Home's Recently played contexts, lib-ep-history), then the rest in the default order.
 // By you (Playlists) shows only playlists you own. Both send no requests.
