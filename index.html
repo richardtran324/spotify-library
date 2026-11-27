@@ -676,7 +676,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       <ul class="scllist" id="sclList"></ul>
       <ol class="sclsteps">
         <li>Tap Copy link next to what you want.</li>
-        <li>In the Shortcuts app, tap +, add the action Open URLs and paste the link. Name the shortcut; that’s what you say to Siri.</li>
+        <li>In the Shortcuts app, tap +, add the action Open URLs and paste the link. Name the shortcut; that’s what you say to Siri. (A Spotify Share link also works after play=, as it is.)</li>
         <li>Home Screen: in Shortcuts, tap ⋯ on the shortcut, tap ⓘ (Details), then Add to Home Screen.</li>
         <li>Back Tap: Settings → Accessibility → Touch → Back Tap, pick Double Tap or Triple Tap, then the shortcut.</li>
         <li>The link opens in Safari, where you’re signed in. If Spotify is asleep, the page waits as set above (When Spotify isn’t running).</li>
@@ -897,18 +897,35 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   };
 
   var toastTimer = null;
+  // v2.36: a toast whose action has `hold` (ms) stays up that long: other toasts meanwhile wait and the newest
+  // shows when it times out (pressing its button drops them; the button's own action says what happened).
+  var toastHold = null;   // {until, next: [msg, link, action] | null}
   function toast(msg, link, action) {
     var t = $('toast');
+    if (toastHold && !(action && action.hold)) {
+      if (Date.now() < toastHold.until && !t.hidden) { toastHold.next = [msg, link, action]; return; }
+      toastHold = null;
+    }
     t.textContent = '';
     t.appendChild(el('span', { text: msg }));
     if (link) t.appendChild(el('a', { href: link.href, text: link.text }));
     if (action) {
       var b = el('button', { class: 'toastbtn', type: 'button', text: action.text });
-      b.addEventListener('click', function () { t.hidden = true; clearTimeout(toastTimer); action.fn(); });
+      b.addEventListener('click', function () { t.hidden = true; clearTimeout(toastTimer); if (action.hold) toastHold = null; action.fn(); });
       t.appendChild(b);
     }
     t.hidden = false;
     clearTimeout(toastTimer);
+    if (action && action.hold) {
+      toastHold = { until: Date.now() + action.hold, next: null };
+      toastTimer = setTimeout(function () {
+        t.hidden = true;
+        var n = toastHold && toastHold.next;
+        toastHold = null;
+        if (n) toast(n[0], n[1], n[2]);
+      }, action.hold);
+      return;
+    }
     toastTimer = setTimeout(function () { t.hidden = true; }, (link || action) ? 8000 : 3000);
   }
   function errMsg(r) {
@@ -3210,24 +3227,28 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   var LINK_WAIT_MS = 20000;   // v2.36: how long a link waits for the library (first visit) or the first player answer
   var linkReq = null;         // v2.36: {name} or {kind, id, uri}, plus shuffle and at; played once, then null
   var linkTimer = null;
+  // v2.36: own keys only, so ?play=constructor or __proto__ never matches something built in.
+  function linkKind(k) { return Object.prototype.hasOwnProperty.call(LINK_KINDS, k) ? LINK_KINDS[k] : ''; }
+  function linkName(k) { return Object.prototype.hasOwnProperty.call(LINK_NAMES, k) ? k : ''; }
   var linkNote = '';          // v2.36: what happened to this visit's link, for Diagnostics
   // v2.36: the play= value as {name} or {kind, id, uri}; null when it isn't one of the forms above.
   function parsePlayLink(v) {
     v = String(v || '').trim();
     if (!v || v.length > 200) return null;
     var low = v.toLowerCase();
-    if (LINK_NAMES[low]) return { name: low };
-    if (/^spotify:user:[^:]+:collection$/.test(v) || low === 'spotify:collection:tracks') return { name: 'liked' };
-    var m = /^spotify:([a-z]+):([A-Za-z0-9]{1,40})$/.exec(v) ||
-      /^https:\/\/open\.spotify\.com\/(?:intl-[a-z-]+\/)?([a-z]+)\/([A-Za-z0-9]{1,40})(?:[?#].*)?$/.exec(v);
+    if (linkName(low)) return { name: low };
+    if (/^spotify:user:[^:]+:collection$/i.test(v) || low === 'spotify:collection:tracks' ||
+      /^https:\/\/open\.spotify\.com\/(?:intl-[a-z-]+\/)?collection\/tracks\/?(?:[?#].*)?$/i.test(v)) return { name: 'liked' };
+    var m = /^spotify:([a-z]+):([A-Za-z0-9]{1,40})$/i.exec(v) ||
+      /^https:\/\/open\.spotify\.com\/(?:intl-[a-z-]+\/)?([a-z]+)\/([A-Za-z0-9]{1,40})\/?(?:[?#].*)?$/i.exec(v);
     if (!m) return null;
-    var kind = LINK_KINDS[m[1]];
+    var kind = linkKind(m[1].toLowerCase());
     if (!kind) return null;
     return { kind: kind, id: m[2], uri: 'spotify:' + kind + ':' + m[2] };
   }
   // v2.36: the shortcut link for a list or a name ('' when it can't have one).
   function linkFor(what, shuffle) {
-    var v = typeof what === 'string' ? what : (what && what.kind === 'liked' ? 'liked' : (what && what.uri && LINK_KINDS[what.kind] ? what.uri : ''));
+    var v = typeof what === 'string' ? what : (what && what.kind === 'liked' ? 'liked' : (what && what.uri && linkKind(what.kind) ? what.uri : ''));
     if (!v) return '';
     var canShuffle = v === 'liked' || /^spotify:(playlist|album|artist):/.test(v);
     return location.origin + location.pathname + '?play=' + v + (shuffle && canShuffle ? '&shuffle=1' : '');
@@ -3319,10 +3340,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (res.auto) { onItemClick(res.item, { preventDefault: function () {}, noTap: true }, opts); return; }
     // Not in your library: one tap to play (the tap also lets the page open Spotify if it's asleep).
     toast('A shortcut link wants to play ' + res.item.name + ', which isn’t in your library. Play it?', null, {
-      text: 'Play', fn: function () { onItemClick(res.item, { preventDefault: function () {} }, opts); }
+      text: 'Play', hold: 30000, fn: function () { onItemClick(res.item, { preventDefault: function () {} }, opts); }
     });
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { $('toast').hidden = true; }, 30000);
   }
   // v2.36: Diagnostics → Shortcut links: Copy link for the open list, Liked Songs, the names and the pins.
   function paintShortcutLinks() {
@@ -3339,7 +3358,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       rows.push({ label: label, sub: sub, url: url });
     }
     var open = state.detail && state.detail.item;
-    if (open && (open.kind === 'liked' || LINK_KINDS[open.kind])) add(open.name || 'Open list', 'Open now', open);
+    if (open && (open.kind === 'liked' || linkKind(open.kind))) {
+      var mine = open.kind === 'liked' || !!libItemFor(open.uri);   // others ask first when the link runs
+      add(open.name || 'Open list', mine ? 'Open now' : 'Open now · not in your library, so the link asks first', open);
+    }
     add('Liked Songs', 'Your liked songs', 'liked');
     add('Newest episode', 'Newest unplayed in Latest', 'newest');
     add('Continue listening', 'First episode there', 'continue');
@@ -7236,7 +7258,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     playLink = parsePlayLink(params.get('play'));
     if (playLink) { playLink.shuffle = params.get('shuffle') === '1' || params.get('shuffle') === 'true'; playLink.at = Date.now(); }
     linkNote = playLink ? 'read “' + params.get('play') + '”' : 'not understood: “' + String(params.get('play')).slice(0, 60) + '”';
-    params.delete('play'); params.delete('shuffle');
+    // Everything else goes too: an unencoded Spotify link leaves its own parts (si=, pt=…) as extra parameters.
+    // A sign-in answer (code/state/error) is kept for the callback below.
+    var keep = new URLSearchParams();
+    ['code', 'state', 'error'].forEach(function (k) { if (params.has(k)) keep.set(k, params.get(k)); });
+    params = keep;
     var qs2 = params.toString();
     try { history.replaceState(null, '', location.pathname + (qs2 ? '?' + qs2 : '')); } catch (e) {}
   }
