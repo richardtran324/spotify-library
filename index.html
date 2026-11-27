@@ -3189,8 +3189,17 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     $('searchFirst').value = searchFirst();
     $('slInfo').textContent = slStatsText();   // v2.15
   }
-  function openDiag() { $('diag').hidden = false; paintWakeModes(); paintSettings(); $('diagClose').focus(); runDiag(); }
-  function closeDiag() { $('diag').hidden = true; }
+  var diagReturn = null;   // audit: A11Y-5 focus goes back to the opener on close
+  function openDiag() { diagReturn = document.activeElement; $('diag').hidden = false; paintWakeModes(); paintSettings(); $('diagClose').focus(); runDiag(); }
+  function closeDiag() {
+    var had = $('diag').contains(document.activeElement);
+    $('diag').hidden = true;
+    var r = diagReturn;
+    diagReturn = null;
+    if (!had) return;
+    if (r && r !== document.body && r.focus && document.body.contains(r)) r.focus();
+    else $('diagBtn').focus();
+  }
   function runDiag() {
     var out = [];
     var pre = $('diagOut');
