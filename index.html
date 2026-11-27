@@ -1921,13 +1921,30 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     });
   }
   // Library albums and other people's playlists in your list are saved by definition.
-  function seedSaved(d, force) {
-    if (!d) return;
+  // audit: seededUris lists exactly what seedSaved marks (refresh uses it to unmark what left the library).
+  function seededUris(d, noShows) {
+    var out = [];
+    if (!d) return out;
     var me = d.me && d.me.id;
-    function mark(uri) { if (uri && (force || state.saved[uri] === undefined)) state.saved[uri] = true; }
-    (d.albums || []).forEach(function (a) { mark(a.uri); });
-    (d.shows || []).forEach(function (s) { mark(s.uri); });
-    (d.playlists || []).forEach(function (p) { if (p.ownerId && p.ownerId !== me) mark(p.uri); });
+    (d.albums || []).forEach(function (a) { if (a.uri) out.push(a.uri); });
+    if (!noShows) (d.shows || []).forEach(function (s) { if (s.uri) out.push(s.uri); });
+    (d.playlists || []).forEach(function (p) { if (p.uri && p.ownerId && p.ownerId !== me) out.push(p.uri); });
+    return out;
+  }
+  function seedSaved(d, force) {
+    seededUris(d).forEach(function (uri) { if (force || state.saved[uri] === undefined) state.saved[uri] = true; });
+  }
+  // audit: an album, podcast or other person's playlist that was in the old library and isn't in the new one
+  // (removed in the Spotify app) loses its seeded heart; the next heart check asks Spotify. A false (the page's
+  // own tap or a contains answer) and a heart tap in flight are left alone. Podcasts are skipped when the new
+  // shows list failed to load (null), since then nothing is known about them.
+  function unseedRemoved(old, d) {
+    var now = {}, dropped = 0;
+    seededUris(d).forEach(function (u) { now[u] = true; });
+    seededUris(old, !Array.isArray(d && d.shows)).forEach(function (u) {
+      if (!now[u] && state.saved[u] === true && !state.busy[u]) { delete state.saved[u]; dropped++; }
+    });
+    if (dropped) saveSavedSession();
   }
 
   // ---------- saved state (hearts) ----------
@@ -6776,6 +6793,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
 
   function refresh() {
     return loadData().then(function (d) {
+      unseedRemoved(state.data, d);   // audit: start-up seeds hearts from the last visit's cached library
       state.data = d;
       matchCopies(d);   // v2.24: link a new copy, drop links to deleted copies (no requests)
       seedSaved(d, true);
