@@ -1290,9 +1290,24 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // this visit, so opening the same view again sends nothing. Refresh (top right) forgets them.
   // v2.15: album and podcast lists are also saved on the phone (see "saved lists"); Refresh leaves those.
   var catMemo = {};
+  // audit: kept pages are keyed by memoKey, not the URL as spelled. Load more uses Spotify's `next`
+  // (https://api.spotify.com/v1/…?offset=50&limit=50), Search all builds /…?limit=50&offset=50: same page, one key.
+  function memoKey(url) {
+    var s = String(url || '').replace(API, ''), i = s.indexOf('?');
+    if (i < 0) return s;
+    var off = '0', lim = '20', rest = [];
+    s.slice(i + 1).split('&').forEach(function (kv) {
+      var k = kv.split('=')[0], v = kv.slice(k.length + 1);
+      if (k === 'offset') off = v || '0';
+      else if (k === 'limit') lim = v || '20';
+      else if (kv) rest.push(kv);
+    });
+    return s.slice(0, i) + '?offset=' + off + '&limit=' + lim + (rest.length ? '&' + rest.sort().join('&') : '');
+  }
   function apiCached(url) {
-    if (catMemo[url]) return Promise.resolve(catMemo[url]);
-    return api(url).then(function (r) { if (r.ok && r.json && coolGroup(url) === 'catalog') catMemo[url] = r; return r; });
+    var k = memoKey(url);
+    if (catMemo[k]) return Promise.resolve(catMemo[k]);
+    return api(url).then(function (r) { if (r.ok && r.json && coolGroup(url) === 'catalog') catMemo[k] = r; return r; });
   }
   // Kept in localStorage too, so errors survive a reload and show up in Diagnostics.
   var errorLog = (function () { var v = get('lib-errors'); return Array.isArray(v) ? v.slice(-12) : []; })();
@@ -1779,7 +1794,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var have = notesFor(v.ep.id);
     if (have && !have.cut) { renderNotes(); return; }   // the Now Playing check brought them meanwhile
     var url = '/episodes/' + encodeURIComponent(v.ep.id);
-    if (!catMemo[url] && coolLeft('catalog')) { v.error = coolText('catalog'); renderNotes(); coolToast('catalog'); return; }
+    if (!catMemo[memoKey(url)] && coolLeft('catalog')) { v.error = coolText('catalog'); renderNotes(); coolToast('catalog'); return; }
     var seq = notesSeq;
     v.loading = true; v.error = '';
     renderNotes();
@@ -5149,7 +5164,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var g = coolGroup(urls[0]);
     var p = { urls: urls, group: g, total: d.total, more: d.total - off, reqs: 0, memo: null, disabled: false, why: '' };
     if (g === 'catalog') {
-      p.reqs = urls.filter(function (u) { return !catMemo[u]; }).length;   // pages kept for this visit cost nothing
+      p.reqs = urls.filter(function (u) { return !catMemo[memoKey(u)]; }).length;   // pages kept for this visit cost nothing
       if (p.reqs > FIND_CAT_MAX) { p.disabled = true; p.why = 'cap'; }
       else if (p.reqs && coolLeft('catalog')) { p.disabled = true; p.why = 'paused'; }
     } else {
@@ -5461,7 +5476,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!url) { d.restricted = true; paintDetailSort(); paintDetailFoot(); return; }
     d.lastUrl = url;
     var g = coolGroup(url);
-    if (!catMemo[url] && coolLeft(g)) {
+    if (!catMemo[memoKey(url)] && coolLeft(g)) {
       // v2.27: a playlist that may be someone else's (owner or account not confirmed) shows Show songs, as before.
       if (d.item.kind === 'playlist' && !knownListable(d.item)) { d.restricted = true; paintDetailSort(); paintDetailFoot(); return; }
       if (detailFallback(d)) return;   // v2.15: search (albums) or your saved and played episodes (podcasts)
@@ -6084,7 +6099,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function reloadAlbum(d) {
     if (!d || d.loading || coolBlocked('catalog')) return;
     var url = albumPage(d.item.id, 0);
-    delete catMemo[url];
+    delete catMemo[memoKey(url)];
     loadDetail(url);   // the first page replaces the list and the saved copy
   }
   function useShowCache(d, c) {
@@ -6099,7 +6114,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!d || d.loading || state.detail !== d) return;
     if (coolLeft('catalog')) { if (!auto) coolToast('catalog'); paintDetailFoot(); return; }
     var url = showPage(d.item.id, 0);
-    delete catMemo[url];
+    delete catMemo[memoKey(url)];
     d.autoCheck = !!auto;
     loadDetail(url);
   }
@@ -6501,7 +6516,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function loadArtist(d) {
     if (!d || d.loading) return;
-    if (!catMemo[releaseUrl(d)] && coolLeft('catalog')) { d.error = coolText('catalog'); if (state.detail === d) paintArtistFoot(d); coolToast('catalog'); return; }   // v2.13
+    if (!catMemo[memoKey(releaseUrl(d))] && coolLeft('catalog')) { d.error = coolText('catalog'); if (state.detail === d) paintArtistFoot(d); coolToast('catalog'); return; }   // v2.13
     d.loading = true; d.error = '';
     if (state.detail === d) paintArtistFoot(d);
     if (!d.infoAsked && !d.item.img) {
