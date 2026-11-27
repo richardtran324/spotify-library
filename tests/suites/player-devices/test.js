@@ -921,14 +921,16 @@ tests.push(function () {
     check('22 waiting line with Open Spotify instead', shown(tab, 'wake') && /Press play in Control Center or on the lock screen\. “Five” starts as soon as Spotify wakes\./.test(txt(tab, 'wakeText')) &&
       shown(tab, 'wakeOpen') && !shown(tab, 'wakeRetry'), txt(tab, 'wakeText'));
     t.pollPlayer();
+    // #33 (audit/wait-skip-duplicate-devices): the device list from start-up is under one wait step (3 s) old,
+    // so the wait starts with the player check, then the device list, then the player again (~6 s in).
     return H.wait(200).then(function () {
-      check('22 first check is the device list', reqs(tab, 'GET', '/me/player/devices').length === 1, tab.calls);
-      check('22 regular player check holds off while waiting', reqs(tab, 'GET', '/me/player').length === 0 && stored(store, 'lib-poller').id === t.MY_ID, tab.calls);
+      check('22 first check is the player (device list under 3 s old)', reqs(tab, 'GET', '/me/player').length === 1 && reqs(tab, 'GET', '/me/player/devices').length === 0, tab.calls);
+      check('22 regular player check holds off while waiting (only the wait\'s own check)', reqs(tab, 'GET', '/me/player').length === 1 && stored(store, 'lib-poller').id === t.MY_ID, tab.calls);
       tab.env.player = player();
-      return H.wait(3200);
+      return H.wait(6200);
     }).then(function () {
       var pl = reqs(tab, 'PUT', '/me/player/play');
-      check('22 second check is the player', reqs(tab, 'GET', '/me/player').length >= 1, tab.calls);
+      check('22 second check is the device list, third the player', reqs(tab, 'GET', '/me/player/devices').length >= 1 && reqs(tab, 'GET', '/me/player').length >= 2, tab.calls);
       check('22 Spotify playing: plays the tap on that device', pl.length === 1 && pl[0].query === '?device_id=A' && JSON.stringify(pl[0].body) === JSON.stringify({ uris: ['spotify:track:t5'] }), pl);
       check('22 wait over: tap cleared, line hidden', store.getItem('lib-pending') === null && !shown(tab, 'wake'));
       done(tab);
