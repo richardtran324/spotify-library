@@ -281,6 +281,20 @@ ul.list.compact .cover.num { width: 28px; }
   display: flex; gap: 12px; align-items: center;
 }
 body.has-player .toast { bottom: calc(128px + env(safe-area-inset-bottom, 0px)); }
+/* v2.40: Jump to playing (song and episode lists) */
+.kpjump {
+  position: fixed; z-index: 20; right: max(16px, env(safe-area-inset-right, 0px));
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  font: inherit; font-size: 0.9rem; font-weight: 700; min-height: 44px; padding: 10px 16px;
+  border: 0; border-radius: 999px; background: var(--accent); color: var(--accent-fg); cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+}
+body.has-player .kpjump { bottom: calc(140px + env(safe-area-inset-bottom, 0px)); }
+li.row.kpflash { animation: kpflash 1.6s ease-out; }
+@keyframes kpflash { 0%, 40% { background: var(--chip); } 100% { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { li.row.kpflash { animation: none; background: var(--chip); } }
+.kpheld { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.kpheld .btn { min-height: 44px; }
 .toast a { color: var(--bg); font-weight: 700; }
 .toast .tsel { font-weight: 700; min-width: 0; overflow-wrap: anywhere; -webkit-user-select: all; user-select: all; }   /* v2.20: one tap selects the link */
 .toastbtn {
@@ -671,6 +685,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   </div>
 </div>
 
+<button class="kpjump" id="kpJump" type="button" hidden>Jump to playing</button>   <!-- v2.40 -->
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
 <script>
@@ -2734,8 +2749,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       var b = el('button', { type: 'button', 'data-tab': t[0], 'aria-pressed': String(state.podTab === t[0]), text: t[1] });
       b.addEventListener('click', function () {
         if (state.podTab === t[0]) return;
+        if (!state.detail) kpY[kpKey()] = kpScrollY();   // v2.40: Latest and Shows keep their own scroll position
         state.podTab = t[0];
         renderList();
+        kpListScroll(state.query.trim() ? 0 : (kpY[kpKey()] || 0));   // v2.40
+        kpSaveSoon();
         if (t[0] === 'latest') maybeLoadLatest();   // v2.14: Latest refreshes only when you open it
         var nb = document.querySelector('.seg [data-tab="' + t[0] + '"]');
         if (nb) nb.focus();
@@ -3170,7 +3188,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.27 (2026-11-27)';
+  var VERSION = 'v2.40 (2026-11-27)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -3220,6 +3238,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     line('Podcast history: ' + eh.length + (eh.length === 1 ? ' episode' : ' episodes') + (eh[0] ? ' (newest: ' + eh[0].name + ', ' + agoAt(eh[0].at) + ')' : '') +
       ' · Marked played or unplayed on this phone: ' + markCount());   // v2.21
     line('Resume points: from this page’s own podcast history (no automatic Spotify checks)');
+    line('Keep place (v2.40): ' + kpInfo + ' · this page load: ' + (kpBoot.nav || 'unknown') + (kpBoot.hash ? ', ' + kpBoot.hash : ''));
     var npi = pl && pl.item;   // v2.18: does Spotify's Now Playing answer carry the episode's notes?
     line('Episode notes: ' + readNotes().length + ' on this phone, ' + (Object.keys(epNotes).length + Object.keys(epNotesRaw).length) + ' this visit' +
       (npi && npi.type === 'episode' ? ' · Now playing: ' + (typeof npi.description === 'string' ? npi.description.length + ' characters' : 'no description in the answer') +
@@ -4368,6 +4387,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var cur = playingUri();
     var rows = document.querySelectorAll('li[data-puri]');
     for (var i = 0; i < rows.length; i++) markPlaying(rows[i], !!cur && rows[i].getAttribute('data-puri') === cur);
+    kpPaintJump();   // v2.40
   }
   function itemRow(item) {
     markItem(item);   // v2.21: played state follows this phone's marks
@@ -4519,7 +4539,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     main.appendChild(ul);
     requestSaved(savableUris(items));
   }
-  function renderList() {
+  // v2.40: every list redraw also tries a waiting scroll restore and updates Jump to playing.
+  function renderList() { renderListNow(); kpTryList(); kpPaintJump(); }
+  function renderListNow() {
     if (state.detail) return;   // the song list view owns the page
     var main = $('main');
     main.textContent = '';
@@ -4714,6 +4736,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function setFilter(f, focus) {
     var wasSearch = state.filter === 'search';
+    var changed = f !== state.filter;   // v2.40: each filter keeps its own scroll position (this visit)
+    if (changed && !state.detail) kpY[kpKey()] = kpScrollY();
     state.filter = f; set(K.filter, f);
     document.querySelectorAll('.filters .chip').forEach(function (c) { c.setAttribute('aria-pressed', String(c.dataset.filter === f)); });
     var box = $('search');
@@ -4732,8 +4756,254 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }
     if (f === 'recent') loadRecent();   // always fresh when chosen
     else renderList();
+    if (changed && !state.detail) kpListScroll(state.query.trim() ? 0 : (kpY[kpKey()] || 0));   // v2.40
     if (onLatestView()) maybeLoadLatest();   // v2.14: Latest refreshes only when you open it (and the cache is 12 h old)
+    kpSaveSoon();   // v2.40
   }
+
+  // ---------- keep your place (v2.40) ----------
+  // v2.40: iPhone Safari often throws a background tab out of memory and reloads it when you come back. The page keeps
+  // where you were in sessionStorage (this tab only; it survives that reload but not a new tab): the filter, the
+  // Podcasts tab, the filter text, the open song lists and artist pages (up to 4 deep), and each one's scroll spot.
+  // It's written when the page goes to the background (and after each change), and read back only when this load is
+  // a reload of the same tab (not a fresh visit, not the Wake Spotify shortcut or a sign-in return), within 6 hours.
+  // Reopening uses what's already on this phone: saved albums and podcasts (v2.15), Liked Songs and Saved episodes
+  // (one library request, as on any open), and other people's playlists (no request). Anything that would need an
+  // album or podcast lookup (an album or podcast not saved, your own playlists, artist pages) comes back as its
+  // header with a "Reopen" button, and asks Spotify only when you tap it.
+  // Also: each filter (and each Podcasts tab) keeps its own scroll spot for this visit, tapping the chip you're on
+  // scrolls to the top, and "Jump to playing" appears in a song or episode list when the playing row is loaded but
+  // off screen (no requests).
+  var PLACE_KEY = 'lib-place';                 // sessionStorage: {v, at, filter, podTab, query, ys: {key: y}, views: [{item, y}]}
+  var PLACE_MS = 6 * 60 * 60 * 1000;           // an older saved place isn't brought back
+  var PLACE_VIEWS = 4, PLACE_ITEM_MAX = 4000;  // views kept; a bigger item is kept with its basic fields only
+  var kpY = {};          // filter key -> scroll position, this visit
+  var kpPend = null;     // {key, y, at}: a list scroll waiting for the rows to arrive
+  var kpInfo = 'nothing saved';
+  var kpSaveTimer = null, kpJumpRaf = 0;
+  var kpBoot = (function () {
+    var nav = '';
+    try {
+      var e = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
+      if (e && e.type) nav = e.type;
+      else if (performance.navigation) nav = ['navigate', 'reload', 'back_forward'][performance.navigation.type] || '';
+    } catch (er) {}
+    var ps = new URLSearchParams(location.search), why = '';
+    if (ps.has('code') || ps.has('error')) why = 'sign-in return';
+    else if (ps.has('wake')) why = 'opened by the Wake Spotify shortcut';
+    else if (ps.has('play')) why = 'opened by a shortcut link';
+    return { nav: nav, hash: location.hash, depth: (history.state && history.state.depth) || 0, why: why, done: false };
+  })();
+  function kpScrollY() { return window.pageYOffset || document.documentElement.scrollTop || 0; }
+  function kpMaxY() {
+    var h = Math.max(document.documentElement.scrollHeight || 0, document.body ? document.body.scrollHeight || 0 : 0);
+    return Math.max(0, h - (window.innerHeight || 0));
+  }
+  function kpKey() { return state.filter === 'podcasts' ? 'podcasts:' + state.podTab : state.filter; }
+  // A list's scroll spot, once its rows are tall enough (or after 8 s, or as soon as you touch the page).
+  function kpListScroll(y) {
+    y = Math.max(0, Math.round(+y || 0));
+    kpPend = y ? { key: kpKey(), y: y, at: Date.now() } : null;
+    if (!y) { window.scrollTo(0, 0); return; }
+    kpTryList();
+  }
+  function kpTryList() {
+    var p = kpPend;
+    if (!p || state.detail || p.key !== kpKey()) return;
+    var max = kpMaxY(), fits = max >= p.y - 1;
+    window.scrollTo(0, Math.min(p.y, max));
+    if (fits || Date.now() - p.at > 8000) kpPend = null;
+  }
+  // A song list's or artist page's own spot (d.kpY), once its rows are in: right away if they're tall enough,
+  // otherwise as far as they go when loading stops.
+  function kpTryDetail(d) {
+    if (!d || d.kpY == null || d.held || state.detail !== d || !d.items.length) return;
+    var max = kpMaxY(), fits = max >= d.kpY - 1;
+    if (!fits && d.loading) { window.scrollTo(0, max); return; }
+    window.scrollTo(0, Math.min(d.kpY, max));
+    d.kpY = null;
+  }
+  // You touched the page: no restore moves it after that.
+  function kpUserScrolled() { kpPend = null; if (state.detail) state.detail.kpY = null; }
+  // The item as stored: everything, unless it's unusually big (then the fields the views use).
+  function kpItem(it) {
+    try {
+      var s = JSON.stringify(it);
+      if (s && s.length <= PLACE_ITEM_MAX) return JSON.parse(s);
+    } catch (e) {}
+    var o = {};
+    ['kind', 'id', 'uri', 'name', 'sub', 'img', 'url', 'artist', 'artist1', 'ownerId', 'collaborative', 'tracks', 'count'].forEach(function (k) {
+      if (it && it[k] != null && typeof it[k] !== 'object') o[k] = typeof it[k] === 'string' ? it[k].slice(0, 300) : it[k];
+    });
+    return o;
+  }
+  function kpSnapshot() {
+    var views = state.detail ? state.detailStack.concat([state.detail]) : [];
+    if (views.length > PLACE_VIEWS) views = views.slice(-PLACE_VIEWS);
+    var y = Math.round(kpScrollY());
+    var top = views[views.length - 1];
+    if (top && top.kpY != null) y = top.kpY;   // its spot is still waiting for its rows (or for Reopen)
+    else if (!top && kpPend && kpPend.key === kpKey()) y = kpPend.y;
+    var o = { v: 1, at: Date.now(), filter: state.filter, podTab: state.podTab,
+      query: state.filter === 'search' ? '' : String(state.query || '').slice(0, 100), ys: {}, views: [] };
+    Object.keys(kpY).forEach(function (k) { if (FILTERS.indexOf(k.split(':')[0]) !== -1 && kpY[k] > 0) o.ys[k] = Math.round(kpY[k]); });
+    o.ys[kpKey()] = views.length ? Math.round(views[0].returnScroll || 0) : y;
+    views.forEach(function (v, i) {
+      o.views.push({ item: kpItem(v.item), y: i < views.length - 1 ? Math.round(views[i + 1].returnScroll || 0) : y });
+    });
+    return o;
+  }
+  function kpSave() {
+    clearTimeout(kpSaveTimer); kpSaveTimer = null;
+    if (!state.started) return;
+    try { sessionStorage.setItem(PLACE_KEY, JSON.stringify(kpSnapshot())); } catch (e) {}
+  }
+  function kpSaveSoon() {
+    if (!state.started) return;
+    clearTimeout(kpSaveTimer);
+    kpSaveTimer = setTimeout(kpSave, 400);
+  }
+  function kpDrop() { try { sessionStorage.removeItem(PLACE_KEY); } catch (e) {} }
+  // Once per page load, from startApp: the saved place if this load may bring it back, else null (and it's dropped).
+  // Sets the filter, Podcasts tab, filter text and the per-filter scroll spots before the list is drawn.
+  function kpTake() {
+    if (kpBoot.done) return null;
+    kpBoot.done = true;
+    var p = null;
+    try { p = JSON.parse(sessionStorage.getItem(PLACE_KEY) || 'null'); } catch (e) { p = null; }
+    if (!p || typeof p !== 'object' || p.v !== 1 || typeof p.at !== 'number') { kpInfo = 'nothing saved'; if (p) kpDrop(); return null; }
+    var reload = kpBoot.nav === 'reload' || kpBoot.nav === 'back_forward' || kpBoot.hash === '#detail';
+    var why = kpBoot.why || (reload ? '' : 'fresh visit');
+    if (!why && (Date.now() - p.at > PLACE_MS || p.at > Date.now() + 60000)) why = 'saved over 6 h ago';
+    if (why) { kpInfo = 'not brought back (' + why + ')'; kpDrop(); return null; }
+    if (FILTERS.indexOf(p.filter) !== -1) { state.filter = p.filter; set(K.filter, p.filter); }
+    if (p.podTab === 'latest' || p.podTab === 'shows') state.podTab = p.podTab;
+    if (state.filter !== 'search' && typeof p.query === 'string' && p.query) { state.query = p.query.slice(0, 100); $('search').value = state.query; }
+    kpY = {};
+    if (p.ys && typeof p.ys === 'object') Object.keys(p.ys).forEach(function (k) {
+      var v = +p.ys[k];
+      if (FILTERS.indexOf(k.split(':')[0]) !== -1 && v > 0 && v < 1e6) kpY[k] = Math.round(v);
+    });
+    kpInfo = 'brought back ' + state.filter + (state.filter === 'podcasts' ? ' (' + state.podTab + ')' : '');
+    return p;
+  }
+  // The item to reopen: the one in your library now (it may have changed), else the stored copy.
+  function kpResolve(s) {
+    if (!s || typeof s !== 'object' || !s.kind || !s.name) return null;
+    var d = state.data;
+    if (s.kind === 'liked') return d && d.likedTotal != null ? likedItem(d) : s;
+    if (s.kind === 'episodes') return d && d.episodesTotal != null ? savedEpisodesItem(d) : s;
+    if (!s.id && !s.uri) return null;
+    var lists = d ? [d.playlists, d.albums, d.artists, d.shows] : [];
+    for (var i = 0; i < lists.length; i++) {
+      var l = lists[i] || [];
+      for (var j = 0; j < l.length; j++) if (l[j] && l[j].kind === s.kind && ((s.uri && l[j].uri === s.uri) || (s.id && l[j].id === s.id))) return l[j];
+    }
+    return s;
+  }
+  // True when opening it now would send an album or podcast lookup (catalog group), so it waits for Reopen.
+  function kpNeedsCatalog(it) {
+    if (it.kind === 'artist') return true;
+    if (it.kind === 'album') { var a = it.id ? slGet(SL_ALBUM, it.id) : null; return !(a && a.items.length); }
+    if (it.kind === 'show') { var s = it.id ? (slGet(SL_SHOW, it.id) || seedShowFromLatest(it)) : null; return !(s && s.items.length); }
+    if (it.kind === 'playlist') return !!detailUrl(it);   // your own and collaborative playlists; others show the note (no request)
+    return false;   // Liked Songs and Saved episodes: one library request, as on any open
+  }
+  function kpRestore(p) {
+    var views = (Array.isArray(p.views) ? p.views.slice(-PLACE_VIEWS) : []).map(function (v) {
+      var it = v && kpResolve(v.item);
+      return it && opensOnTap(it) ? { item: it, y: Math.max(0, Math.round(+v.y || 0)) } : null;
+    });
+    // Only an unbroken stack makes sense (Back goes down it): keep the views above the last one that can't come back.
+    var cut = views.lastIndexOf(null);
+    views = views.slice(cut + 1);
+    var listY = kpY[kpKey()] || 0;
+    if (!views.length) { kpListScroll(listY); return; }
+    var n = views.length, held = 0;
+    var reuse = kpBoot.hash === '#detail' && kpBoot.depth === n;   // the history entries for these views are still there
+    views.forEach(function (v, i) {
+      var hold = kpNeedsCatalog(v.item);
+      if (hold) held++;
+      openDetail(v.item, { push: i > 0, kpHold: hold, kpNoAuto: true, kpEntry: reuse ? (i === n - 1 ? 'replace' : 'exists') : null });
+      var d = state.detail;
+      d.returnScroll = i === 0 ? listY : views[i - 1].y;
+      d.kpY = v.y || null;
+      if (i === n - 1) kpTryDetail(d);
+    });
+    kpInfo += ', “' + views[n - 1].item.name + '”' + (n > 1 ? ' (+' + (n - 1) + ' under it)' : '') + (held ? ', ' + held + ' waiting for Reopen' : '');
+    kpSaveSoon();
+  }
+  // A view brought back without its rows: says why and asks Spotify only on the tap.
+  function kpHeldBox(d) {
+    var it = d.item;
+    var b = el('button', { class: 'btn', type: 'button', text: 'Reopen “' + it.name + '”' });
+    b.addEventListener('click', function () { kpReopen(d); });
+    return el('div', { class: 'kpheld' }, [
+      el('p', { class: 'empty', text: 'Safari reloaded the page. ' + (d.kind === 'artist' ? 'This artist’s releases aren’t' : 'This list isn’t') +
+        ' saved on this phone, so the page waits for you before asking Spotify (album and podcast lookups are limited).' }),
+      b
+    ]);
+  }
+  function kpReopen(d) {
+    if (!d || !d.held || state.detail !== d) return;
+    d.held = false;
+    if (d.kind === 'artist') { paintArtistFoot(d); loadArtist(d); }
+    else { paintDetailFoot(); startDetail(d); }
+    var h = document.querySelector('.dhead .dname');
+    if (h) { h.setAttribute('tabindex', '-1'); try { h.focus({ preventScroll: true }); } catch (e) {} }
+  }
+  // Jump to playing: the playing song or episode, when it's among the rows drawn in the open list but off screen.
+  function kpJumpRow() {
+    var d = state.detail, cur = playingUri();
+    if (!d || d.kind === 'artist' || d.editing || !cur) return null;
+    var ul = $('dlist');
+    if (!ul) return null;
+    var rows = ul.querySelectorAll('li[data-puri]');
+    for (var i = 0; i < rows.length; i++) if (rows[i].getAttribute('data-puri') === cur) return rows[i];
+    return null;
+  }
+  function kpBand() {   // the part of the window rows show in: under the sticky header, above the Now Playing bar
+    var top = 0, bottom = window.innerHeight || 0;
+    var hb = $('top'), pl = $('player');
+    if (hb && !hb.hidden) top = Math.max(0, hb.getBoundingClientRect().bottom);
+    if (pl && !pl.hidden) { var pt = pl.getBoundingClientRect().top; if (pt > top) bottom = Math.min(bottom, pt); }
+    return { top: top, bottom: bottom };
+  }
+  function kpPaintJump() {
+    var b = $('kpJump');
+    if (!b) return;
+    var li = state.started ? kpJumpRow() : null, show = false;
+    if (li && $('np').hidden && !document.querySelector('.sheet:not([hidden])')) {
+      var r = li.getBoundingClientRect(), band = kpBand(), mid = (r.top + r.bottom) / 2;
+      show = mid < band.top || mid > band.bottom;
+    }
+    if (show) {
+      var nm = li.querySelector('.name');
+      b.setAttribute('aria-label', 'Jump to playing: ' + (nm ? nm.textContent : ''));
+    }
+    b.hidden = !show;
+  }
+  function kpJump() {
+    var li = kpJumpRow();
+    if (!li) { kpPaintJump(); return; }
+    kpUserScrolled();
+    var r = li.getBoundingClientRect(), band = kpBand();
+    window.scrollTo(0, Math.max(0, Math.round(kpScrollY() + r.top + r.height / 2 - (band.top + band.bottom) / 2)));
+    li.classList.remove('kpflash');
+    void li.offsetWidth;   // restart the flash
+    li.classList.add('kpflash');
+    setTimeout(function () { li.classList.remove('kpflash'); }, 1700);
+    var a = li.querySelector('a.item');
+    if (a) { try { a.focus({ preventScroll: true }); } catch (e) {} }
+    kpPaintJump();
+  }
+  $('kpJump').addEventListener('click', kpJump);
+  window.addEventListener('scroll', function () {
+    if (kpJumpRaf) return;
+    kpJumpRaf = (window.requestAnimationFrame || setTimeout)(function () { kpJumpRaf = 0; kpPaintJump(); });
+  }, { passive: true });
+  window.addEventListener('resize', kpPaintJump);
+  ['touchstart', 'wheel', 'keydown'].forEach(function (t) { window.addEventListener(t, kpUserScrolled, { passive: true }); });
 
   // ---------- song list (detail) view ----------
   // v2.27: until your account (or the playlist's owner) is known, ask anyway; a 403 still shows the Show songs view.
@@ -4788,6 +5058,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       ? { kind: 'artist', item: item, img: '', items: [], offset: 0, more: false, total: null, loading: false, error: '', lastGot: 0 }
       : { item: item, items: [], next: null, loading: false, error: '', restricted: false, lastUrl: null,
           raw: [], src: 'api', savedAt: 0, checkedAt: 0, seed: false, pausedUntil: 0 };   // v2.15: saved lists and pause fallbacks
+    // v2.40: a view brought back after Safari reloaded the tab: held (waits for Reopen instead of a catalog request),
+    // and no automatic Check for new episodes on a stale saved podcast.
+    if (opts.kpHold) d.held = true;
+    if (opts.kpNoAuto) d.kpNoAuto = true;
     if (old && !opts.push) stopFind(old);   // v2.22: a replaced list stops its Search all
     if (old && opts.push) {
       state.detailStack.push(old);
@@ -4799,14 +5073,20 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       d.returnScroll = y; d.pushed = false;
     }
     state.detail = d;
+    if (!d.pushed && opts.kpEntry === 'exists') d.pushed = true;   // v2.40: its entry survived the reload, behind this one
+    else if (!d.pushed && opts.kpEntry === 'replace') {   // v2.40: the reloaded entry becomes this view's again
+      try { history.replaceState({ detail: true, depth: state.detailStack.length + 1 }, '', '#detail'); d.pushed = true; } catch (e) { d.pushed = false; }
+    }
     if (!d.pushed) {
       try { history.pushState({ detail: true, depth: state.detailStack.length + 1 }, '', '#detail'); d.pushed = true; } catch (e) { d.pushed = false; }
     }
     renderDetail();
     window.scrollTo(0, 0);
     if (canSave(item)) requestSaved([item.uri]);
-    if (d.kind === 'artist') loadArtist(d);
+    if (d.held) { /* v2.40: nothing is asked until Reopen */ }
+    else if (d.kind === 'artist') loadArtist(d);
     else startDetail(d);
+    kpPaintJump(); kpSaveSoon();   // v2.40
   }
   function goBack() {
     var d = state.detail;
@@ -4823,6 +5103,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       state.detail = state.detailStack.pop();
       renderDetail();   // from what that view already loaded; nothing is asked again
       window.scrollTo(0, d.returnScroll || 0);
+      kpPaintJump(); kpSaveSoon();   // v2.40
       return;
     }
     state.detail = null;
@@ -4830,6 +5111,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (location.hash === '#detail') { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} }
     renderList();
     window.scrollTo(0, d.returnScroll || 0);
+    kpPaintJump(); kpSaveSoon();   // v2.40
   }
   function backButton() {
     var below = state.detailStack[state.detailStack.length - 1];
@@ -5010,7 +5292,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     box.textContent = txt;
     box.hidden = !txt;
   }
-  function paintDetailFoot() {
+  // v2.40: after every foot paint (each page that arrives), a waiting scroll restore and Jump to playing.
+  function paintDetailFoot() { paintDetailFootNow(); kpTryDetail(state.detail); kpPaintJump(); }
+  function paintDetailFootNow() {
     var d = state.detail;
     var f = $('dfoot');
     if (!d || !f) return;
@@ -5022,6 +5306,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (d.restricted && d.embed && f.querySelector('.sembed-box')) return;   // v2.16: keep the open player (redrawing would reload it)
     dropEmbed(d);
     f.textContent = '';
+    if (d.held) { f.appendChild(kpHeldBox(d)); return; }   // v2.40
     if (d.restricted) {
       f.appendChild(el('p', { class: 'empty', text: 'Spotify only lets personal apps list songs in your own playlists. Tap Play to hear this one.' }));
       if (d.item.kind === 'playlist' && d.item.id) {
@@ -6093,7 +6378,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     d.total = typeof c.total === 'number' ? c.total : null;
     d.next = d.seed ? showPage(d.item.id, 0) : (d.total == null || d.raw.length < d.total) ? showPage(d.item.id, d.raw.length) : null;
     remapDetail(d);
-    if (!showFresh(c.at) && !coolLeft('catalog')) checkNewEpisodes(d, true);   // one request: page 1
+    if (!showFresh(c.at) && !coolLeft('catalog') && !d.kpNoAuto) checkNewEpisodes(d, true);   // one request: page 1 (v2.40: not for a view brought back after a reload)
   }
   function checkNewEpisodes(d, auto) {
     if (!d || d.loading || state.detail !== d) return;
@@ -6531,6 +6816,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       paintArtistList(d);
       window.scrollTo(0, y);
       paintArtistFoot(d);
+      kpTryDetail(d);   // v2.40: a reopened artist page goes back to its spot
       requestSaved(savableUris(got));
     }).catch(function (e) {
       d.loading = false;
@@ -6601,6 +6887,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var had = f.querySelector('button');
     var hadFocus = had && document.activeElement === had;
     f.textContent = '';
+    if (d.held) { f.appendChild(kpHeldBox(d)); return; }   // v2.40
     if (d.error) {
       f.appendChild(el('p', { class: 'err', text: d.error }));
       var retry = el('button', { class: 'btn secondary', type: 'button', text: 'Try again' });
@@ -6810,7 +7097,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     state.lastActiveAt = Date.now();
     state.bgHoldUntil = Date.now() + 4000;
     paintCool();          // a cool-off another copy (or an earlier visit) started still applies
+    var place = kpTake();   // v2.40: where you were before Safari reloaded this tab (filter, Podcasts tab, filter text)
     setFilter(state.filter);
+    if (place) kpRestore(place);   // v2.40: the open lists and scroll positions
     if (!coolLeft('player')) checkDevice();
     refresh();   // v2.14: sends nothing while the library is paused (and shows why if nothing is cached)
     schedulePoll(0);
@@ -6828,7 +7117,13 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (state.filter === 'search') scheduleSearch(e.target.value, true);
     e.target.blur(); // hides the iPhone keyboard so results are visible
   });
-  document.querySelectorAll('.filters .chip').forEach(function (c) { c.addEventListener('click', function () { setFilter(c.dataset.filter, true); }); });
+  document.querySelectorAll('.filters .chip').forEach(function (c) {
+    c.addEventListener('click', function () {
+      var same = c.dataset.filter === state.filter;   // v2.40: tapping the chip you're on scrolls to the top
+      setFilter(c.dataset.filter, true);
+      if (same && !state.detail) { kpPend = null; kpY[kpKey()] = 0; window.scrollTo(0, 0); kpSaveSoon(); }
+    });
+  });
   document.querySelectorAll('.schip').forEach(function (c) {
     c.addEventListener('click', function () { if (c.dataset.stype !== state.stype) setSearchType(c.dataset.stype, false); });
   });
@@ -6996,6 +7291,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) {
+      kpSave();   // v2.40: iOS may discard the tab while it's in the background
       clearTimeout(state.pollTimer); state.pollTimer = null;
       stopNpTick();
       if (state.wake.running) stopWake();   // pause the wake check; it starts fresh on return
@@ -7006,7 +7302,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   });
   // Coming back with the Back button can restore the page from memory without a visibility change.
   window.addEventListener('pageshow', function (e) { if (e.persisted) onReturn(); });
-  window.addEventListener('pagehide', function () { releasePoller(); });
+  window.addEventListener('pagehide', function () { kpSave(); releasePoller(); });   // v2.40: kpSave
   // v2.13: other copies of the page (same storage) share the cool-off and the player answer.
   window.addEventListener('storage', function (e) {
     if (!state.started) return;
