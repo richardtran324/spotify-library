@@ -1,5 +1,5 @@
 'use strict';
-// Storage-full warnings (v2.50): set() reports failure (v2.38) and why (saveFailWhy), and Bookmarks and Skip intro
+// Storage-full warnings (v2.60): set() reports failure (v2.38) and why (saveFailWhy), and Bookmarks and Skip intro
 // say when a save didn't happen.
 // jsdom, mocked fetch, shared localStorage. Run: node test.js [path to index.html]
 if (process.argv[2]) process.env.SRC = process.argv[2];
