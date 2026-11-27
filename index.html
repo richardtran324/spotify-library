@@ -1362,9 +1362,24 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // this visit, so opening the same view again sends nothing. Refresh (top right) forgets them.
   // v2.15: album and podcast lists are also saved on the phone (see "saved lists"); Refresh leaves those.
   var catMemo = {};
+  // audit: kept pages are keyed by memoKey, not the URL as spelled. Load more uses Spotify's `next`
+  // (https://api.spotify.com/v1/…?offset=50&limit=50), Search all builds /…?limit=50&offset=50: same page, one key.
+  function memoKey(url) {
+    var s = String(url || '').replace(API, ''), i = s.indexOf('?');
+    if (i < 0) return s;
+    var off = '0', lim = '20', rest = [];
+    s.slice(i + 1).split('&').forEach(function (kv) {
+      var k = kv.split('=')[0], v = kv.slice(k.length + 1);
+      if (k === 'offset') off = v || '0';
+      else if (k === 'limit') lim = v || '20';
+      else if (kv) rest.push(kv);
+    });
+    return s.slice(0, i) + '?offset=' + off + '&limit=' + lim + (rest.length ? '&' + rest.sort().join('&') : '');
+  }
   function apiCached(url) {
-    if (catMemo[url]) return Promise.resolve(catMemo[url]);
-    return api(url).then(function (r) { if (r.ok && r.json && coolGroup(url) === 'catalog') { r.at = Date.now(); catMemo[url] = r; } return r; });   // audit: at = when Spotify sent it (editStale)
+    var k = memoKey(url);
+    if (catMemo[k]) return Promise.resolve(catMemo[k]);
+    return api(url).then(function (r) { if (r.ok && r.json && coolGroup(url) === 'catalog') { r.at = Date.now(); catMemo[k] = r; } return r; });   // audit: at = when Spotify sent it (editStale)
   }
   // Kept in localStorage too, so errors survive a reload and show up in Diagnostics.
   var errorLog = (function () { var v = get('lib-errors'); return Array.isArray(v) ? v.slice(-12) : []; })();
@@ -1859,7 +1874,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var have = notesFor(v.ep.id);
     if (have && !have.cut) { renderNotes(); return; }   // the Now Playing check brought them meanwhile
     var url = '/episodes/' + encodeURIComponent(v.ep.id);
-    if (!catMemo[url] && coolLeft('catalog')) { v.error = coolText('catalog'); renderNotes(); coolToast('catalog'); return; }
+    if (!catMemo[memoKey(url)] && coolLeft('catalog')) { v.error = coolText('catalog'); renderNotes(); coolToast('catalog'); return; }
     var seq = notesSeq;
     v.loading = true; v.error = '';
     renderNotes();
@@ -2135,6 +2150,15 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var bs = document.querySelectorAll('.heart');
     for (var i = 0; i < bs.length; i++) paintHeart(bs[i]);
   }
+  // audit: an unlike (unsave) moves every later row of Liked Songs (Saved episodes) up one place on Spotify, so an
+  // open list's next page starts one earlier. At worst that page repeats a row, and dropShown skips it. A save isn't
+  // shifted: the row it pushes down comes back once and is dropped the same way (and a save that changed nothing
+  // would otherwise skip a row).
+  function shiftNext(listKind) {
+    [state.detail].concat(state.detailStack).forEach(function (v) {
+      if (v && v.item && v.item.kind === listKind && v.next) v.next = String(v.next).replace(/([?&]offset=)(\d+)/, function (m, a, n) { return a + Math.max(0, +n - 1); });
+    });
+  }
   function toggleSave(uri, name, kind, forceSave) {
     if (!uri || state.busy[uri]) return;
     if (coolBlocked('library')) return;   // v2.13
@@ -2146,6 +2170,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     api('/me/library?uris=' + encodeURIComponent(uri), { method: save ? 'PUT' : 'DELETE' }).then(function (r) {
       delete state.busy[uri];
       if (!r.ok) throw new Error(errMsg(r));
+      if (!save && (kind === 'track' || kind === 'episode')) shiftNext(kind === 'track' ? 'liked' : 'episodes');   // audit
       saveSavedSession();
       if (!save) toast('Removed “' + name + '”', null, { text: 'Undo', fn: function () { toggleSave(uri, name, kind, true); } });
       else if (forceSave) toast('Saved “' + name + '” again');
@@ -5420,7 +5445,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var g = coolGroup(urls[0]);
     var p = { urls: urls, group: g, total: d.total, more: d.total - off, reqs: 0, memo: null, disabled: false, why: '' };
     if (g === 'catalog') {
-      p.reqs = urls.filter(function (u) { return !catMemo[u]; }).length;   // pages kept for this visit cost nothing
+      p.reqs = urls.filter(function (u) { return !catMemo[memoKey(u)]; }).length;   // pages kept for this visit cost nothing
       if (p.reqs > FIND_CAT_MAX) { p.disabled = true; p.why = 'cap'; }
       else if (p.reqs && coolLeft('catalog')) { p.disabled = true; p.why = 'paused'; }
     } else {
@@ -5470,6 +5495,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     stop.addEventListener('click', function () { r.stop = true; stop.disabled = true; });
     f.appendChild(stop);
   }
+  // audit: Liked Songs and Saved episodes only: a like or unlike made while the list is open moves Spotify's offsets
+  // by one, so a page can bring back a row already shown; it's dropped. A playlist can hold a song twice, so not there.
+  function dropShown(d, mapped) {
+    if (d.item.kind !== 'liked' && d.item.kind !== 'episodes') return mapped;
+    var seen = {};
+    d.items.forEach(function (x) { seen[x.uri] = true; });
+    return mapped.filter(function (x) { return !seen[x.uri]; });
+  }
   // One answered page goes into the list in order (albums: into the saved copy's raw list).
   function addFindPage(d, j) {
     if (typeof j.total === 'number') d.total = j.total;
@@ -5480,7 +5513,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       return [];
     }
     var off = typeof j.offset === 'number' ? j.offset : null;   // v2.26: real playlist positions, for Edit
-    var mapped = (j.items || []).map(function (it, k) { var m = mapDetail(d.item, it); if (m && d.item.kind === 'playlist' && off !== null) m.pos = off + k; return m; }).filter(Boolean);
+    var mapped = dropShown(d, (j.items || []).map(function (it, k) { var m = mapDetail(d.item, it); if (m && d.item.kind === 'playlist' && off !== null) m.pos = off + k; return m; }).filter(Boolean));
     d.items = d.items.concat(mapped);
     if (isPod(d.item)) rememberEpisodes(mapped);
     return mapped;
@@ -5732,7 +5765,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!url) { d.restricted = true; paintDetailSort(); paintDetailFoot(); return; }
     d.lastUrl = url;
     var g = coolGroup(url);
-    if (!catMemo[url] && coolLeft(g)) {
+    if (!catMemo[memoKey(url)] && coolLeft(g)) {
       // v2.27: a playlist that may be someone else's (owner or account not confirmed) shows Show songs, as before.
       if (d.item.kind === 'playlist' && !knownListable(d.item)) { d.restricted = true; paintDetailSort(); paintDetailFoot(); return; }
       if (detailFallback(d)) return;   // v2.15: search (albums) or your saved and played episodes (podcasts)
@@ -5757,7 +5790,11 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         var raws = (r.json.items || []).filter(function (x) { return x && x.id && x.uri; }).map(kind === 'album' ? slTrack : slEpisode);
         if (first) d.checkedAt = Date.now();
         if (kind === 'album' && first) d.raw = raws;   // the first page (or Reload from Spotify) starts the list over
-        else if (kind === 'show' && first && d.raw.length) {
+        else if (kind === 'show' && first && d.raw.length && r.json.next && raws.length && !d.raw.some(function (x) { return x.id === raws[raws.length - 1].id; })) {
+          // audit: page 1's oldest episode isn't in the saved copy (50+ new since it was saved, or Latest's newest few
+          // on top of an older copy), so joining them would hide a gap: the list starts over from page 1.
+          d.raw = raws;
+        } else if (kind === 'show' && first && d.raw.length) {
           // Page 1 over a saved copy: Spotify's newest episodes first, then the saved ones it didn't include.
           var ids = {};
           raws.forEach(function (x) { ids[x.id] = true; });
@@ -5773,7 +5810,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         return;
       }
       var off = pageOffset(url, r.json);   // v2.26: each song's place in the playlist, for Edit
-      var mapped = (r.json.items || []).map(function (it, j) { var m = mapDetail(d.item, it); if (m && kind === 'playlist') m.pos = off + j; return m; }).filter(Boolean);
+      var mapped = dropShown(d, (r.json.items || []).map(function (it, j) { var m = mapDetail(d.item, it); if (m && kind === 'playlist') m.pos = off + j; return m; }).filter(Boolean));
       d.items = d.items.concat(mapped);
       if (isPod(d.item)) rememberEpisodes(mapped);   // for Continue listening
       if (!cur) return;
@@ -6323,6 +6360,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var had = {};
     c.items.forEach(function (x) { had[x.id] = true; });
     var overlap = raws.some(function (x) { return had[x.id]; });
+    if (!overlap) return;   // audit: no overlap would leave a gap under them; the copy stays, and opening checks page 1
     var ids = {};
     raws.forEach(function (x) { ids[x.id] = true; });
     c.items = raws.concat(c.items.filter(function (x) { return !ids[x.id]; })).slice(0, SL_SHOW_EPS);
@@ -6384,7 +6422,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function reloadAlbum(d) {
     if (!d || d.loading || coolBlocked('catalog')) return;
     var url = albumPage(d.item.id, 0);
-    delete catMemo[url];
+    delete catMemo[memoKey(url)];
     loadDetail(url);   // the first page replaces the list and the saved copy
   }
   function useShowCache(d, c) {
@@ -6399,7 +6437,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (!d || d.loading || state.detail !== d) return;
     if (coolLeft('catalog')) { if (!auto) coolToast('catalog'); paintDetailFoot(); return; }
     var url = showPage(d.item.id, 0);
-    delete catMemo[url];
+    delete catMemo[memoKey(url)];
     d.autoCheck = !!auto;
     loadDetail(url);
   }
@@ -6801,7 +6839,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
   function loadArtist(d) {
     if (!d || d.loading) return;
-    if (!catMemo[releaseUrl(d)] && coolLeft('catalog')) { d.error = coolText('catalog'); if (state.detail === d) paintArtistFoot(d); coolToast('catalog'); return; }   // v2.13
+    if (!catMemo[memoKey(releaseUrl(d))] && coolLeft('catalog')) { d.error = coolText('catalog'); if (state.detail === d) paintArtistFoot(d); coolToast('catalog'); return; }   // v2.13
     d.loading = true; d.error = '';
     if (state.detail === d) paintArtistFoot(d);
     if (!d.infoAsked && !d.item.img) {
