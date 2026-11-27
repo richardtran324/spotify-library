@@ -6736,7 +6736,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   function renderSetup(errMsgText) {
     stopApp();
     var main = $('main'); main.textContent = '';
-    var input = el('input', { class: 'field', id: 'clientId', type: 'text', placeholder: 'Paste your Client ID', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'aria-label': 'Client ID' });
+    var input = el('input', { class: 'field', id: 'clientId', type: 'text', placeholder: 'Paste your Client ID', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'aria-label': 'Client ID', 'aria-describedby': 'clientIdErr' });
     var save = el('button', { class: 'btn', type: 'button', text: 'Save and sign in with Spotify' });
     var copy = el('button', { class: 'btn secondary', type: 'button', text: 'Copy this address' });
     var addr = el('div', { class: 'mono', id: 'redirect', text: REDIRECT });
@@ -6747,10 +6747,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     });
     save.addEventListener('click', function () {
       var v = input.value.trim();
-      if (!/^[0-9a-f]{32}$/i.test(v)) { err.textContent = 'That doesn’t look like a Client ID. It’s 32 letters and numbers, from your app’s Settings page.'; return; }
+      // audit AUTH-6: the error is a role=alert region and focus moves to the field, so VoiceOver speaks it
+      if (!/^[0-9a-f]{32}$/i.test(v)) { err.textContent = 'That doesn’t look like a Client ID. It’s 32 letters and numbers, from your app’s Settings page.'; input.setAttribute('aria-invalid', 'true'); input.focus(); return; }
+      input.removeAttribute('aria-invalid');
       set(K.client, v); login();
     });
-    var err = el('p', { class: 'err', text: errMsgText || '' });
+    var err = el('p', { class: 'err', id: 'clientIdErr', role: 'alert', text: errMsgText || '' });
     main.appendChild(el('section', { class: 'card' }, [
       el('h2', { text: 'One-time setup' }),
       el('p', { text: 'In your Spotify developer app, set the Redirect URI to this exact address:' }),
