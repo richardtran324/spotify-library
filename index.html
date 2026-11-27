@@ -4580,8 +4580,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     return items[0] || null;
   }
   // v2.23: a pinned podcast's play button. Its episodes the page already holds (the Latest cache, the podcast's
-  // saved list, the episode history), newest first, the newest position of each winning; then the same pick as
-  // the podcast's own Play. Null when none is held. Reads storage only.
+  // saved list, the episode history), newest release first, the newest position of each winning; then the same pick
+  // as the podcast's own Play (firstUnplayed). An episode with no release date anywhere (heard, but in no list) goes
+  // after every dated one, newest heard first, so it never beats a newer release. Null when none is held. Reads storage only.
   function heldShowEpisode(showId) {
     if (!showId) return null;
     var byUri = {}, list = [];
@@ -4603,9 +4604,15 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       put({ id: e.id, uri: e.uri, name: e.name, durMs: e.duration_ms || 0, positionMs: rs.pos, played: rs.played, real: !!e.release_date }, sl.at, e.release_date || '');
     });
     epHistory().forEach(function (h) {
-      if (h.show && h.show.id === showId) put({ id: h.id, uri: h.uri, name: h.name, durMs: h.duration_ms || 0, positionMs: h.played ? 0 : (h.positionMs || 0), played: !!h.played }, histSnap(h), isoDay(h.at));
+      if (!h.show || h.show.id !== showId) return;
+      var seenDate = (epSeen[h.uri] && epSeen[h.uri].x && epSeen[h.uri].x.date) || '';   // a list loaded this visit may know it
+      put({ id: h.id, uri: h.uri, name: h.name, durMs: h.duration_ms || 0, positionMs: h.played ? 0 : (h.positionMs || 0), played: !!h.played, real: !!seenDate }, histSnap(h), seenDate);
+      if (!byUri[h.uri].real) byUri[h.uri].heard = h.at || 0;
     });
-    list.sort(function (a, b) { return cmpDesc(a.k, b.k) || a.i - b.i; });
+    list.sort(function (a, b) {
+      if (a.real !== b.real) return a.real ? -1 : 1;   // dated before undated
+      return a.real ? (cmpDesc(a.k, b.k) || a.i - b.i) : ((b.heard || 0) - (a.heard || 0) || a.i - b.i);
+    });
     var t = firstUnplayed(list.map(function (w) { return w.x; }));
     if (!t) return null;
     var pos = t.played ? 0 : (t.positionMs || 0);
