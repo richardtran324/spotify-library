@@ -1,0 +1,15 @@
+{
+  "name": "spotify-library-tests",
+  "private": true,
+  "description": "Simulated browser tests for index.html (jsdom, mocked Spotify API). No network or secrets needed.",
+  "scripts": {
+    "test": "node run.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "jsdom": "31.0.1",
+    "whatwg-url": "17.3.0"
+  }
+}

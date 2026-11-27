@@ -3179,7 +3179,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.27 (2026-11-27)';
+  var VERSION = 'v2.28 (2026-11-27)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -4989,7 +4989,10 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (a.real !== b.real) return a.real ? -1 : 1;   // dated before undated
       return a.real ? (cmpDesc(a.k, b.k) || a.i - b.i) : ((b.heard || 0) - (a.heard || 0) || a.i - b.i);
     });
-    var t = firstUnplayed(list.map(function (w) { return w.x; }));
+    var t = firstUnplayed(list.map(function (w) {   // v2.28: this phone's Mark played counts here too
+      var m = withMark(w.x.uri, w.x.played, w.x.positionMs);
+      return Object.assign({}, w.x, { played: m.played, positionMs: m.pos });
+    }));
     if (!t) return null;
     var pos = t.played ? 0 : (t.positionMs || 0);
     return { kind: 'episode', id: t.id, name: t.name || 'Untitled', uri: t.uri, url: 'https://open.spotify.com/episode/' + t.id, positionMs: pos, played: !!t.played };
@@ -5258,8 +5261,8 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         var n = mapped.filter(function (i) { return findHit(i, tok); }).length;
         if (n && plain && (d.findHits || 0) >= FIND_SHOW) d.findHits += n;   // already a full screen: only the count changes
         else if (n) paintDetailList();
-      } else if (plain) appendDetailRows(mapped);
-      else if (last) paintDetailList();
+      } else if (plain && !d.editing) appendDetailRows(mapped);
+      else if (last || d.editing) paintDetailList();   // v2.28: a page that lands after Edit opened redraws the edit rows
       paintDetailFoot();
     }
     function commit() {
@@ -5551,7 +5554,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     down: svg('<path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M5 9l7 7 7-7"/>'),
     minus: svg('<circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.8"/><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M8 12h8"/>')
   };
-  function canEdit(p) { return !!(p && p.kind === 'playlist' && p.id && canList(p)); }
+  function canEdit(p) { return !!(p && p.kind === 'playlist' && p.id && !noList[p.id] && knownListable(p)); }   // v2.28: only playlists known to be yours or collaborative
   function plItemsPath(id) { return '/playlists/' + encodeURIComponent(id) + '/items'; }
   function pageOffset(url, json) {
     if (json && typeof json.offset === 'number') return json.offset;
@@ -6740,6 +6743,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     closeSheet();
     closeQueue(false);
     closeNp(false);
+    closePl(); closePerm();   // v2.28: Add to playlist and the permission sheet close on sign-out too
     paintPlayer();
   }
   function renderSetup(errMsgText) {
