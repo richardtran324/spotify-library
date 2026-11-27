@@ -121,6 +121,7 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
   font: inherit; font-size: 0.85rem; background: none; border: 1px solid var(--line);
   color: var(--muted); border-radius: 8px; padding: 6px 10px; cursor: pointer;
 }
+.permlist { margin: 6px 0 10px; padding-left: 20px; font-weight: 600; }
 .banner {
   display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
   margin-top: 10px; padding: 10px 12px; border-radius: 10px;
@@ -580,6 +581,18 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   </div>
 </div>
 
+<div class="sheet" id="perm" role="dialog" aria-modal="true" aria-labelledby="permTitle" hidden>
+  <div class="sheet-back" id="permBack"></div>
+  <div class="sheet-panel">
+    <h2 id="permTitle">One more permission</h2>
+    <div id="permBody"></div>
+    <div class="sheet-btns">
+      <button class="btn" id="permGo" type="button">Sign in to Spotify</button>
+      <button class="btn secondary" id="permClose" type="button">Not now</button>
+    </div>
+  </div>
+</div>
+
 <div class="sheet" id="diag" role="dialog" aria-modal="true" aria-labelledby="diagTitle" hidden>
   <div class="sheet-back" id="diagBack"></div>
   <div class="sheet-panel">
@@ -642,6 +655,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     'user-read-currently-playing'   // v2.9: Up next (GET /me/player/queue needs it with user-read-playback-state)
   ];
   var SCOPES = SCOPE_LIST.join(' ');
+  // v2.25: features that need a Spotify permission the everyday sign-in doesn't ask for. The page asks for one
+  // only the first time you use that feature (see askFeature), and keeps it on later sign-ins once granted.
+  // `allow` is the line Spotify's scopes page says users see for that permission.
+  var FEATURE_SCOPES = {
+    follow: { name: 'Follow artists', scopes: ['user-follow-modify'], allow: ['Manage who you are following'] },
+    edit: { name: 'Editing your playlists', scopes: ['playlist-modify-private'], allow: ['Manage your private playlists'] }
+  };
+  var PERM_ASK = 'lib-perm-ask';   // {feature, at}: a feature sign-in in progress
   var API = 'https://api.spotify.com/v1';
   var AUTH = 'https://accounts.spotify.com';
   var K = {
@@ -847,7 +868,26 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var s = String.fromCharCode.apply(null, new Uint8Array(buf));
     return btoa(s).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
   }
-  function login() {
+  // v2.25: the everyday scopes, plus feature scopes already granted (so signing in again never drops them),
+  // plus `extra` when a feature asks for its permission.
+  function grantedScopes() {
+    var t = get(K.token);
+    return ((t && typeof t.scope === 'string') ? t.scope : '').split(/\s+/).filter(Boolean);
+  }
+  function hasFeature(f) {
+    var have = grantedScopes(), fs = FEATURE_SCOPES[f];
+    return !!fs && fs.scopes.every(function (s) { return have.indexOf(s) !== -1; });
+  }
+  function loginScopes(extra) {
+    var list = SCOPE_LIST.slice(), have = grantedScopes();
+    Object.keys(FEATURE_SCOPES).forEach(function (f) {
+      FEATURE_SCOPES[f].scopes.forEach(function (s) { if (have.indexOf(s) !== -1 && list.indexOf(s) === -1) list.push(s); });
+    });
+    (extra || []).forEach(function (s) { if (list.indexOf(s) === -1) list.push(s); });
+    return list.join(' ');
+  }
+  function login(extra) {
+    if (!Array.isArray(extra)) extra = null;   // a click event when used as a listener
     var client = get(K.client);
     if (!client) return renderSetup();
     var verifier = randomString(64);
@@ -858,7 +898,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       var p = new URLSearchParams({
         response_type: 'code',
         client_id: client,
-        scope: SCOPES,
+        scope: loginScopes(extra),
         code_challenge_method: 'S256',
         code_challenge: b64url(hash),
         redirect_uri: REDIRECT,
@@ -902,6 +942,14 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var code = params.get('code');
     var err = params.get('error');
     history.replaceState(null, '', REDIRECT);
+    var ask = get(PERM_ASK);
+    del(PERM_ASK);
+    if (!ask || !FEATURE_SCOPES[ask.feature] || !(Date.now() - (ask.at || 0) < 30 * 60000)) ask = null;
+    if (err && ask && get(K.token)) {
+      // A feature sign-in was cancelled: the old sign-in still works, so go back to the page.
+      toast('Nothing changed. ' + FEATURE_SCOPES[ask.feature].name + ' still needs that permission.');
+      return Promise.resolve(true);
+    }
     if (err) { renderSignIn('Spotify sign-in was cancelled or failed (' + err + ').'); return Promise.resolve(false); }
     if (params.get('state') !== get(K.state)) { renderSignIn('Sign-in check failed. Please try again.'); return Promise.resolve(false); }
     return tokenRequest({
@@ -911,7 +959,12 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       client_id: get(K.client),
       code_verifier: get(K.verifier)
     }).then(function (j) {
-      saveToken(j, true); del(K.verifier); del(K.state); return true;
+      saveToken(j, true); del(K.verifier); del(K.state);
+      if (ask) {
+        var fs = FEATURE_SCOPES[ask.feature];
+        toast(hasFeature(ask.feature) ? fs.name + ' is ready. Try it again.' : 'Spotify didn’t add the permission ' + fs.name.toLowerCase() + ' needs.');
+      }
+      return true;
     }).catch(function (e) {
       renderSignIn('Could not finish sign-in: ' + e.message); return false;
     });
@@ -1165,7 +1218,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (r.status === 204) return { ok: true, status: 204, json: null };
       return r.text().then(function (txt) {
         var j = null; try { j = txt ? JSON.parse(txt) : null; } catch (e) {}
-        if (r.status === 403 && /scope/i.test(txt || '')) { state.scopeProblem = true; updateBanner(); }
+        if (r.status === 403 && /scope/i.test(txt || '') && !opts.feature) { state.scopeProblem = true; updateBanner(); }
         var res = { ok: r.ok, status: r.status, json: j };
         if (!r.ok) logError(what, r.status, errMsg(res));
         if (r.status === 429) {
@@ -3295,6 +3348,49 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }).catch(onFail('Couldn’t control playback')).then(function () { schedulePoll(nextIn, force); });
   }
 
+  // ---------- feature permissions (v2.25) ----------
+  // needFeature(f) is true when the feature can go ahead. Otherwise it opens a sheet that says which permission
+  // Spotify will ask for; "Sign in to Spotify" starts a sign-in with that permission added. Nothing is sent
+  // until Richard taps it, and cancelling on Spotify's screen keeps the current sign-in.
+  var permView = null, permReturn = null;
+  function needFeature(f, from) {
+    if (hasFeature(f)) return true;
+    openPerm(f, from);
+    return false;
+  }
+  function openPerm(f, from) {
+    var fs = FEATURE_SCOPES[f];
+    if (!fs) return;
+    permReturn = (from && from.nodeType === 1) ? from : document.activeElement;
+    permView = { feature: f };
+    var body = $('permBody');
+    body.textContent = '';
+    body.appendChild(el('p', { text: fs.name + ' needs one more Spotify permission, so Spotify will ask you to sign in again.' }));
+    body.appendChild(el('p', { class: 'sethint', text: 'Spotify’s screen lists everything this page can do. The new line is:' }));
+    body.appendChild(el('ul', { class: 'permlist' }, fs.allow.map(function (a) { return el('li', { text: a }); })));
+    body.appendChild(el('p', { class: 'sethint', text: 'You come back here afterwards. If you cancel, nothing changes.' }));
+    $('perm').hidden = false;
+    $('permGo').focus();
+  }
+  function closePerm() {
+    if ($('perm').hidden) return;
+    $('perm').hidden = true;
+    permView = null;
+    var r = permReturn;
+    permReturn = null;
+    if (r && r.focus && document.body.contains(r)) r.focus();
+  }
+  function permGo() {
+    var v = permView;
+    if (!v) return;
+    set(PERM_ASK, { feature: v.feature, at: Date.now() });
+    login(FEATURE_SCOPES[v.feature].scopes);
+  }
+  // A 403 from a feature request that mentions scope: the permission is missing or was taken back.
+  function featureDenied(f, r) {
+    return !!(r && r.status === 403 && /scope|permission/i.test(JSON.stringify(r.json || '')) && FEATURE_SCOPES[f]);
+  }
+
   // ---------- device sheet ----------
   function openSheet(from) {   // from: optional opener to return focus to (an event object is ignored)
     state.sheetReturn = (from && from.nodeType === 1) ? from : document.activeElement;
@@ -5204,6 +5300,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
     if (!$('sheet').hidden) closeSheet();
+    else if (!$('perm').hidden) closePerm();   // v2.25
     else if (!$('notes').hidden) closeNotes();   // v2.18
     else if (!$('queue').hidden) closeQueue();
     else if (!$('diag').hidden) closeDiag();
@@ -5219,6 +5316,9 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   $('queueRefresh').addEventListener('click', loadQueue);
   $('notesClose').addEventListener('click', function () { closeNotes(); });   // v2.18
   $('notesBack').addEventListener('click', function () { closeNotes(); });
+  $('permGo').addEventListener('click', permGo);   // v2.25
+  $('permClose').addEventListener('click', function () { closePerm(); });
+  $('permBack').addEventListener('click', function () { closePerm(); });
   $('qHide').addEventListener('change', function () { set(K.queueHide, $('qHide').checked); renderQueue(); });
   document.querySelectorAll('input[name="theme"]').forEach(function (r) {
     r.addEventListener('change', function () {
