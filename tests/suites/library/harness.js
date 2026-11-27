@@ -1,0 +1,5 @@
+// Harness for the library suite: the names below are exposed from index.html for testing.
+'use strict';
+module.exports = require('../../lib/harness')({
+  "expose": "state: state, K: K, loadData: loadData, refresh: refresh, renderList: renderList, setFilter: setFilter, openDetail: openDetail, closeDetail: closeDetail, goBack: goBack, loadDetail: loadDetail, startDetail: startDetail, detailFallback: detailFallback, paintDetailSum: paintDetailSum, toggleSave: toggleSave, canSave: canSave, savableUris: savableUris, paintHearts: paintHearts, togglePin: togglePin, readPins: readPins, isPinned: isPinned, canPin: canPin, cacheGet: cacheGet, cachePut: cachePut, searchCache: searchCache, slGet: slGet, slPut: slPut, slKeys: slKeys, slStats: slStats, clearSavedLists: clearSavedLists, saveAlbumList: saveAlbumList, useAlbumCache: useAlbumCache, saveSavedSession: saveSavedSession, loadSavedSession: loadSavedSession, applyTheme: applyTheme, themeMode: themeMode, pageIsDark: pageIsDark, paintSettings: paintSettings, stopApp: stopApp, SL_ALBUM: SL_ALBUM, SL_SHOW: SL_SHOW"
+});
