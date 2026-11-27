@@ -2027,7 +2027,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       delete state.busy[uri];
       if (!r.ok) throw new Error(errMsg(r));
       saveSavedSession();
-      if (save && /^spotify:track:/.test(uri)) likedSince(uri);   // v2.28: Liked songs on the artist page is no longer complete
+      if (save && /^spotify:track:/.test(uri)) likedSince(uri);   // v2.29: Liked songs on the artist page is no longer complete
       if (!save) toast('Removed “' + name + '”', null, { text: 'Undo', fn: function () { toggleSave(uri, name, kind, true); } });
       else if (forceSave) toast('Saved “' + name + '” again');
       else toast(kind === 'track' ? 'Added to Liked Songs' : 'Saved to your library');
@@ -2880,7 +2880,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // positionMs starts there: an episode's resume point, or where a resumed song had got to.
   function playBody(item) {
     if (item.kind === 'liked') return likedCtx() ? { context_uri: likedCtx() } : null;
-    if (item.uris) return item.uris.length ? { uris: item.uris.slice(0, LIKEDBY_PLAY) } : null;   // v2.28: a list of songs, no context
+    if (item.uris) return item.uris.length ? { uris: item.uris.slice(0, LIKEDBY_PLAY) } : null;   // v2.29: a list of songs, no context
     var b;
     if (item.ctx) b = { context_uri: item.ctx, offset: { uri: item.uri } };
     else if (item.kind === 'track' || item.kind === 'episode' || item.kind === 'resume') b = { uris: [item.uri] };
@@ -2893,7 +2893,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     var d = state.device;
     var body = playBody(item);
     if (!body) return Promise.reject(new Error('your account details haven’t loaded yet'));
-    if (opts.shuffle && item.uris && body.uris.length > 1) shuffleList(body.uris);   // v2.28: a song list is shuffled here too
+    if (opts.shuffle && item.uris && body.uris.length > 1) shuffleList(body.uris);   // v2.29: a song list is shuffled here too
     var q = '?device_id=' + encodeURIComponent(d.id);
     function send(b) { return api('/me/player/play' + q, { method: 'PUT', body: b }); }
     function shuffle() { return api('/me/player/shuffle?state=true&device_id=' + encodeURIComponent(d.id), { method: 'PUT' }); }
@@ -2993,7 +2993,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       at: Date.now(),
       mode: mode || 'link'
     };
-    if (item.uris) p.item.uris = item.uris.slice(0, LIKEDBY_PLAY);   // v2.28: a song list (Liked songs by an artist), 100 at most
+    if (item.uris) p.item.uris = item.uris.slice(0, LIKEDBY_PLAY);   // v2.29: a song list (Liked songs by an artist), 100 at most
     set(K.pending, p);
     return p;
   }
@@ -3174,7 +3174,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.28 (2026-11-27)';
+  var VERSION = 'v2.29 (2026-11-27)';
   function paintWakeModes() {
     var m = wakeMode();
     document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) { r.checked = r.value === m; });
@@ -4770,7 +4770,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       if (at) at.albumName = parent.name || '';   // v2.22: Find in list matches the album name
       return at;
     }
-    if (parent.kind === 'liked') likedCount(it);   // v2.28: every Liked Songs entry counts (local files too), to know when all are in
+    if (parent.kind === 'liked') likedCount(it);   // v2.29: every Liked Songs entry counts (local files too), to know when all are in
     if (it.is_local) return null;
     var t = it.item || it.track;
     if (!t) return null;
@@ -4779,7 +4779,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     if (m && it.added_at) m.added = it.added_at;   // when it was added to the playlist (or liked), for sorting
     if (m && t.album && t.album.name) m.albumName = t.album.name;   // v2.22: for Find in list
     if (m && parent.kind === 'liked' && state.saved[m.uri] === undefined) state.saved[m.uri] = true;
-    if (m && parent.kind === 'liked') likedNote(m, t);   // v2.28: artist IDs, for Liked songs on the artist page
+    if (m && parent.kind === 'liked') likedNote(m, t);   // v2.29: artist IDs, for Liked songs on the artist page
     return m;
   }
   // opts.push (v2.12): open on top of the current view (a release from an artist view), so Back returns to it.
@@ -6064,7 +6064,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
   // Opening an album or podcast: the saved copy first; during a catalog pause, the fallbacks; otherwise Spotify.
   function startDetail(d) {
     var it = d.item;
-    if (it.kind === 'likedby') { fillLikedBy(d); return; }   // v2.28: from memory, no request
+    if (it.kind === 'likedby') { fillLikedBy(d); return; }   // v2.29: from memory, no request
     if (it.kind === 'album' && it.id) {
       var c = slGet(SL_ALBUM, it.id);
       if (c && c.items.length) { useAlbumCache(d, c); return; }
@@ -6238,7 +6238,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         }
       }
     } else if (kind === 'playlist') copyNoteParts(d, parts, link);   // v2.24
-    else if (kind === 'likedby') likedByNote(d, parts, link);   // v2.28
+    else if (kind === 'likedby') likedByNote(d, parts, link);   // v2.29
     parts.forEach(function (p, i) {
       if (i && p.tagName === 'BUTTON') n.appendChild(el('span', { 'aria-hidden': 'true', text: '·' }));
       n.appendChild(p);
@@ -6568,7 +6568,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
       ]),
       el('div', { class: 'dbtns' }, btns)
     ]));
-    main.appendChild(el('div', { id: 'aliked' }));   // v2.28: Liked songs · N
+    main.appendChild(el('div', { id: 'aliked' }));   // v2.29: Liked songs · N
     paintArtistLiked(d);
     main.appendChild(el('div', { id: 'alist' }));
     main.appendChild(el('div', { class: 'dfoot', id: 'afoot' }));
@@ -6637,7 +6637,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     }
   }
 
-  // ---------- Liked songs on the artist page (v2.28) ----------
+  // ---------- Liked songs on the artist page (v2.29) ----------
   // A "Liked songs · 12" row under the artist page's header: the songs in your Liked Songs where this artist is
   // any of the credited artists, matched by artist ID. Built only from what the page already holds this visit,
   // so showing it and opening it send nothing: Search all's answer (findMemo), a Liked Songs view that's open or
