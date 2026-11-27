@@ -2895,6 +2895,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
     function send(b) { return api('/me/player/play' + q, { method: 'PUT', body: b }); }
     function shuffle() { return api('/me/player/shuffle?state=true&device_id=' + encodeURIComponent(d.id), { method: 'PUT' }); }
     var shuffleOk = true;
+    state.pollSeq++;   // audit: ignore any check that started before this play (it would repaint the old song and cancel the check below)
     var pre = opts.shuffle ? shuffle().then(function (r) { shuffleOk = r.ok; }, function () { shuffleOk = false; }) : Promise.resolve();
     function done() {
       toast((opts.shuffle ? 'Shuffling “' : 'Playing “') + item.name + '” on ' + d.name);
@@ -2916,7 +2917,7 @@ ul.list.hero li { border: 1px solid var(--line); border-radius: 12px; background
         });
       }
       throw httpError(r);
-    });
+    }).catch(function (e) { schedulePoll(pollEvery()); throw e; });   // audit: a failed play still leaves the regular check running
   }
   function httpError(r) { var e = new Error(errMsg(r)); e.status = r.status; return e; }
   function deviceFresh() { return state.device && (Date.now() - state.deviceAt < FRESH_MS); }
