@@ -1478,16 +1478,40 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   function updateBanner() {
     $('banner').hidden = !(state.started && (state.scopeProblem || missingScopes().length > 0));
   }
+  // v2.61: a request with no answer in time ends as if Safari had failed it ("Load failed"), so the usual
+  // no-internet handling takes over (the quiet line, the quiet retry on return, plain-words toasts for taps). Before,
+  // a request that never answered (say, Wi-Fi to cellular) kept every later identical request waiting on it, because
+  // identical GETs, the device check and the token renewal share one request while it's in flight. The timer also
+  // covers reading the answer. abort() ends the request where fetch can be aborted (Safari 12.1+, WebKit r239644:
+  // https://bugs.webkit.org/show_bug.cgi?id=174980; iOS 11.3 had AbortController without it); the timer rejects
+  // either way. Playback, devices and token renewal wait 10 s, everything else 20 s.
+  var REQ_LIMIT_MS = { player: 10000, other: 20000 };
+  function timedFetch(url, fo, ms) {
+    var ctl = typeof AbortController === 'function' ? new AbortController() : null, timer = null;
+    if (ctl) fo.signal = ctl.signal;
+    var late = new Promise(function (res, rej) {
+      timer = setTimeout(function () {
+        var e = new TypeError('Spotify didn’t answer in ' + Math.round(ms / 1000) + ' s');   // shows in Diagnostics
+        e.timeout = true;
+        rej(e);                  // before abort(), so this error (not the AbortError) is the one the race gives
+        if (ctl) ctl.abort();
+      }, ms);
+    });
+    var got = fetch(url, fo).then(function (r) {
+      return r.text().then(function (txt) { return { r: r, txt: txt }; });
+    });
+    return Promise.race([got, late]).then(function (x) { clearTimeout(timer); return x; },
+      function (e) { clearTimeout(timer); throw e; });
+  }
   function tokenRequest(body) {
-    return fetch(AUTH + '/api/token', {
+    return timedFetch(AUTH + '/api/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams(body)
-    }).then(function (r) {
-      return r.json().then(function (j) {
-        if (!r.ok) { var e = new Error(j.error_description || j.error || ('HTTP ' + r.status)); e.code = j.error; throw e; }
-        return j;
-      });
+    }, REQ_LIMIT_MS.player).then(function (x) {
+      var r = x.r, j = JSON.parse(x.txt);   // as r.json(): an unreadable answer rejects
+      if (!r.ok) { var e = new Error(j.error_description || j.error || ('HTTP ' + r.status)); e.code = j.error; throw e; }
+      return j;
     });
   }
   function handleCallback(params) {
@@ -1818,6 +1842,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     return Object.keys(by).sort(function (a, b) { return by[b] - by[a]; }).slice(0, 6).map(function (k) { return k + ' ' + by[k]; }).join(', ');
   }
   // v2.14: identical GETs in flight share one request (and one answer). A 429 is never asked again on its own.
+  // v2.61: a request past its time limit fails like any other, so it leaves `inflight` and the next one goes out fresh.
   var inflight = {};
   function api(path, opts) {
     opts = opts || {};
@@ -1832,32 +1857,31 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     var p = accessToken().then(function (tok) {
       if (coolLeft(g)) throw coolErr(g);   // another copy hit the limit while the token renewed
       meterNote(what, g);
-      return fetch(url, {
+      return timedFetch(url, {
         method: method,
         headers: Object.assign({ Authorization: 'Bearer ' + tok }, opts.body ? { 'Content-Type': 'application/json' } : {}),
         body: opts.body ? JSON.stringify(opts.body) : undefined
-      });
-    }).then(function (r) {
+      }, g === 'player' ? REQ_LIMIT_MS.player : REQ_LIMIT_MS.other);   // v2.61: a time limit
+    }).then(function (x) {
+      var r = x.r, txt = x.txt;
       if (state.offline) { setOffline(false); catchUp(true); }   // v2.43: Spotify answered, so the connection is back
       if (r.status === 401) { var t = get(K.token); if (t) { t.expires = 0; set(K.token, t); } }
       if (r.status === 204) return { ok: true, status: 204, json: null };
-      return r.text().then(function (txt) {
-        var j = null; try { j = txt ? JSON.parse(txt) : null; } catch (e) {}
-        if (r.status === 403 && /scope/i.test(txt || '') && !opts.feature) { state.scopeProblem = true; updateBanner(); }
-        var res = { ok: r.ok, status: r.status, json: j };
-        if (!r.ok) logError(what, r.status, errMsg(res));
-        if (r.status === 429) {
-          // Handled like a skipped request from here on: silent for background checks, one toast for taps.
-          noteRateLimit(r, j, what, g);
-          var ce = coolErr(g); ce.status = 429; throw ce;
-        }
-        return res;
-      });
+      var j = null; try { j = txt ? JSON.parse(txt) : null; } catch (e) {}
+      if (r.status === 403 && /scope/i.test(txt || '') && !opts.feature) { state.scopeProblem = true; updateBanner(); }
+      var res = { ok: r.ok, status: r.status, json: j };
+      if (!r.ok) logError(what, r.status, errMsg(res));
+      if (r.status === 429) {
+        // Handled like a skipped request from here on: silent for background checks, one toast for taps.
+        noteRateLimit(r, j, what, g);
+        var ce = coolErr(g); ce.status = 429; throw ce;
+      }
+      return res;
     }, function (e) {
       if (e && e.message !== 'signed-out' && !isCool(e)) {
         logError(what, 'network', e.message);   // the raw text ("Load failed") stays in Diagnostics
-        // v2.43: no answer at all (fetch rejects with a TypeError). Within 45 s of coming back to the page, a GET
-        // is asked once more after 2 s, silently; otherwise the page shows the no-internet line.
+        // v2.43: no answer at all (fetch rejects with a TypeError; v2.61: or no answer within REQ_LIMIT_MS). Within 45 s
+        // of coming back to the page, a GET is asked once more after 2 s, silently; otherwise the page shows the no-internet line.
         if (e.name === 'TypeError' || /load failed|failed to fetch|networkerror/i.test(e.message || '')) {
           e.net = true;
           if (method === 'GET' && !opts.netRetry && Date.now() - netReturnAt < NET_RETURN_MS) {
@@ -5372,7 +5396,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.60 (2026-11-27)';
+  var VERSION = 'v2.61 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
