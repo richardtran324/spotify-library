@@ -1034,7 +1034,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     follow: { name: 'Follow artists', scopes: ['user-follow-modify'], allow: ['Manage who you are following'] },
     edit: { name: 'Editing your playlists', scopes: ['playlist-modify-private'], allow: ['Manage your private playlists'] }
   };
-  var PERM_ASK = 'lib-perm-ask';   // {feature, at}: a feature sign-in in progress
+  var PERM_ASK = 'lib-perm-ask';   // {feature, at[, item]}: a feature sign-in in progress (item: the list it was asked from)
   // v2.65: Spotify ends every sign-in 6 months after it was made. Renewing the token doesn't extend it, signing in
   // again starts a new 6 months, and refresh tokens carry no date, so the page keeps its own
   // (https://developer.spotify.com/blog/2026-06-18-refresh-token-expiration).
@@ -1190,6 +1190,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     player: null, playerAt: 0, pollTimer: null, pollSeq: 0, pollFailed: false,
     offline: false, offlineAt: 0, deviceErrObj: null,   // v2.43: no internet (see setOffline); the last device-check error
     playerIdle: false,   // v2.10: Spotify dropped off (204 / no item); state.player is the last playback, shown paused
+    playerUnverified: false,   // true: the bar was painted from storage, or is stale after time away ('tap' once Play was pressed); the next player answer clears it
     search: { q: '' }, stype: 'all',   // results live in searchCache, per type and query
     recent: { items: null, jump: null, loading: false, error: '' }, recentSeq: 0, recentTriedAt: 0,
     saved: {}, busy: {}, containsOff: false, checking: {}, checkQueue: [], checkTimer: null,
@@ -1668,6 +1669,26 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       return j;
     });
   }
+  // Back from a feature sign-in: the list it was asked from (playlist, artist…) opens again once the page runs.
+  var cbReopen = null;
+  // The code exchange while the page already runs on the old sign-in: a token renewal waits for it (accessToken),
+  // so an old refresh token can't overwrite the new sign-in.
+  var cbExchange = null;
+  function reopenAfterSignIn() {
+    var it = cbReopen;
+    cbReopen = null;
+    if (!it || !state.started || state.detail) return;
+    var r = kpResolve(it);   // the one in your library now, else the stored copy
+    if (r) openDetail(r);
+  }
+  // A first sign-in (or one whose old token has run out): a card instead of an empty page while Spotify answers.
+  function renderFinishing() {
+    var main = $('main'); main.textContent = '';
+    main.appendChild(el('section', { class: 'card', role: 'status' }, [
+      el('h2', { text: 'Finishing sign-in…' }),
+      el('p', { class: 'sethint', text: 'Waiting for Spotify. This usually takes a second or two.' })
+    ]));
+  }
   function handleCallback(params) {
     var code = params.get('code');
     var err = params.get('error');
@@ -1684,6 +1705,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     del(RENEW_ASK);
     if (rn && rn.place && Date.now() - (rn.at || 0) < 30 * 60000) kpBoot.renew = rn.place;
     if (!ask || !FEATURE_SCOPES[ask.feature] || !(Date.now() - (ask.at || 0) < 30 * 60000)) ask = null;
+    cbReopen = ask && ask.item && typeof ask.item === 'object' ? ask.item : null;
     // audit: a sign-in that was cancelled or failed while the old sign-in still works goes back to the page
     // (and keeps the last playback) instead of the Sign in screen. This covers feature sign-ins and "Sign in again".
     if (err && get(K.token)) {
@@ -1697,7 +1719,13 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       if (get(K.token)) { toast('Sign-in check failed. You’re still signed in.'); return Promise.resolve(true); }
       renderSignIn('Sign-in check failed. Please try again.'); return Promise.resolve(false);
     }
-    return tokenRequest({
+    // The old sign-in still works for a while yet: show the page (saved library, the list you came from) now and
+    // finish the sign-in alongside. Otherwise the page would renew the old token meanwhile, so it waits as before.
+    var t = get(K.token);
+    var early = !!(t && t.access && typeof t.expires === 'number' && Date.now() < t.expires - 60000);
+    if (early) { startApp(); reopenAfterSignIn(); }
+    else renderFinishing();
+    var x = tokenRequest({
       grant_type: 'authorization_code',
       code: code,
       redirect_uri: REDIRECT,
@@ -1714,12 +1742,18 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       if (get(K.token)) { toast('Could not finish sign-in (' + e.message + '). You’re still signed in.'); return true; }   // audit
       renderSignIn('Could not finish sign-in: ' + e.message); return false;
     });
+    if (early) {
+      var done = function () { cbExchange = null; };
+      cbExchange = x.then(done, done);
+    }
+    return x;
   }
   function accessToken() {
     var t = get(K.token);
     if (!t) return Promise.reject(new Error('signed-out'));
     if (t.access && Date.now() < t.expires) return Promise.resolve(t.access);
     if (!t.refresh) return Promise.reject(new Error('signed-out'));
+    if (cbExchange) return cbExchange.then(accessToken);   // a sign-in is finishing: use its token, not a renewal of the old one
     if (refreshing) return refreshing;   // several calls at once share one refresh
     var sent = t.refresh;
     // audit: another copy (tab or window) may renew with the same refresh token at the same time. Spotify can
@@ -3102,7 +3136,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   // the usual tap path (so the wake setting applies when Spotify is asleep).
   function notesJump(ep, ms, ev) {
     var p = state.player;
-    if (p && p.item && p.item.uri === ep.uri && p.is_playing && !state.playerIdle) {
+    if (p && p.item && p.item.uri === ep.uri && shownPlaying(p) && !state.playerIdle) {
       if (coolBlocked('player')) return;
       if (seekTo(ms) !== false) toast('Jumped to ' + fmtTime(ms));   // v2.35: not when Spotify doesn't allow seeking
       return;
@@ -4061,7 +4095,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     var e = lc && lc.key ? readCtxLast()[lc.key] : null;
     if (!e) return null;
     var p = state.player;
-    if (p && p.item && p.item.uri === e.uri && p.is_playing && !state.playerIdle) return null;
+    if (p && p.item && p.item.uri === e.uri && shownPlaying(p) && !state.playerIdle) return null;
     if (e.durMs > 0 && e.positionMs >= e.durMs - CTX_END_MS) return null;
     return e;
   }
@@ -5048,7 +5082,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     if (!state.deviceChecked && !d) { paintStarting(); return; }   // still showing "Checking…" (or the tap's Starting line)
     $('dot').className = 'dot ' + (d ? 'on' : 'off');
     if (d) {
-      var here = p && p.is_playing && p.device && p.device.id === d.id;
+      var here = shownPlaying(p) && p.device && p.device.id === d.id;
       $('statusText').textContent = here ? 'Playing on' : 'Ready: taps play on';
       btn.textContent = d.name + ' · Change';
       btn.setAttribute('aria-label', d.name + ' · Change device');
@@ -5614,7 +5648,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       return cl ? { item: cl, auto: true } : { msg: 'Nothing in Continue listening.' };
     }
     if (r.name === 'resume') {
-      if (!state.playerAt) return { wait: true };
+      if (!state.playerAt || state.playerUnverified) return { wait: true };   // not until Spotify has answered
       var p = state.player;
       if (p && p.item && p.is_playing && !state.playerIdle) return { msg: 'Already playing “' + (p.item.name || 'Untitled') + '”.' };
       var it = resumeItem();
@@ -5777,7 +5811,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.73 (2026-11-27)';
+  var VERSION = 'v2.74 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -6044,6 +6078,28 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     setPlayer(c.json, { fromCache: true, at: c.at });
     return true;
   }
+  // Start-up: the Now Playing bar straight from storage, before Spotify answers, writing nothing. The last answer
+  // (5 minutes old at most) when it's for the song the saved playback has and nothing froze that song after it;
+  // otherwise the saved playback, paused. Either way it's marked unverified until the first player answer.
+  function paintStoredPlayer() {
+    var lp = readLastPlay();
+    if (!lp) return;
+    var c = get(K.playerCache), now = Date.now();
+    var fresh = !!(c && typeof c.at === 'number' && now - c.at <= 5 * 60 * 1000 && c.at <= now + 60000 &&
+      c.json && c.json.item && c.json.item.uri === lp.item.uri && !(typeof lp.frozenAt === 'number' && lp.frozenAt > c.at));
+    if (fresh) {
+      state.player = c.json;
+      state.playerIdle = false;
+      state.playerAt = Math.min(now, c.at);
+      playerSeenAt = c.at;
+    } else {
+      state.player = idleFrom(lp);
+      state.playerIdle = !!state.player;
+      state.playerAt = now;
+    }
+    state.playerUnverified = true;
+    paintPlayer();
+  }
   // One /me/player request; the answer is shared with the other copies.
   function fetchPlayer() {
     state.lastPollAt = Date.now();
@@ -6158,19 +6214,23 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   // pos (v2.17): the position to freeze at (Pause passes the spot it showed at the tap); default: where it got to.
   function goIdle(pos) {
     var p = state.player;
+    var unverified = state.playerUnverified;   // a 404 is an answer, but it doesn't say where playback got to
     state.device = null; state.deviceAt = 0; state.devicesAt = 0; state.active = null;
     if (typeof pos !== 'number' && skipFrom) pos = preSkipPos();   // smooth: a Next/Previous Spotify never did keeps the spot from before the tap
     setSkipping(false);
     if (p && p.item) {
       if (typeof pos !== 'number') pos = curPos();
       if (!readLastPlay()) saveLastPlay(p, pos);
-      pos = freezeLastPos(p, pos);
-      noteEpisode(p.item, pos, false);   // v2.17: podcast history gets the paused spot now…
-      if (p.item.type === 'episode' && epHist) saveEpHistory(p.item.uri);   // …and keeps it after a reload (one write per pause)
+      if (!unverified) {   // shown from storage or stale after time away: the saved spot stays as it is
+        pos = freezeLastPos(p, pos);
+        noteEpisode(p.item, pos, false);   // v2.17: podcast history gets the paused spot now…
+        if (p.item.type === 'episode' && epHist) saveEpHistory(p.item.uri);   // …and keeps it after a reload (one write per pause)
+      }
       state.player = idleFrom(readLastPlay());
       state.playerIdle = !!state.player;
       state.playerAt = Date.now();
     }
+    state.playerUnverified = false;
     showStatus();
     paintPlayer();
   }
@@ -6185,7 +6245,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     return IDLE_TEXT;
   }
   function paintIdle() {
-    var idle = !!(state.started && state.playerIdle && state.player && state.player.item);
+    var idle = !!(state.started && state.playerIdle && state.player && state.player.item && !state.playerUnverified);   // no "asleep" line before Spotify answers
     var t = idle ? idleText() : '';
     var n = $('npIdle');
     if (n.textContent !== t) n.textContent = t;
@@ -6223,6 +6283,8 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   function setPlayer(p, o) {
     o = o || {};
     if (!o.fromCache) setSkipping(false);   // smooth: Spotify answered; the dim from Next/Previous ends
+    var unverified = state.playerUnverified;
+    state.playerUnverified = false;   // a player answer of any kind
     var prevUri = state.player && state.player.item && state.player.item.uri;
     if (p && p.is_playing) state.lastActiveAt = Math.max(state.lastActiveAt, o.at || Date.now());
     if (p && p.item) {
@@ -6236,7 +6298,9 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       if (p.item.type === 'episode' && p.item.id && p.item.id !== notesPlayerId) { notesPlayerId = p.item.id; keepNotes(p.item, true); }   // v2.18
     } else {
       // Nothing from Spotify: freeze the live playback where it got to, then show the saved one as asleep.
-      if (!state.playerIdle && state.player && state.player.item) {
+      // Not when the bar was only painted from storage (or went stale while away): the page doesn't know where it
+      // got to, so the saved spot stays as it is.
+      if (!unverified && !state.playerIdle && state.player && state.player.item) {
         var fpos = freezeLastPos(state.player, curPos());   // v2.17: keeps a spot another copy already froze
         noteEpisode(state.player.item, fpos, false);
         noteCtxSong(state.player.item, state.player.context, fpos, false);   // v2.23
@@ -6280,8 +6344,8 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     $('pSub').textContent = (ep ? ((item.show && item.show.name) || 'Podcast') : names(item.artists)) + (p.device && p.device.name ? ' · ' + p.device.name : '');
     paintIdle();   // asleep: the sub line says so instead
     var pb = $('pPlay');
-    var lab = p.is_playing ? 'Pause' : 'Play';
-    if (pb.getAttribute('aria-label') !== lab || !pb.firstChild) { pb.setAttribute('aria-label', lab); pb.innerHTML = p.is_playing ? ICON.pause : ICON.play; }
+    var on = shownPlaying(p), lab = on ? 'Pause' : 'Play';
+    if (pb.getAttribute('aria-label') !== lab || !pb.firstChild) { pb.setAttribute('aria-label', lab); pb.innerHTML = on ? ICON.pause : ICON.play; }
     $('pShuffle').setAttribute('aria-pressed', String(!!p.shuffle_state));
     paintRepeat($('pRepeat'));
     var h = $('pHeart');
@@ -6433,7 +6497,10 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   function permGo() {
     var v = permView;
     if (!v) return;
-    set(PERM_ASK, { feature: v.feature, at: Date.now() });
+    var rec = { feature: v.feature, at: Date.now() };
+    var it = state.detail && state.detail.item;
+    if (it && it.kind) rec.item = kpItem(it);   // reopened after the sign-in ("You come back here afterwards")
+    set(PERM_ASK, rec);
     login(FEATURE_SCOPES[v.feature].scopes);
   }
   // A 403 from a feature request that mentions scope: the permission is missing or was taken back.
@@ -6671,12 +6738,17 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     images.forEach(function (i) { if ((i.width || 0) > (best.width || 0)) best = i; });
     return best.url || '';
   }
+  // Playing as far as the page can tell: Spotify said so and nothing since makes that doubtful. While
+  // state.playerUnverified (painted from storage at start-up, or back after the song would have ended) the bar
+  // shows Play and the position stands still until the next player answer.
+  // ('tap': you pressed Play since, so it shows as playing; the spot is still unknown. See togglePlay.)
+  function shownPlaying(p) { return !!(p && p.is_playing && state.playerUnverified !== true); }
   // Where playback is now, estimated from the last answer.
   function curPos() {
     var p = state.player;
     if (!p || !p.item) return 0;
     var pos = p.progress_ms || 0;
-    if (p.is_playing) pos += Date.now() - (state.playerAt || Date.now());
+    if (shownPlaying(p)) pos += Date.now() - (state.playerAt || Date.now());   // not while unverified: it may have stopped
     var dur = p.item.duration_ms || 0;
     return Math.max(0, dur ? Math.min(pos, dur) : pos);
   }
@@ -6900,8 +6972,13 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   function togglePlay(ev) {
     if (state.playerIdle) { resumeFromIdle(ev); return; }   // asleep: resume the last playback (wakes Spotify per the wake mode)
     var p = state.player;
-    if (p && p.is_playing) pauseNow();   // v2.17: no "wake Spotify" message when Spotify fell asleep
-    else command('PUT', '/me/player/play', function (x) { x.progress_ms = curPos(); state.playerAt = Date.now(); x.is_playing = true; });
+    if (shownPlaying(p)) pauseNow();   // v2.17: no "wake Spotify" message when Spotify fell asleep
+    else {
+      // The button showed Play because the page isn't sure: Play shows as playing from the spot shown, but the
+      // page still doesn't know where it really got to ('tap'), so a 404 keeps the saved spot (goIdle).
+      if (state.playerUnverified === true) state.playerUnverified = 'tap';
+      command('PUT', '/me/player/play', function (x) { x.progress_ms = curPos(); state.playerAt = Date.now(); x.is_playing = true; });
+    }
   }
   function toggleShuffle() {
     if (!allowTap('toggling_shuffle')) return;   // v2.35
@@ -7022,7 +7099,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     $('npElapsed').textContent = fmtTime(pos);
     $('npRemain').textContent = '-' + fmtTime(Math.max(0, dur - pos));
     // v2.41: "Ends 9:41 PM" (local clock) beside the time left, only while it's playing.
-    var p = state.player, e = $('npEnds'), on = !!(p && p.item && p.is_playing && !state.playerIdle && dur);
+    var p = state.player, e = $('npEnds'), on = !!(p && p.item && shownPlaying(p) && !state.playerIdle && dur);
     e.hidden = !on;
     e.textContent = on ? 'Ends ' + clock(Date.now() + Math.max(0, dur - pos)) + ' · ' : '';
   }
@@ -7035,7 +7112,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     seekSlider.set(pos);
     paintTimes(pos);
     // The item ran out locally: check once, soon, for what plays next.
-    if (p.is_playing && dur && pos >= dur && npEndChecked !== p.item.uri) { npEndChecked = p.item.uri; schedulePoll(1500); }
+    if (shownPlaying(p) && dur && pos >= dur && npEndChecked !== p.item.uri) { npEndChecked = p.item.uri; schedulePoll(1500); }
   }
   function paintNp() {
     if (!npShown()) return;
@@ -7056,8 +7133,8 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     paintHeart(h);
     $('npBm').hidden = !bmOk(it);   // v2.32: songs and episodes with a Spotify link (not ads or local files)
     var pb = $('npPlay');
-    var lab = p.is_playing ? 'Pause' : 'Play';
-    if (pb.getAttribute('aria-label') !== lab || !pb.firstChild) { pb.setAttribute('aria-label', lab); pb.innerHTML = p.is_playing ? ICON.pause : ICON.play; }
+    var on = shownPlaying(p), lab = on ? 'Pause' : 'Play';
+    if (pb.getAttribute('aria-label') !== lab || !pb.firstChild) { pb.setAttribute('aria-label', lab); pb.innerHTML = on ? ICON.pause : ICON.play; }
     $('npShuffle').setAttribute('aria-pressed', String(!!p.shuffle_state));
     paintRepeat($('npRepeat'));
     $('npSkip').hidden = !ep;   // Back 15 s / Forward 30 s for episodes
@@ -7233,11 +7310,11 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     var noun = !eps ? (n === 1 ? 'song' : 'songs') : eps === n ? (n === 1 ? 'episode' : 'episodes') : (n === 1 ? 'item' : 'items');
     var txt = n + (cut ? '+ ' : ' ') + noun + (ms > 0 ? ' · ' + (cut ? 'at least ' : '') + fmtDur(ms) : '');
     var p = state.player, live = p && p.item && !state.playerIdle;
-    if (live && p.is_playing && cur && cur.uri === p.item.uri && ms > 0) {
+    if (live && shownPlaying(p) && cur && cur.uri === p.item.uri && ms > 0) {
       var rest = Math.max(0, (p.item.duration_ms || 0) - curPos());
       var upto = (ahead || shown).reduce(function (s, t) { return s + (t.duration_ms || 0); }, 0);
       txt += ' · ends ' + (cut ? 'after ' : 'about ') + clock(Date.now() + rest + upto);
-    } else if (!live || !p.is_playing) txt += ' · paused';
+    } else if (!live || !shownPlaying(p)) txt += ' · paused';
     return txt;
   }
   // from: the button that opened it (iPhone Safari doesn't focus a tapped button, so activeElement can't say).
@@ -11433,6 +11510,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     stopWake();
     state.player = null;
     state.playerIdle = false;
+    state.playerUnverified = false;
     if (!keepLast) clearLastPlay();   // signed out: the last playback belongs to that sign-in (v2.65: kept when Spotify ended it)
     releasePoller();
     paintCool();       // hides the cool-off line (state.started is false now)
@@ -11574,6 +11652,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     if (navigator.onLine === false) setOffline(true); else paintNet();   // v2.43
     setFilter(state.filter);
     if (place) kpRestore(place);   // v2.42: the open lists and scroll positions
+    paintStoredPlayer();   // the Now Playing bar from storage, until the first player answer
     if (!coolLeft('player')) checkDevice();
     refresh();   // v2.14: sends nothing while the library is paused (and shows why if nothing is cached)
     schedulePoll(0);
@@ -12109,6 +12188,18 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   function onReturn() {
     if (!state.started || !get(K.token)) return;
     if (onNpEntry() && !npShown() && !npNav) navBack(1);   // NAV-2: the entry "Open in Spotify" left behind
+    // Away longer than the song had left: it may have stopped or moved on. Until the next answer the bar shows
+    // Play and the spot it got to (the song's end), without counting on or freezing a spot.
+    var p = state.player;
+    if (p && p.item && p.is_playing && !state.playerIdle && state.playerUnverified !== true) {
+      var dur = p.item.duration_ms || 0;
+      if (dur && (p.progress_ms || 0) + (Date.now() - (state.playerAt || Date.now())) >= dur) {
+        p.progress_ms = curPos();
+        state.playerAt = Date.now();
+        state.playerUnverified = true;
+        paintPlayer();
+      }
+    }
     takePoller();
     paintCool();
     netReturnAt = Date.now();
@@ -12182,7 +12273,10 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     try { history.replaceState(null, '', location.pathname + (qs2 ? '?' + qs2 : '')); } catch (e) {}
   }
   if (params.has('code') || params.has('error')) {
-    handleCallback(params).then(function (ok) { if (ok) startApp(); });
+    handleCallback(params).then(function (ok) {
+      if (ok && !state.started) startApp();   // (already running when the old sign-in still worked)
+      if (ok) reopenAfterSignIn();
+    });
   } else if (!get(K.client)) {
     renderSetup();
   } else if (!get(K.token)) {
