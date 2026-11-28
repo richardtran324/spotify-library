@@ -3149,7 +3149,81 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       if (v && v.item && v.item.kind === listKind && v.next) v.next = String(v.next).replace(/([?&]offset=)(\d+)/, function (m, a, n) { return a + Math.max(0, +n - 1); });
     });
   }
-  function toggleSave(uri, name, kind, forceSave) {
+  // ---------- the library lists follow a heart (v2.63) ----------
+  // A save or removal that Spotify accepted changes the library in memory (state.data) and its saved copy
+  // (lib-cache) the way Follow does (setFollowed): an album, podcast or other person's playlist goes to the top of
+  // its list (Recently saved is the list's own order) or leaves it, and a song or episode moves the Liked Songs or
+  // Saved episodes count by one. A library tab on screen is drawn again at the same scroll place. A failed request
+  // changes nothing. Undo puts back the library's own copy of what you removed (libGone, this visit). A new playlist
+  // gets no snapshot (snap ''), so its saved songs copy (v2.37) waits for the next library load; a newly saved
+  // podcast gets its "N new" starting point (v2.45) and is asked by Latest's next reload as one never asked.
+  // Saved song lists (lib-cache-album / lib-cache-show / lib-pl-saved) don't depend on the library and stay.
+  var LIB_LISTS = { album: 'albums', show: 'shows', playlist: 'playlists' };
+  var libGone = {};   // uri -> the library's record of something removed with the heart this visit (for Undo)
+  // A library-shaped record from a row or page item (search, an artist's releases, a page header).
+  function libRecord(item) {
+    if (!item || !item.id || !item.uri || item.linkStub || !LIB_LISTS[item.kind]) return null;   // never a placeholder name
+    var o = { kind: item.kind, id: item.id, name: item.name || 'Untitled', uri: item.uri,
+      url: item.url || 'https://open.spotify.com/' + item.kind + '/' + item.id, img: item.img || '' };
+    if (item.kind === 'album') {
+      ['artist', 'released', 'artist1', 'tracks', 'byArtists', 'rprec', 'cpP', 'cpC', 'label'].forEach(function (k) { if (item[k] != null) o[k] = item[k]; });
+      o.sub = item.artist ? 'Album · ' + item.artist : 'Album';   // an artist's release says "2020 · 10 songs" instead
+    } else if (item.kind === 'show') {
+      var n = typeof item.total === 'number' ? item.total : null;
+      o.total = n;
+      o.sub = n != null ? 'Podcast · ' + n + (n === 1 ? ' episode' : ' episodes') : String(item.sub || 'Podcast').replace(/ · Latest .*$/, '');
+    } else {
+      o.ownerId = item.ownerId || ''; o.collaborative = !!item.collaborative; o.ownerName = item.ownerName || '';
+      o.snap = '';   // unknown: only the library's own snapshot labels a saved songs copy
+      o.count = item.count || 0;
+      o.sub = 'Playlist' + (o.ownerName ? ' · ' + o.ownerName : '') + (o.count ? ' · ' + o.count + ' songs' : '');
+    }
+    return o;
+  }
+  function libSaveChanged(uri, kind, save, item) {
+    var key = LIB_LISTS[kind], d = state.data, c = get(K.cache), cached = false;
+    if (key) {
+      var id = uri.split(':')[2];
+      var rec = null;
+      if (save) {
+        rec = libGone[uri] || libRecord(item);
+        delete libGone[uri];
+        if (!rec) return;   // nothing to list it with: the next library load adds it
+      } else if (d && Array.isArray(d[key])) {
+        for (var i = 0; i < d[key].length; i++) if (d[key][i] && d[key][i].id === id) { libGone[uri] = d[key][i]; break; }
+      }
+      var apply = function (list) {
+        if (save) return list.some(function (x) { return x && x.id === id; }) ? list : [rec].concat(list);
+        return list.filter(function (x) { return !x || x.id !== id; });
+      };
+      if (d && Array.isArray(d[key])) d[key] = apply(d[key]);   // a new array, so memos keyed on the list (libShowTotals) see it
+      if (c && Array.isArray(c[key])) { c[key] = apply(c[key]); cached = true; }
+      if (save && kind === 'show') syncSeen();   // v2.45: its count now is the starting point for "N new"
+    } else if (kind === 'track' || kind === 'episode') {
+      var tk = kind === 'track' ? 'likedTotal' : 'episodesTotal', by = save ? 1 : -1;
+      if (d && typeof d[tk] === 'number') d[tk] = Math.max(0, d[tk] + by);
+      if (c && typeof c[tk] === 'number') { c[tk] = Math.max(0, c[tk] + by); cached = true; }
+    } else return;
+    if (cached) set(K.cache, c);
+    var f = state.filter;
+    if (state.detail || !state.started || !d || f === 'search' || f === 'recent') return;
+    if (kind === 'track' && f !== 'home' && f !== 'playlists' && f !== 'all') return;   // where the Liked Songs row shows
+    if (kind === 'episode' && f !== 'podcasts' && f !== 'all') return;   // where Saved episodes shows
+    var y = window.pageYOffset || document.documentElement.scrollTop || 0;
+    var had = document.activeElement, rows = [].slice.call(document.querySelectorAll('#main .row'));
+    var at = had ? rows.indexOf(had.closest ? had.closest('.row') : null) : -1;
+    renderList();
+    window.scrollTo(0, y);
+    // The row with the heart you pressed may be gone: focus goes to its own heart if it's still here, else the row now in its place.
+    if (had && had !== document.body && !document.body.contains(had)) {
+      var nb = document.querySelector('#main .heart[data-uri="' + uri.replace(/"/g, '') + '"]');
+      var nrows = document.querySelectorAll('#main .row a.item');
+      if (!nb && at !== -1 && nrows.length) nb = nrows[Math.min(at, nrows.length - 1)];
+      if (nb) nb.focus({ preventScroll: true });
+    }
+  }
+  // item (v2.63): the row or page item the heart belongs to, so a save can list it.
+  function toggleSave(uri, name, kind, forceSave, item) {
     if (!uri || state.busy[uri]) return;
     if (coolBlocked('library')) return;   // v2.13
     var was = state.saved[uri];
@@ -3163,14 +3237,15 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       if (!save && (kind === 'track' || kind === 'episode')) shiftNext(kind === 'track' ? 'liked' : 'episodes');   // audit
       saveSavedSession();
       if (save && /^spotify:track:/.test(uri)) likedSince(uri);   // v2.31: Liked songs on the artist page is no longer complete
-      if (!save) toast('Removed “' + name + '”', null, { text: 'Undo', fn: function () { toggleSave(uri, name, kind, true); } });
+      if (save !== (was === true)) libSaveChanged(uri, kind, save, item);   // v2.63: the library lists and counts change at once
+      if (!save) toast('Removed “' + name + '”', null, { text: 'Undo', fn: function () { toggleSave(uri, name, kind, true, item); } });
       else if (forceSave) toast('Saved “' + name + '” again');
       else toast(kind === 'track' ? 'Added to Liked Songs' : 'Saved to your library');
     }).catch(function (e) {
       delete state.busy[uri];
       state.saved[uri] = was;
       paintHearts();
-      onFail(save ? 'Couldn’t save' : 'Couldn’t remove', function () { toggleSave(uri, name, kind, forceSave); })(e);   // v2.43: Try again
+      onFail(save ? 'Couldn’t save' : 'Couldn’t remove', function () { toggleSave(uri, name, kind, forceSave, item); })(e);   // v2.43: Try again
     });
   }
 
@@ -5396,7 +5471,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.62 (2026-11-27)';
+  var VERSION = 'v2.63 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -7045,7 +7120,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   function heartBtn(item) {
     var b = el('button', { class: 'act heart', type: 'button', 'data-uri': item.uri, 'data-name': item.name, 'data-kind': item.kind, 'aria-pressed': 'false' });
     paintHeart(b);
-    b.addEventListener('click', function () { toggleSave(item.uri, item.name, item.kind); });
+    b.addEventListener('click', function () { toggleSave(item.uri, item.name, item.kind, false, item); });
     return b;
   }
   function iconBtn(icon, label, fn) {
