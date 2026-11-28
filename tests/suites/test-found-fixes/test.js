@@ -327,7 +327,7 @@ tests.push(function () {
 tests.push(function () {
   var s = clientStore();
   return setup(s, { url: BASE + '?error=access_denied', auth: okAuth, noLibrary: true }).then(function (tab) {
-    check('4 error callback: cancelled message, nothing sent', heading(tab) === 'Sign in' && errText(tab) === 'Spotify sign-in was cancelled or failed (access_denied).' && tokenReqs(tab).length === 0, { e: errText(tab) });
+    check('4 error callback: cancelled message, nothing sent', heading(tab) === 'Sign in' && errText(tab) === 'Sign-in was cancelled.' && tokenReqs(tab).length === 0, { e: errText(tab) });
     close(tab);
   });
 });
