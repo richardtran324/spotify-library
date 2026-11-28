@@ -287,7 +287,9 @@ tests.push(function () {
 
 // 12. Already paused player group: swipe and button give the same message, zero requests; a library pause doesn't block skips.
 tests.push(function () {
-  function paused(g) { var s = H.seedStore(), c = {}; c[g] = { until: Date.now() + 600000, reason: 'rate', strikes: 0, quotaAt: 0, retryAfter: null, last429: null }; s.setItem('lib-cooloff', JSON.stringify(c)); return s; }
+  // One end time for both setups, so the two messages can't straddle a minute change ("until 10:39" vs "10:40").
+  var until = Date.now() + 600000;
+  function paused(g) { var s = H.seedStore(), c = {}; c[g] = { until: until, reason: 'rate', strikes: 0, quotaAt: 0, retryAfter: null, last429: null }; s.setItem('lib-cooloff', JSON.stringify(c)); return s; }
   var sw, bt;
   return setup(paused('player')).then(function (tab) {
     left(tab); sw = lastToast(tab);
