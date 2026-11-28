@@ -5,14 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Library">
-<meta name="theme-color" content="#101418">
+<meta name="theme-color" content="#f4f5f2" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#101418" media="(prefers-color-scheme: dark)">
 <title>My Library</title>
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <link rel="manifest" href="manifest.webmanifest">
 <script>
 /* Appearance (Diagnostics → Settings), applied before the page paints so a forced theme doesn't flash. */
-try { var libTheme = JSON.parse(localStorage.getItem('lib-theme') || 'null'); if (libTheme === 'light' || libTheme === 'dark') document.documentElement.setAttribute('data-theme', libTheme); } catch (e) {}
+try { var libTheme = JSON.parse(localStorage.getItem('lib-theme') || 'null'); if (libTheme === 'light' || libTheme === 'dark') { document.documentElement.setAttribute('data-theme', libTheme); document.querySelectorAll('meta[name="theme-color"]').forEach(function (m) { m.setAttribute('content', libTheme === 'dark' ? '#101418' : '#f4f5f2'); }); } } catch (e) {}
 /* v2.53: iPhone Text Size (Dynamic Type). On a touch screen whose Safari knows -apple-system-body, the CSS gives <html> the
    system body size; this scales it by 16/17 (iOS's default body size is about 17px, not yet measured on the iPhone) so the
    default Text Size looks as before, caps it at 28px so the bar and rows stay usable at the largest accessibility sizes, and
@@ -195,6 +196,9 @@ a.item {
   padding: 10px 2px; color: inherit; text-decoration: none; min-width: 0;
 }
 a.item:active { opacity: 0.6; }
+/* smooth: the bar, the top bar and the sheets have a touch listener, so iPhone Safari shows their buttons' own pressed look
+   (:active); those buttons drop the grey tap box so the two don't both show. Buttons without a pressed look keep the grey box. */
+#player button.act, #player button.pinfo, #top button.act, .sheet button.act { -webkit-tap-highlight-color: transparent; }
 .acts { display: flex; gap: 2px; flex: none; }
 .act {
   width: 44px; height: 44px; flex: none; padding: 0; border: 0; border-radius: 50%;   /* audit: A11Y-8: 44x44 touch target (was 40) */
@@ -340,6 +344,12 @@ li.dischead h3 { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; t
 .sheet-btns .btn { flex: 1; }
 /* v2.18: Episode notes sheet. The text scrolls inside the sheet; the title and Close stay put. */
 #notes .sheet-panel { overflow: hidden; }
+/* smooth: a sheet slides up and its scrim fades in each time it opens (un-hiding restarts the animation); off with Reduce Motion. */
+@keyframes sheetUp { from { transform: translateY(100%); } to { transform: none; } }
+@keyframes sheetFade { from { opacity: 0; } to { opacity: 1; } }
+.sheet:not([hidden]) .sheet-panel { animation: sheetUp 0.22s ease-out; }
+.sheet:not([hidden]) .sheet-back { animation: sheetFade 0.22s ease-out; }
+@media (prefers-reduced-motion: reduce) { .sheet:not([hidden]) .sheet-panel, .sheet:not([hidden]) .sheet-back { animation: none; } }
 .notes-meta { font-size: 0.85rem; color: var(--muted); margin-top: -6px; }
 .notes-body { flex: 1 1 auto; min-height: 0; overflow: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 10px; }
 .notes-text {
@@ -547,6 +557,10 @@ body.sheetopen { overflow: hidden; }   /* audit: the page stays still behind an 
 @media (prefers-reduced-motion: reduce) { .npfull { animation: none; } }
 /* smooth: Next/Previous dim the title until Spotify's answer (setSkipping) */
 #player.skipping .meta, #np.skipping #npName, #np.skipping #npBy { opacity: 0.45; transition: opacity 0.15s; }
+/* smooth: closing slides down. Scripts and VoiceOver already see it hidden (and it is inert); only the picture lingers 0.2 s.
+   !important is needed to beat [hidden] { display: none !important }; the more specific selector wins. Reduce Motion: JS skips it. */
+@keyframes npDown { from { transform: none; } to { transform: translateY(100%); } }
+.npfull[hidden].closing { display: block !important; animation: npDown 0.2s ease-in forwards; pointer-events: none; }
 .npf {
   max-width: 480px; margin: 0 auto; min-height: 100%;
   padding: calc(6px + env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) calc(20px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
@@ -5657,7 +5671,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.70 (2026-11-27)';
+  var VERSION = 'v2.71 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -5679,6 +5693,11 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     var m = themeMode();
     if (m === 'auto') document.documentElement.removeAttribute('data-theme');
     else document.documentElement.setAttribute('data-theme', m);
+    // smooth: the status bar / Safari tint follows a forced theme too; on Auto each meta keeps its own colour (its media picks one).
+    document.querySelectorAll('meta[name="theme-color"]').forEach(function (x) {
+      var dark = m === 'auto' ? /dark/.test(x.getAttribute('media') || '') : m === 'dark';
+      x.setAttribute('content', dark ? '#101418' : '#f4f5f2');
+    });
     syncEmbedTheme();   // v2.16
   }
   function paintSettings() {
@@ -6833,6 +6852,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     var was = npShown();
     npReturn = $('pInfo');   // closing always returns to the bar
     npKey = '';
+    npStopClosing();   // smooth: a reopen during the close slide starts fresh
     $('np').hidden = false;
     $('np').scrollTop = 0;
     document.body.classList.add('npopen');
@@ -6859,12 +6879,30 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     // interval after the last check. During a cool-off pollPlayer sends nothing.
     schedulePoll(Math.max(0, pollEvery() - (Date.now() - (state.lastPollAt || 0))));
   }
+  // smooth: a close you start (button, swipe, Escape) slides the screen down. hidden is already set, so npShown() and
+  // VoiceOver see it closed at once; the class only keeps it drawn for the slide. App closes (restore false) stay instant.
+  var npClosingTimer = null;
+  function npStopClosing() {
+    var n = $('np');
+    clearTimeout(npClosingTimer); npClosingTimer = null;
+    n.removeEventListener('animationend', npSlideEnd);
+    n.classList.remove('closing'); n.removeAttribute('inert');
+  }
+  function npSlideEnd(e) { if (e.target === $('np')) npStopClosing(); }   // not a child's animation bubbling up
+  function npStartClosing() {
+    var n = $('np');
+    npStopClosing();
+    n.classList.add('closing'); n.setAttribute('inert', '');
+    n.addEventListener('animationend', npSlideEnd);
+    npClosingTimer = setTimeout(npStopClosing, 300);
+  }
   // hist (NAV-2): 'keep' leaves Now Playing's history entry (the caller deals with it); otherwise, when it's the
   // current entry, the screen hides at once and then one Back steps off it (popstate then finds nothing to do).
   function closeNp(restore, why, hist) {
     if ($('np').hidden) return;
     state.npClosedWhy = (why || (restore === false ? 'app' : 'you')) + ' at ' + new Date().toLocaleTimeString();
     $('np').hidden = true;
+    if (restore !== false && !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) npStartClosing();   // smooth
     document.body.classList.remove('npopen');
     setInert(false);
     stopNpTick();
@@ -11784,6 +11822,9 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     set(K.searchFirst, $('searchFirst').value);
     if (state.started && state.filter === 'search' && !state.detail) renderList();
   });
+  // smooth: iPhone Safari applies :active (the pressed look) only where a touch listener exists (WebKit bug 138816).
+  // Passive no-ops on the bar, the top bar and each sheet; not the document, so list rows don't dim when a scroll starts.
+  document.querySelectorAll('#player, #top, .sheet').forEach(function (n) { n.addEventListener('touchstart', function () {}, { passive: true }); });
   // Swipe down from the top of the Now Playing screen closes it (not while dragging a slider).
   (function () {
     var np = $('np'), sy = null, sx = 0;
