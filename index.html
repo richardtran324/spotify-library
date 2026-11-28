@@ -1050,7 +1050,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     epHistory: 'lib-ep-history', // v2.11: [{uri, id, name, show:{id, name, images}, duration_ms, positionMs, played, at[, checkedAt]}], newest first
     epNotes: 'lib-ep-notes',     // v2.18: [{id, t, at[, cut]}], newest first: notes of episodes you opened or played (40, 4,000 characters each)
     epMarks: 'lib-ep-marks',     // v2.21: {uri: {played, at, pos}}: Mark as played / unplayed, this phone only (400, 180 days)
-    playLog: 'lib-play-log',     // v2.30: {e: [[playedAt ms, track id], …] newest first, t: {track id: [name, artists, album, cover]}}: songs from Recently played, kept past its last 50 (1,500 plays, 90 days; names cut at 80 characters with …; covers without the i.scdn.co prefix)
+    playLog: 'lib-play-log',     // v2.30: {e: [[playedAt ms, track id], …] newest first, t: {track id: [name, artists, album, cover[, mark]]}}: songs from Recently played, kept past its last 50 (1,500 plays, 90 days; names cut at 80 characters with …; covers without the i.scdn.co prefix; v2.46: mark only when Spotify marked the song as unplayable, see nopeMark)
     rewind: 'lib-rewind',        // v2.44: 'off' turns off the rewind when the page resumes an episode; unset = on
     plSeen: 'lib-pl-seen',       // v2.52: {playlist id: {s: snapshot, o: opened at (0 = not yet), f: first seen at[, e: snapshot after this page's own change]}} (500)
     byYou: 'lib-pl-byyou',       // v2.56: true: Playlists shows only playlists you own (By you)
@@ -3408,7 +3408,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   // shows it under day headings, each song once per day; Liked Songs can sort by it (Not played lately). No counts.
   var LOG_MAX = 1500, LOG_MS = 90 * 24 * 60 * 60 * 1000, LOG_ROWS = 150, LOG_IMG = 'https://i.scdn.co/image/';
   var playLogMem = null, logVer = 0, logLastVer = -1, logLastMap = {};
-  var logFull = {};   // song id -> [name, artists, album] uncut, from Spotify's latest answer (this visit only)
+  var logFull = {};   // song id -> [name, artists, album, unplayable mark] uncut, from Spotify's latest answer (this visit only)
   var logShow = LOG_ROWS, logKind = 'all';   // Recent: rows drawn so far, and the Show chip (this visit only)
   function logOk(x, now) {
     return Array.isArray(x) && typeof x[0] === 'number' && typeof x[1] === 'string' && !!x[1] && now - x[0] < LOG_MS && x[0] < now + 24 * 60 * 60 * 1000;   // a day of slack for a slow phone clock
@@ -3460,8 +3460,10 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       if (!at) return;
       var cover = img(t.album && t.album.images);
       var full = [String(t.name || 'Untitled'), names(t.artists), String((t.album && t.album.name) || '')];
-      fresh[t.id] = full;
+      var mk = nopeMark(t);   // v2.46
+      fresh[t.id] = full.concat(mk);
       var meta = full.map(logCut).concat(cover.indexOf(LOG_IMG) === 0 ? cover.slice(LOG_IMG.length) : cover);
+      if (mk) meta.push(mk);   // v2.46: stored only when Spotify marked the song, so older rows stay dimmed too
       var old = L.t[t.id];
       if (!Array.isArray(old) || old.join('\n') !== meta.join('\n')) { L.t[t.id] = meta; changed = true; }
       var k = at + ' ' + t.id;
@@ -3478,13 +3480,16 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   }
   function logCut(v) { return v.length > 80 ? v.slice(0, 79) + '…' : v; }   // stored names: 80 characters at most
   // A log entry as a song row, like Recent's rows before: "Song · artists · album · 3 h ago". Songs in Spotify's
-  // latest answer use their uncut names; older ones the stored names (ending in … when cut).
+  // latest answer use their uncut names; older ones the stored names (ending in … when cut). v2.46: Spotify's
+  // unplayable mark (latest answer first, then the stored one) dims the row and blocks a tap, as in mapTrack.
   function logItem(x) {
     var id = x[1], s = playLogMem.t[id] || [], m = logFull[id] || s, c = String(s[3] || ''), when = agoAt(x[0]);
     var sub = 'Song · ' + (m[1] || '') + (m[2] ? ' · ' + m[2] : '') + (when ? ' · ' + when : '');
+    var mt = nopeMarkOnto({}, logFull[id] ? logFull[id][3] : s[4]);
     return {
       kind: 'track', id: id, name: m[0] || 'Untitled', uri: 'spotify:track:' + id, url: 'https://open.spotify.com/track/' + id,
-      img: c ? (/^https?:\/\//.test(c) ? c : LOG_IMG + c) : '', sub: sub, artist: m[1] || '', durMs: 0, at: x[0]
+      img: c ? (/^https?:\/\//.test(c) ? c : LOG_IMG + c) : '', sub: sub, artist: m[1] || '', durMs: 0, at: x[0],
+      nope: unplayableWhy(mt) || undefined, noPlay: mt.is_playable === false || undefined
     };
   }
   // Recent's song rows: one per song per day (its newest play that day), newest first.
@@ -4852,6 +4857,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     // Not sure: check first, as before, and if nothing is open offer a button that wakes Spotify.
     // In 'wait' mode nothing opens at all: the page waits for you to press play in Control Center.
     ev.preventDefault();
+    if (item.uris && !item.uris.length && item.nope) { toast(item.nope + '.'); return; }   // v2.46: a song list where Spotify says none can play
     item = introStart(item);   // v2.33: Skip intro (a start from 0:00 begins at the show's setting instead)
     if (coolBlocked('player')) return;   // v2.13: nothing is sent while playback is paused by Spotify
     if (item && item.kind === 'playlist' && state.data && state.data.me && state.data.me.id && !knownListable(item)) markPlOpened(item);   // v2.52: Play counts as opened for someone else's playlist
@@ -5346,7 +5352,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.58 (2026-11-27)';
+  var VERSION = 'v2.59 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -6350,6 +6356,20 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     var r = t.restrictions && typeof t.restrictions === 'object' ? t.restrictions.reason : '';
     if (r) return NOPE_WHY[r] || 'Not available';
     return t.is_playable === false ? 'Not available' : '';
+  }
+  // v2.46: Spotify's unplayable mark as one short string for the listening log, '' when the song isn't marked:
+  // '!' when it says the song can't play, then restrictions.reason (letters only, 20 at most; '?' when none is
+  // left). nopeMarkOnto puts it back on a Spotify-like song, so unplayableWhy reads it as before.
+  function nopeMark(t) {
+    if (!t) return '';
+    var r = t.restrictions && typeof t.restrictions === 'object' && t.restrictions.reason ? (String(t.restrictions.reason).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 20) || '?') : '';
+    return (t.is_playable === false ? '!' : '') + r;
+  }
+  function nopeMarkOnto(t, m) {
+    if (typeof m !== 'string' || !m) return t;
+    if (m.charAt(0) === '!') { t.is_playable = false; m = m.slice(1); }
+    if (m) t.restrictions = { reason: m.slice(0, 20) };
+    return t;
   }
   // Play/Pause freezes or restarts the local progress estimate where it is.
   function togglePlay(ev) {
@@ -10601,10 +10621,12 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   // The song list: each song plays the list from itself, then the songs before it (all within LIKEDBY_PLAY).
   function fillLikedBy(d) {
     var s = likedByArtist(d.item.artistId) || { songs: [], complete: true, loaded: 0, total: null };
-    var uris = s.songs.map(function (m) { return m.uri; });
+    var uris = s.songs.filter(function (m) { return !m.noPlay; }).map(function (m) { return m.uri; });   // v2.46: songs Spotify says can't play are left out
     d.src = 'memory'; d.next = null; d.total = s.songs.length; d.liked = s;
     d.item.uris = uris.slice(0, LIKEDBY_PLAY);
-    d.items = s.songs.map(function (m, i) {
+    d.item.nope = !uris.length && s.songs.length ? s.songs[0].nope : undefined;   // v2.46: none can play: Play and Shuffle say why
+    d.items = s.songs.map(function (m) {
+      var i = Math.max(0, uris.indexOf(m.uri));   // v2.46: its place in the playable list
       return Object.assign({}, m, { ctx: null, uris: uris.slice(i).concat(uris.slice(0, i)).slice(0, LIKEDBY_PLAY) });
     });
     if (state.detail === d) { paintDetailList(); paintDetailSort(); paintDetailFoot(); }
