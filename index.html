@@ -4926,7 +4926,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     var d = state.device;
     var p = state.player;
     var btn = $('devBtn');
-    if (!state.deviceChecked && !d) return;   // still showing "Checking…"
+    if (!state.deviceChecked && !d) { paintStarting(); return; }   // still showing "Checking…" (or the tap's Starting line)
     $('dot').className = 'dot ' + (d ? 'on' : 'off');
     if (d) {
       var here = p && p.is_playing && p.device && p.device.id === d.id;
@@ -4941,7 +4941,30 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       btn.setAttribute('aria-label', 'Choose a device');
     }
     btn.hidden = false;
+    paintStarting();
     slimMeasure();   // v2.49
+  }
+  // FLOWS-1: between a play tap and Spotify's answer (device check, then play) the header's status line says
+  // "Starting “name”…" with a pulsing dot. One owner at a time: the newest tap (tapSeq). Every way out of the tap
+  // calls endStarting, which hands the line back to showStatus. It goes by token, not by row, so redrawn rows,
+  // Try again and shortcut plays (no tapped element) are covered the same way.
+  var starting = null;   // { seq, name } of the tap that owns the line, or null
+  function paintStarting() {
+    if (!starting) return;
+    $('dot').className = 'dot pulse';
+    $('statusText').textContent = starting.name ? 'Starting “' + starting.name + '”…' : 'Starting…';
+  }
+  function beginStarting(seq, item) {
+    starting = { seq: seq, name: (item && item.name) || '' };
+    if (state.started) paintStarting();
+  }
+  // seq: only that tap's line is ended (an older tap finishing late leaves a newer tap's line alone); none: any line.
+  function endStarting(seq) {
+    if (!starting || (seq != null && starting.seq !== seq)) return;
+    starting = null;
+    if (state.started) { showStatus(); return; }
+    $('dot').className = 'dot';   // signed out meanwhile: back to the first line for the next sign-in
+    $('statusText').textContent = 'Checking for Spotify on your devices…';
   }
   function likedCtx() { var me = state.data && state.data.me; return me && me.id ? 'spotify:user:' + me.id + ':collection' : null; }
   // kind 'resume' (v2.10) is the last song or episode, played again after Spotify went to sleep.
@@ -5091,12 +5114,15 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     if (item && item.kind === 'playlist' && state.data && state.data.me && state.data.me.id && !knownListable(item)) markPlOpened(item);   // v2.52: Play counts as opened for someone else's playlist
     item = stampHeard(item);   // v2.44: when it was last heard, as of this tap (not a Skip intro start: exactPos)
     var mine = ++tapSeq;
-    if (deviceFresh()) { playNow(item, opts); return; }
+    function fin() { endStarting(mine); }   // FLOWS-1: every way out of this tap
+    if (deviceFresh()) { beginStarting(mine, item); playNow(item, opts).then(fin, fin); return; }
+    endStarting();   // an older tap's line gives way: this tap opens or waits for Spotify instead
     if (noDeviceKnown()) {
       // v2.39: a shortcut link has no tap of its own, so opening Spotify waits for the button's tap.
       if (ev.noTap && wakeMode() !== 'wait') { offerWake(item, opts); return; }
       wakeSpotify(item, opts); return;
     }
+    beginStarting(mine, item);
     checkDevice().then(function () {
       if (mine !== tapSeq) return;   // audit: a newer tap came during the check; it plays instead
       if (!state.started) return;
@@ -5111,7 +5137,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       if (wakeMode() === 'wait') { waitForPlay(item, opts); return; }
       // The network wait used up the tap, so the button gives a fresh one to wake Spotify from.
       offerWake(item, opts);
-    });
+    }).then(fin, fin);
   }
   // PODS-1: Play newest (Latest) and a podcast's Play, tapped while a check for new episodes is running, wait for
   // its answer (at most HOLD_NEW_MS), then play the newest pick from the new list, so today's episode isn't skipped
@@ -5631,7 +5657,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.69 (2026-11-27)';
+  var VERSION = 'v2.70 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
