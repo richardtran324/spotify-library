@@ -11558,7 +11558,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   // Change Client ID (from the Sign in screen) opens this with the saved ID still saved: the box shows it, Back to
   // sign in goes back with nothing changed, and the old sign-in is dropped only when a different ID is saved.
   function renderSetup(errMsgText) {
-    stopApp();
+    stopApp(true);   // v2.75: nothing is forgotten until a different ID is saved (the last playback too)
     var main = $('main'); main.textContent = '';
     var old = get(K.client);
     old = typeof old === 'string' ? old : '';
@@ -11580,7 +11580,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       if (!/^[0-9a-f]{32}$/i.test(v)) { err.textContent = 'That doesn’t look like a Client ID. It’s 32 letters and numbers, from your app’s Settings page.'; input.setAttribute('aria-invalid', 'true'); input.focus(); return; }
       input.removeAttribute('aria-invalid');
       if (!set(K.client, v)) { err.textContent = 'Couldn’t save the Client ID: ' + storeWhy() + '.'; return; }   // storage-guard
-      if (old && v.toLowerCase() !== old.toLowerCase()) { del(K.token); del(K.signedOut); }   // the old sign-in belongs to the old app
+      if (old && v.toLowerCase() !== old.toLowerCase()) { del(K.token); del(K.signedOut); clearLastPlay(); }   // the old sign-in (and its last playback) belongs to the old app
       login();
     });
     var err = el('p', { class: 'err', id: 'clientIdErr', role: 'alert', text: errMsgText || '' });

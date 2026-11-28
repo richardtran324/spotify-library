@@ -185,10 +185,16 @@ tests.push(function () {
       check('5 a child animation ending does not cut the slide short', n.classList.contains('closing'));
       n.dispatchEvent(new tab.w.Event('animationend', { bubbles: true }));
       check('5 the slide ending removes class and inert', !n.classList.contains('closing') && !n.hasAttribute('inert'));
-      // Reopen during the slide.
+      // Merged with v2.68 (Back closes Now Playing): each close steps Back off Now Playing's history entry, and an
+      // open waits for that Back to land (NAV-2), so each reopen below waits for the last close's Back first.
+      return H.wait(350);
+    }).then(function () {
+      // Reopen during the slide: held until the Back settles, then opened fresh.
       t.openNp(); t.closeNp();
       check('5 closing again', n.classList.contains('closing'));
       t.openNp();
+      return H.wait(350);
+    }).then(function () {
       check('5 reopen during the slide: no closing class, not inert, shown', !n.classList.contains('closing') && !n.hasAttribute('inert') && !n.hidden && t.npShown());
       return H.wait(350);
     }).then(function () {
@@ -196,6 +202,8 @@ tests.push(function () {
       // App-driven close stays instant.
       t.closeNp(false);
       check('5 closeNp(false): hidden, no closing class, not inert', n.hidden && !n.classList.contains('closing') && !n.hasAttribute('inert'));
+      return H.wait(350);
+    }).then(function () {
       // Escape and swipe are closes you start.
       t.openNp();
       doc.dispatchEvent(new tab.w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));

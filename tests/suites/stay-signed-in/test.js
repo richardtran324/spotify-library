@@ -200,7 +200,11 @@ tests.push(function () {
     return setup(s2, { token: refused }).then(function (tab) {
       return H.wait(2400).then(function () {
         click(tab, btn(tab, 'Change Client ID'));
-        check('6 Change Client ID forgets the last playback and the client', s2.getItem('lib-lastplay') === null && s2.getItem('lib-client-id') === null && heading(tab) === 'One-time setup', { lp: s2.getItem('lib-lastplay'), h: heading(tab) });
+        // v2.75 (plain messages): the tap forgets nothing; saving a different ID drops the last playback with the old sign-in
+        check('6 Change Client ID keeps the last playback and the client until a new ID is saved', s2.getItem('lib-lastplay') !== null && s2.getItem('lib-client-id') !== null && heading(tab) === 'One-time setup', { lp: s2.getItem('lib-lastplay'), h: heading(tab) });
+        d(tab).getElementById('clientId').value = 'f'.repeat(32);
+        click(tab, btn(tab, 'Save and sign in with Spotify'));
+        check('6 a different Client ID forgets the last playback', s2.getItem('lib-lastplay') === null && s2.getItem('lib-token') === null, { lp: s2.getItem('lib-lastplay') });
       });
     });
   });
