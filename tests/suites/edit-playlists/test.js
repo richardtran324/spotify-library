@@ -530,7 +530,7 @@ tests.push(function () {
       click(tab, editBtn(tab, 2, 'rm'));
       click(tab, $(tab, 'plGo'));
       return H.wait(150).then(function () {
-        check('11 403 not about scope: says Spotify didn\'t allow it', lastToast(tab) === 'Spotify didn’t allow this change from this page (Forbidden).' && !permOpen(tab), tab.toasts());
+        check('11 403 not about scope: says Spotify didn\'t allow it', lastToast(tab) === 'Spotify didn’t allow this change from this page.' && !permOpen(tab), tab.toasts());
         check('11 403: list unchanged', rowNames(tab).join(',') === before);
       });
     }).then(function () {
