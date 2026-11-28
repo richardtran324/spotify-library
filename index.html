@@ -5396,7 +5396,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.61 (2026-11-27)';
+  var VERSION = 'v2.62 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -6070,6 +6070,10 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   // ---------- Now playing options: from what plays to the album, playlist, Liked Songs or show ----------
   var plMemo = {};    // playlist id -> promise of a mapped playlist (GET /playlists/{id}), this session
   var plKnown = {};   // playlist id -> mapped playlist, once that request answered
+  // v2.62: playlist id -> the error of a lasting refusal (400, 403, 404, 410, 451), this visit. Spotify doesn't share
+  // its own editorial and algorithmic playlists with newer apps, so Now Playing used to ask again on every song.
+  var plFailed = {};
+  function plLasting(e) { return !!e && !e.net && !isCool(e) && [400, 403, 404, 410, 451].indexOf(e.status) >= 0; }
   var npReturn = null;
   // v2.23: only the playlists in your library (the library cache), never one fetched by id.
   function inLibraryPlaylist(id) {
@@ -6083,6 +6087,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   function playlistById(id) {
     var known = libraryPlaylist(id);
     if (known) return Promise.resolve(known);
+    if (plFailed[id]) return Promise.reject(plFailed[id]);   // v2.62: same answer as before, nothing sent
     if (!plMemo[id]) {
       plMemo[id] = api('/playlists/' + encodeURIComponent(id)).then(function (r) {
         if (!r.ok || !r.json) throw httpError(r);   // v2.43: keeps status and reason
@@ -6091,7 +6096,8 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
         plKnown[id] = m;
         return m;
       });
-      plMemo[id].catch(function () { delete plMemo[id]; });   // a failure is asked again next time
+      // A failure is asked again next time; v2.62: except a lasting refusal (no internet, a 429, a 5xx or 401 still are).
+      plMemo[id].catch(function (e) { if (plLasting(e)) plFailed[id] = e; delete plMemo[id]; });
     }
     return plMemo[id];
   }
@@ -6566,9 +6572,9 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     box.textContent = '';
     npOptions(p).forEach(function (o) {
       var b = el('button', { class: 'btn small secondary', type: 'button', text: o.label });
-      if (o.playlistId && o.label === 'Open playlist' && !catHeld()) {
+      if (o.playlistId && o.label === 'Open playlist' && !catHeld() && !plFailed[o.playlistId]) {
         // Not in your library: fetch the name now so the button can show it. v2.45: not when the hour's catalog
-        // budget is nearly used (the button still works; a tap asks).
+        // budget is nearly used (the button still works; a tap asks). v2.62: not after Spotify refused it this visit.
         playlistById(o.playlistId).then(function (pl) {
           if (document.body.contains(b)) b.textContent = 'Open playlist · ' + pl.name;
         }, function () {});
