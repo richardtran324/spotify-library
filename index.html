@@ -502,6 +502,7 @@ header.top.detail .schips { display: none; }
 .sortsep { width: 1px; align-self: stretch; margin: 4px 2px; background: var(--line); }
 .snote { font-size: 0.8rem; color: var(--muted); margin: 6px 2px 0; }
 .sortdir { margin-left: 4px; }   /* v2.34: ↑ or ↓ on a chosen sort that turns around */
+.sstale { opacity: 0.55; }   /* smooth: the previous results while the next search loads */
 /* v2.40: episode filter chips (44px tap targets; they wrap at phone width) */
 .efbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 #dfilt .efbar { margin-top: 10px; }
@@ -1423,6 +1424,9 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       if (!fromAnswer) schedulePoll(0, true);
       if (state.deviceErrObj && state.deviceErrObj.net && !coolLeft('player')) { bgDevAt = 0; bgCheckDevice(); }
       if (!state.data && !coolLeft('library')) refresh();
+      // smooth: a search that failed (offline, Spotify down) is asked again once, if it's still on screen
+      var cs = currentSearch();
+      if (cs && cs.error && !cs.cool && !cs.loading && showingSearch(cs) && !coolLeft('search')) runSearch(cs.q);
     }, fromAnswer ? 0 : RETURN_DELAY_MS);
   }
   window.addEventListener('offline', function () { setOffline(true); });
@@ -3438,6 +3442,9 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       e.loading = false;
       if (type === 'all') {
         e.results = { tracks: list('track'), artists: list('artist'), albums: list('album'), playlists: list('playlist'), shows: list('show'), episodes: list('episode') };
+        // smooth: whether each type has more than these first 10, so "See all" or a chip can start from them.
+        e.next = {};
+        SEARCH_TYPES.forEach(function (t) { if (STYPE[t]) e.next[t] = !!(j[STYPE[t].key] && j[STYPE[t].key].next); });
         if (showingSearch(e)) renderList();
         return;
       }
@@ -3457,13 +3464,13 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     }).catch(function (err) {
       if (err && err.message === 'signed-out') return renderSignIn();
       e.loading = false;
-      var msg = err && err.message ? err.message : 'unknown error';
       if (isCool(err)) {   // v2.13: nothing was sent; the entry counts as failed, so it's asked again later
-        if (first) e.error = coolText(err.group); else e.moreError = coolText(err.group);
+        if (first) { e.error = coolText(err.group); e.cool = true; } else e.moreError = coolText(err.group);
         if (showingSearch(e)) coolToast(err.group);
       }
-      else if (first) e.error = 'Search failed: ' + msg;
-      else e.moreError = 'Couldn’t load more (' + msg + ').';
+      // smooth: plain words (v2.41), and a first-page failure gets Try again (renderSearch)
+      else if (first) e.error = failText('Couldn’t search', err);
+      else e.moreError = failText('Couldn’t load more', err);
       if (!showingSearch(e)) return;
       if (first) renderList(); else paintSearchFoot(e);
     });
@@ -3486,6 +3493,18 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   function paintSearchChips() {
     document.querySelectorAll('.schip').forEach(function (c) { c.setAttribute('aria-pressed', String(c.dataset.stype === state.stype)); });
   }
+  // smooth: the All answer already has this type's first 10 rows, so "See all …" or the chip starts from them
+  // (no new request, no "Searching…"), and Load more goes on at offset 10. Built only when asked, so the All
+  // answers don't fill the 40-entry cache.
+  function typeFromAll(t, q) {
+    var a = t !== 'all' ? cacheGet('all', q) : null;
+    if (!a || a.loading || a.error || !a.results || !a.next || !STYPE[t]) return null;
+    var items = (a.results[STYPE[t].key] || []).slice();
+    var e = { items: items, offset: SEARCH_LIMIT, more: !!a.next[t] && SEARCH_LIMIT < SEARCH_MAX_OFFSET,
+      loading: false, error: '', moreError: '', lastGot: items.length, type: t, q: q };
+    cachePut(t, q, e);
+    return e;
+  }
   // Picks the result type. Re-runs the search for the current query unless it's cached.
   function setSearchType(t, fromList) {
     if (SEARCH_TYPES.indexOf(t) === -1) t = 'all';
@@ -3496,6 +3515,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     if (linkOf($('search').value)) { renderList(); return; }   // v2.36: a link in the box: nothing is searched
     var q = $('search').value.trim();
     var e = q.length >= 2 ? cacheGet(t, q) : null;
+    if (q.length >= 2 && (!e || e.error)) e = typeFromAll(t, q) || e;
     if (q.length >= 2 && (!e || e.error)) runSearch(q);
     else { state.search = { q: q }; renderList(); }
     if (fromList) {   // "See all …" sits in the list, which was just replaced
@@ -5671,7 +5691,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.71 (2026-11-27)';
+  var VERSION = 'v2.72 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -7689,17 +7709,57 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     if (acts.length) li.appendChild(el('div', { class: 'acts' }, acts));
     return li;
   }
+  function searchHasRows(e) {
+    if (!e || e.error) return false;
+    if (e.type !== 'all') return !!(e.items && e.items.length);
+    var r = e.results;
+    return !!r && SEARCH_TYPES.some(function (t) { return STYPE[t] && r[STYPE[t].key] && r[STYPE[t].key].length; });
+  }
   function renderSearch(main) {
     var s = state.search;
     if (s.q.length < 2) {
+      state.searchShown = null;
       if (!s.q && renderRecentSearches(main)) return;
       main.appendChild(el('p', { class: 'empty', text: 'Type a song, artist, album, playlist or podcast to search all of Spotify.' }));
       return;
     }
     var e = currentSearch();
-    if (!e || (e.loading && (e.type === 'all' ? !e.results : !e.items.length))) { main.appendChild(el('p', { class: 'empty', text: 'Searching…' })); return; }
-    if (e.error) { main.appendChild(el('p', { class: 'err', text: e.error })); return; }
-    if (e.type !== 'all') return renderSearchType(main, e, s.q);
+    if (!e || (e.loading && (e.type === 'all' ? !e.results : !e.items.length))) {
+      // smooth: while the next query loads, the rows already on screen stay (dimmed, marked busy) under one
+      // status line, instead of the list blinking to "Searching…" at each typing pause. Same result type only.
+      var old = state.searchShown;
+      if (e && old && old !== e && old.type === e.type && searchHasRows(old)) {
+        main.appendChild(el('p', { class: 'snote sbusy', text: 'Searching for “' + s.q + '”…' }));
+        var wrap = el('div', { class: 'sstale', 'aria-busy': 'true' });
+        main.appendChild(wrap);
+        drawSearchEntry(wrap, old, old.q, true);
+        return;
+      }
+      state.searchShown = null;
+      main.appendChild(el('p', { class: 'empty', text: 'Searching…' }));
+      return;
+    }
+    if (e.error) {
+      state.searchShown = null;
+      main.appendChild(el('p', { class: 'err', text: e.error }));
+      if (!e.cool) {   // smooth: a paused search keeps its text alone (it says when to try again)
+        var again = el('button', { class: 'btn secondary', type: 'button', id: 'searchRetry', text: 'Try again' });
+        again.addEventListener('click', function () {
+          var c = document.querySelector('.schip[aria-pressed="true"]');   // keeps the keyboard closed
+          if (c) c.focus();
+          scheduleSearch(e.q, true);
+        });
+        main.appendChild(again);
+      }
+      return;
+    }
+    state.searchShown = searchHasRows(e) ? e : null;
+    drawSearchEntry(main, e, s.q, false);
+  }
+  // Draws one loaded entry. stale: the rows of the previous query, shown while the next one loads (no Load more).
+  function drawSearchEntry(main, e, q, stale) {
+    if (e.type !== 'all') return renderSearchType(main, e, q, stale);
+    var s = { q: q };
     var r = e.results;
     if (!r) return;
     // All: each group shows its first few rows, with "See all …" to switch to that type.
@@ -7727,7 +7787,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     requestSaved(savableUris(all));
   }
   // One result type: a flat list with Load more (10 at a time).
-  function renderSearchType(main, e, q) {
+  function renderSearchType(main, e, q, stale) {
     if (!e.items.length) {
       main.appendChild(el('p', { class: 'empty', text: 'No ' + STYPE[e.type].label.toLowerCase() + ' for “' + q + '”.' }));
       return;
@@ -7735,7 +7795,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     main.appendChild(el('div', { id: 'ssort' }));
     var ul = el('ul', { class: 'list', id: 'slist' });
     main.appendChild(ul);
-    main.appendChild(el('div', { class: 'dfoot', id: 'sfoot' }));
+    if (!stale) main.appendChild(el('div', { class: 'dfoot', id: 'sfoot' }));
     paintSearchSort(e);
     if (sortIsDefault('s-' + e.type)) appendSearchRows(e.items, e);
     else paintSearchRows(e);
@@ -11659,6 +11719,20 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     if (state.filter === 'search') scheduleSearch(e.target.value, true);
     e.target.blur(); // hides the iPhone keyboard so results are visible
   });
+  // smooth: dragging the list puts the keyboard away (like the Spotify app), for Search Spotify (#search, in the
+  // header) and Find in list (#dfind, inside #main). A tap, a move under 10 px, or a drag that starts on a text
+  // box (moving the caret, selecting text) keeps it. Passive, so scrolling never waits on this.
+  var dragFrom = null;
+  $('main').addEventListener('touchstart', function (ev) {
+    var t = ev.touches && ev.touches[0], tg = ev.target;
+    dragFrom = t && !(tg && /^(INPUT|TEXTAREA)$/.test(tg.tagName)) ? { x: t.clientX, y: t.clientY } : null;
+  }, { passive: true });
+  $('main').addEventListener('touchmove', function (ev) {
+    var t = ev.touches && ev.touches[0], a = document.activeElement;
+    if (!dragFrom || !t || !a || (a.id !== 'search' && a.id !== 'dfind')) return;
+    var dx = t.clientX - dragFrom.x, dy = t.clientY - dragFrom.y;
+    if (dx * dx + dy * dy > 100) { dragFrom = null; a.blur(); }
+  }, { passive: true });
   document.querySelectorAll('.filters .chip').forEach(function (c) {
     c.addEventListener('click', function () {
       // v2.42: tapping the chip you're on only scrolls to the top (no redraw, no reload of Recent, no keyboard)
