@@ -3980,8 +3980,12 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   function hidePlayed() { if (hideStale && hideMem != null) return hideMem; var v = get(K.hidePlayed); return v == null && hideMem != null ? hideMem : v === true; }   // v2.40: memory if storage is blocked or full
   function rerenderLatest() {
     var onShows = state.started && !state.detail && state.filter === 'podcasts' && state.podTab === 'shows';
-    if (onLatestView() || onShows || onHome()) renderList();
+    if (onLatestView() || onShows || onHome()) keepRows('#main ul.list li[data-puri]', !!(kpPend && kpPend.key === kpKey()), renderList);   // PODS-2
   }
+  // PODS-1: a held Play newest waits for the reload that's running (see holdForNew).
+  var latestWaiters = [];
+  function latestWait() { return new Promise(function (r) { latestWaiters.push(r); }); }
+  function latestSettled() { var w = latestWaiters; latestWaiters = []; w.forEach(function (f) { f(); }); }
   // Another copy of the page may have loaded it already. Reads storage only.
   function syncLatest() {
     var L = state.latest, sc = get(K.latest);
@@ -4027,6 +4031,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       if (seq !== L.seq) return;
       L.loading = false;
       if (e && e.message === 'signed-out') renderSignIn(); else setTimeout(rerenderLatest, 0);
+      latestSettled();
     });
   }
   // v2.45: your podcasts' current episode counts (GET /me/shows, library group). False when they weren't re-read
@@ -4175,7 +4180,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       finished = true;
       if (seq !== L.seq) return;
       L.loading = false;
-      if (signedOut) { renderSignIn(); return; }
+      if (signedOut) { renderSignIn(); latestSettled(); return; }
       // audit: shows not asked because the page was hidden haven't failed: no note, and the list counts as not fresh
       // (partial), so the next open of Latest (or coming back to it) asks the rest: their checks didn't move, so
       // the plan still has them, while the ones answered here are up to date.
@@ -4221,7 +4226,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
         if (hiddenStop) L.cache.partial = true;
         set(K.latest, L.cache);
       }
-      setTimeout(rerenderLatest, 0);
+      setTimeout(function () { rerenderLatest(); latestSettled(); }, 0);   // PODS-1: a held Play newest picks from the new list
     }
     function launch() {
       while (running < LATEST_PARALLEL && next < shows.length && !stopped) {
@@ -4778,6 +4783,12 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     });
     return g;
   }
+  // The episode Play newest plays: the first unplayed one the Latest filter shows, in Latest's order (v2.50:
+  // Priority first, Hidden out), from the cache as it is now.
+  function latestNewest(vis, flt) {
+    if (!vis) { var c = state.latest.cache; vis = latestOrder(c && Array.isArray(c.items) ? latestVisible(c.items).map(latestItem) : [], readLatestPri()); }
+    return epFiltered(vis, flt || epFilter('latest')).filter(function (i) { return !i.played; })[0] || null;
+  }
   function renderLatest(main) {
     var d = state.data;
     var L = state.latest;
@@ -4793,17 +4804,22 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     var visible = latestOrder(all, pri);   // v2.50: Hidden podcasts out, Priority ones' unplayed episodes first
     var flt = epFilter('latest');   // v2.40: Unplayed / In progress / All and Fits in (Unplayed is Hide played)
     var fon = flt.s !== 'all' || flt.f > 0;
-    var newest = epFiltered(visible, flt).filter(function (i) { return !i.played; })[0] || null;   // v2.40: follows the filter
+    var newest = latestNewest(visible, flt);   // v2.40: follows the filter; v2.50: Priority first, Hidden out
     // Header: Play (newest unplayed the filter shows), the filter chips, then when it was updated.
     var playA = el('a', { class: 'btn small', href: newest ? newest.url : '#', 'aria-label': newest ? 'Play newest unplayed episode: ' + newest.name : 'Play newest unplayed episode' });
     playA.innerHTML = ICON.play;
     playA.appendChild(el('span', { text: 'Play newest' }));
+    function noNewest() {
+      var f = epFilter('latest'), on = f.s !== 'all' || f.f > 0;
+      toast(L.loading ? 'Episodes are still loading.' : on && f.s !== 'all' ? 'No ' + epfWords(f) + '.' : on ? 'No unplayed ' + epfWords(f) + '.' : 'No unplayed episodes.');
+    }
     playA.addEventListener('click', function (ev) {
-      if (!newest) {
-        ev.preventDefault();
-        toast(L.loading ? 'Episodes are still loading.' : fon && flt.s !== 'all' ? 'No ' + epfWords(flt) + '.' : fon ? 'No unplayed ' + epfWords(flt) + '.' : 'No unplayed episodes.');
+      // PODS-1: over 12 hours old and reloading: wait for the reload, then play the newest of the new list.
+      if (L.loading && !latestFresh(L.cache) && deviceFresh()) {
+        holdForNew(ev, latestWait(), function () { return latestNewest(); }, onLatestView, noNewest);
         return;
       }
+      if (!newest) { ev.preventDefault(); noNewest(); return; }
       onItemClick(newest, ev);
     });
     main.appendChild(el('div', { class: 'lbar' }, [playA, epfBar('latest', renderList)]));
@@ -5097,6 +5113,57 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       offerWake(item, opts);
     });
   }
+  // PODS-1: Play newest (Latest) and a podcast's Play, tapped while a check for new episodes is running, wait for
+  // its answer (at most HOLD_NEW_MS), then play the newest pick from the new list, so today's episode isn't skipped
+  // for yesterday's. Only while the device is known and fresh: otherwise the tap goes on as before, because waking
+  // Spotify needs the tap itself. The link is cancelled at once; a newer tap, or leaving the view, drops the held play.
+  // A check that fails or takes too long plays what the list holds then.
+  var HOLD_NEW_MS = 4000;
+  var HELD_EV = { preventDefault: function () {}, noTap: true };   // after the wait there is no tap to open Spotify from
+  function holdForNew(ev, ready, pick, here, none) {
+    ev.preventDefault();
+    if (coolBlocked('player')) return;
+    var mine = ++tapSeq, done = false, timer = 0;
+    toast('Checking for new episodes…');
+    function go() {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (mine !== tapSeq || !state.started || !here()) return;
+      var item = pick();
+      if (item) onItemClick(item, HELD_EV); else none();
+    }
+    timer = setTimeout(go, HOLD_NEW_MS);
+    Promise.resolve(ready).then(go, go);
+  }
+  // PODS-2 / NAV-3: when a new-episode answer redraws Latest or a podcast's list, the row you were looking at stays
+  // put if you had scrolled into the list (at the top, the new episode simply shows up first), and a tap on a row in
+  // the 600 ms after the rows moved is ignored, so it can't land on the episode that just slid under your finger.
+  // pending: #42's place restore is still waiting, so it decides the scroll.
+  var SHIFT_GUARD_MS = 600, shiftAt = 0;
+  function keepRows(sel, pending, fn) {
+    var rows = [].slice.call(document.querySelectorAll(sel)), before = rows.map(function (li) { return li.getAttribute('data-puri'); }), anchor = null;
+    if (rows.length && !pending) {
+      var band = kpBand().top;
+      if (rows[0].getBoundingClientRect().top < band - 1) {   // scrolled into the list
+        for (var i = 0; i < rows.length; i++) {
+          var r = rows[i].getBoundingClientRect();
+          if (r.bottom > band) { anchor = { uri: before[i], top: r.top }; break; }
+        }
+      }
+    }
+    fn();
+    var now = [].slice.call(document.querySelectorAll(sel));
+    if (before.length && before.some(function (u, k) { return !now[k] || now[k].getAttribute('data-puri') !== u; })) shiftAt = Date.now();
+    if (!anchor) return;
+    for (var j = 0; j < now.length; j++) {
+      if (now[j].getAttribute('data-puri') !== anchor.uri) continue;
+      var dy = Math.round(now[j].getBoundingClientRect().top - anchor.top);
+      if (dy) window.scrollTo(0, Math.max(0, kpScrollY() + dy));
+      return;
+    }
+  }
+  function rowsJustMoved() { return shiftAt && Date.now() - shiftAt < SHIFT_GUARD_MS && Date.now() >= shiftAt; }
   function offerWake(item, opts) {
     toast('Spotify isn’t open on any device.', null, {
       text: wakeMode() === 'shortcut' ? 'Wake Spotify' : 'Open in Spotify',
@@ -5564,7 +5631,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.68 (2026-11-27)';
+  var VERSION = 'v2.69 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -7544,6 +7611,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       // v2.12: albums, playlists, Liked Songs, podcasts and artists open their list (Play is at the top there);
       // songs and episodes play. A release tapped in an artist view opens on top of it, so Back returns to the artist.
       if (opens) { ev.preventDefault(); openDetail(item, { push: !!state.detail }); return; }
+      if (rowsJustMoved()) { ev.preventDefault(); return; }   // PODS-2: the rows moved under the tap; it may be the wrong one
       if (item.noPlay) { ev.preventDefault(); toast(item.nope + '.'); return; }   // v2.35: Spotify says it can't play
       onItemClick(item, ev);
     });
@@ -8603,10 +8671,14 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     if (isPod(it)) {
       // No show context to play, so Play starts the newest episode you haven't finished.
       // v2.40: from the episodes the filter shows (with the chips at All / Any length, every loaded one).
+      var epFlt = function () { var k = epfKey(it); return k ? epFilter(k) : { s: 'all', f: 0 }; };
+      var pickEp = function () { return firstUnplayed(epFiltered(d.items, epFlt())); };
+      var noEp = function () { toast(d.loading ? 'Episodes are still loading.' : d.items.length ? 'No ' + epfWords(epFlt()) + ' loaded.' : 'No episodes to play.'); };
       playA.addEventListener('click', function (ev) {
-        var k = epfKey(it), flt = k ? epFilter(k) : { s: 'all', f: 0 };
-        var t = firstUnplayed(epFiltered(d.items, flt));
-        if (!t) { ev.preventDefault(); toast(d.loading ? 'Episodes are still loading.' : d.items.length ? 'No ' + epfWords(flt) + ' loaded.' : 'No episodes to play.'); return; }
+        // PODS-1 / NAV-3: the check for new episodes is running: wait for it, then play from the new list.
+        if (d.loading && d.newCheck && deviceFresh()) { holdForNew(ev, d.newCheck, pickEp, function () { return state.detail === d; }, noEp); return; }
+        var t = pickEp();
+        if (!t) { ev.preventDefault(); noEp(); return; }
         onItemClick(t, ev);
       });
     } else {
@@ -9432,7 +9504,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   function remapDetail(d) {
     d.items = d.raw.map(function (x) { return mapRaw(d, x); }).filter(Boolean);
     if (isPod(d.item)) rememberEpisodes(d.items);
-    if (state.detail === d) { paintDetailList(); paintDetailSort(); paintDetailFoot(); }
+    if (state.detail === d) keepRows('#dlist li[data-puri]', d.kpY != null, function () { paintDetailList(); paintDetailSort(); paintDetailFoot(); });   // PODS-2 / NAV-3
   }
   function loadDetail(url) {
     var d = state.detail;
@@ -9453,7 +9525,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     var plLabel = kind === 'playlist' && first && !catMemo[memoKey(url)] ? plTrustedSnap(d.item.id) : '';   // v2.37: the snapshot known before asking
     // The answer is kept even if another view is on top by then (v2.12: Back can return to this one);
     // it's drawn only while this view is the one on screen. v2.14: catalog answers are kept for this visit (apiCached).
-    apiCached(url).then(function (r) {
+    return apiCached(url).then(function (r) {   // PODS-1: checkNewEpisodes keeps this, for a held Play
       d.loading = false;
       var cur = state.detail === d;
       if (r.status === 403 && d.item.kind === 'playlist') { noList[d.item.id] = true; d.restricted = true; if (cur) { paintDetailSort(); paintDetailFoot(); } return; }
@@ -10201,7 +10273,10 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     var url = showPage(d.item.id, 0);
     delete catMemo[memoKey(url)];
     d.autoCheck = !!auto;
-    loadDetail(url);
+    var p = loadDetail(url);
+    if (!p) return;
+    d.newCheck = p;   // PODS-1: a podcast's Play waits for this answer
+    p.then(function () { if (d.newCheck === p) d.newCheck = null; });
   }
   // Album songs through search while catalog is paused: track results whose album is this one, in disc and
   // track order, 10 per page, until a page adds nothing or 50 results were looked at.
