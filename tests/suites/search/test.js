@@ -193,8 +193,8 @@ tests.push(function () {
       click(tab, chip(tab, 'track'));
       return H.wait(50);
     }).then(function () {
-      var s = lastSearch(tab);
-      check('4 Songs chip asks for songs', s && s.params.type === 'track' && s.params.offset === '0', s && s.params);
+      // smooth (SEARCH-3): the chip starts from the All answer, which said there are no songs
+      check('4 Songs chip starts from the All answer, nothing asked', searches(tab).length === 1, searches(tab).map(function (c) { return c.params; }));
       check('4 Songs with nothing found', /No songs for “zzzz”\./.test(mainText(tab)), mainText(tab));
       check('4 no Load more', !$(tab, 'sfoot'));
     });
@@ -214,7 +214,7 @@ tests.push(function () {
   } }).then(function (tab) {
     enter(tab, 'boom');
     return H.wait(50).then(function () {
-      check('5 error shown', errText(tab) === 'Search failed: Server boom', errText(tab));
+      check('5 error shown', errText(tab) === 'Couldn’t search. Spotify isn’t answering right now.', errText(tab));
       check('5 no rows on error', !main(tab).querySelector('a.item'));
       enter(tab, 'boom');
       return H.wait(50);
@@ -224,12 +224,12 @@ tests.push(function () {
       enter(tab, 'gate');
       return H.wait(50);
     }).then(function () {
-      check('5 answer without a body says HTTP status', errText(tab) === 'Search failed: HTTP 502', errText(tab));
+      check('5 answer without a body: plain words', errText(tab) === 'Couldn’t search. Spotify isn’t answering right now.', errText(tab));
       click(tab, chip(tab, 'track'));
       enter(tab, 'boom2');
       return H.wait(50);
     }).then(function () {
-      check('5 one-type error shown', errText(tab) === 'Search failed: Server boom', errText(tab));
+      check('5 one-type error shown', errText(tab) === 'Couldn’t search. Spotify isn’t answering right now.', errText(tab));
       var before = searches(tab).length;
       click(tab, chip(tab, 'all'));
       return H.wait(50).then(function () {
@@ -237,8 +237,9 @@ tests.push(function () {
         return H.wait(50);
       }).then(function () {
         var s = searches(tab).slice(before);
-        check('5 chip back to a failed type asks again', s.length === 2 && s[1].params.type === 'track' && s[1].params.q === 'boom2', s.map(function (c) { return c.params; }));
-        check('5 retried type shows rows', JSON.stringify(rowNames(tab)) === '["Back 1"]', rowNames(tab));
+        // smooth (SEARCH-3): the All answer that just came in replaces the failed songs entry, so nothing more is asked
+        check('5 chip back to a failed type uses the All answer', s.length === 1 && s[0].params.type === ALL_TYPES && s[0].params.q === 'boom2', s.map(function (c) { return c.params; }));
+        check('5 retried type shows rows', rowNames(tab).length === 7 && rowNames(tab)[0] === 'B Song 0', rowNames(tab));
       });
     });
   });
@@ -253,7 +254,9 @@ function songPages(p) {
 }
 tests.push(function () {
   var store = searchStore();
-  return setup(store, { search: function (p) { return p.type === 'track' ? songPages(p) : { status: 200, json: allAnswer('L') }; } }).then(function (tab) {
+  // smooth (SEARCH-3): All's songs are the first songs page, so the Songs chip starts from them and Load more goes on at 10
+  function loveAll() { var a = allAnswer('L'); a.tracks = songPages({ offset: '0' }).json.tracks; return a; }
+  return setup(store, { search: function (p) { return p.type === 'track' ? songPages(p) : { status: 200, json: loveAll() }; } }).then(function (tab) {
     enter(tab, 'love');
     return H.wait(50).then(function () {
       click(tab, chip(tab, 'track'));
@@ -261,8 +264,7 @@ tests.push(function () {
       check('6 result type remembered', stored(store, 'lib-searchtype') === 'track', store.getItem('lib-searchtype'));
       return H.wait(50);
     }).then(function () {
-      var s = lastSearch(tab);
-      check('6 asks songs from offset 0', s.params.type === 'track' && s.params.offset === '0' && s.params.limit === '10' && s.params.q === 'love', s.params);
+      check('6 Songs chip asks nothing (starts from the All answer)', searches(tab).length === 1, searches(tab).map(function (c) { return c.params; }));
       check('6 ten rows', rowNames(tab, '#slist').length === 10, rowNames(tab, '#slist').length);
       check('6 no group headings', heads(tab).length === 0, heads(tab));
       var b = footBtn(tab);
@@ -273,8 +275,8 @@ tests.push(function () {
       return H.wait(50);
     }).then(function () {
       var s = searches(tab).filter(function (c) { return c.params.type === 'track'; });
-      check('6 a double tap sends one page', s.length === 2, s.map(function (c) { return c.params; }));
-      check('6 second page from offset 10', s[1] && s[1].params.offset === '10', s[1] && s[1].params);
+      check('6 a double tap sends one page', s.length === 1, s.map(function (c) { return c.params; }));
+      check('6 second page from offset 10', s[0] && s[0].params.offset === '10' && s[0].params.limit === '10' && s[0].params.q === 'love', s[0] && s[0].params);
       var names = rowNames(tab, '#slist');
       check('6 duplicate dropped, rows appended', names.length === 19 && names[9] === 'Song 9' && names[10] === 'Song 10', names);
       click(tab, footBtn(tab));
@@ -295,7 +297,7 @@ tests.push(function () {
   });
 });
 
-// 7. See all … switches to that type and searches it.
+// 7. See all … switches to that type, starting from the All answer's rows (smooth: SEARCH-3); Load more goes on at 10.
 tests.push(function () {
   var store = searchStore();
   return setup(store, { search: function (p) {
@@ -310,10 +312,15 @@ tests.push(function () {
       check('7 Artists chip pressed', chip(tab, 'artist').getAttribute('aria-pressed') === 'true');
       return H.wait(50);
     }).then(function () {
-      var s = lastSearch(tab);
-      check('7 asks artists', s.params.type === 'artist' && s.params.offset === '0' && s.params.q === 'seeall', s.params);
-      check('7 artist rows', JSON.stringify(rowNames(tab, '#slist')) === '["Xavier","Xena"]', rowNames(tab, '#slist'));
+      check('7 nothing asked', searches(tab).length === 1, searches(tab).map(function (c) { return c.params; }));
+      check('7 artist rows from the All answer', JSON.stringify(rowNames(tab, '#slist')) === '["S Artist 0","S Artist 1"]', rowNames(tab, '#slist'));
       check('7 type remembered', stored(store, 'lib-searchtype') === 'artist');
+      click(tab, footBtn(tab));
+      return H.wait(50);
+    }).then(function () {
+      var s = lastSearch(tab);
+      check('7 Load more asks artists from offset 10', s.params.type === 'artist' && s.params.offset === '10' && s.params.q === 'seeall', s.params);
+      check('7 artist rows added', JSON.stringify(rowNames(tab, '#slist')) === '["S Artist 0","S Artist 1","Xavier","Xena"]', rowNames(tab, '#slist'));
     });
   });
 });
@@ -334,7 +341,7 @@ tests.push(function () {
       return H.wait(50);
     }).then(function () {
       var f = $(tab, 'sfoot');
-      check('8 load more error shown', f.querySelector('.err') && f.querySelector('.err').textContent === 'Couldn’t load more (Server boom).', f.textContent);
+      check('8 load more error shown', f.querySelector('.err') && f.querySelector('.err').textContent === 'Couldn’t load more. Spotify isn’t answering right now.', f.textContent);
       check('8 rows kept', rowNames(tab, '#slist').length === 10);
       check('8 Load more still offered', footBtn(tab) && footBtn(tab).textContent === 'Load more');
       click(tab, footBtn(tab));
