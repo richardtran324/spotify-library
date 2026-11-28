@@ -2987,6 +2987,17 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     renderList();
     window.scrollTo(0, y);
   }
+  // v2.64: library changes the page makes while a library load is in flight (a follow or unfollow, a playlist's
+  // song count after Add to playlist or Edit). The load's answer can be from before the tap, so each change is
+  // applied again on top of it before it becomes state.data and the saved copy (lib-cache). Every change kept
+  // goes on every load that lands while it is kept: a load started after the tap can still get an older answer,
+  // since identical GETs in flight share one request (v2.14). libChange(fn) records fn(d), which changes a
+  // library object d in place and gives the same result when the answer already has the change. Nothing is
+  // kept while no load is in flight, so a change made before a load started isn't applied again.
+  var libLoads = 0, libChanges = [];
+  function libChange(fn) {
+    if (libLoads) libChanges.push(fn);
+  }
   function loadData() {
     var me = api('/me').then(function (r) { return r.ok && r.json ? { id: r.json.id, name: r.json.display_name } : null; });
     var playlists = pages('/me/playlists?limit=50', mapPlaylist);
@@ -3004,6 +3015,14 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     function optional(e) { if (e.message === 'signed-out' || isCool(e)) throw e; return null; }
     var shows = pages('/me/shows?limit=50', function (it) { return mapShow(it && it.show); }).catch(optional);
     var episodes = api('/me/episodes?limit=1').then(function (r) { return r.ok && r.json && typeof r.json.total === 'number' ? r.json.total : null; }).catch(optional);
+    var ended = false;
+    function loadEnd(d) {   // v2.64: d is the answer, or null when the load failed
+      if (ended) return;
+      ended = true;
+      if (d) libChanges.forEach(function (fn) { fn(d); });
+      if (!--libLoads) libChanges = [];
+    }
+    libLoads++;
     return Promise.all([me, playlists, albums, liked, artists, shows, episodes]).then(function (v) {
       // audit: a failed /me or /me/tracks answer keeps what the last load had, so your own playlists
       // stay yours and the Liked Songs row stays. With no account known yet, the load fails and nothing is cached.
@@ -3014,9 +3033,10 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       }
       if (v[3] == null && typeof prev.likedTotal === 'number') v[3] = prev.likedTotal;
       var data = { at: Date.now(), me: v[0], playlists: v[1], albums: v[2], likedTotal: v[3], artists: v[4], shows: v[5], episodesTotal: v[6] };
+      loadEnd(data);   // v2.64: changes made during the load go on top, before it is saved and shown
       libCacheSave = { ok: set(K.cache, data), at: Date.now() };   // v2.38: shown in Diagnostics
       return data;
-    });
+    }).catch(function (e) { loadEnd(null); throw e; });
   }
   // Library albums and other people's playlists in your list are saved by definition.
   // audit: seededUris lists exactly what seedSaved marks (refresh uses it to unmark what left the library).
@@ -5471,7 +5491,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.63 (2026-11-27)';
+  var VERSION = 'v2.64 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -9374,12 +9394,16 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   function setPlCount(id, n) {
     if (typeof n !== 'number' || n < 0) return;
     var d = state.detail, seen = [];
+    function put(p) {
+      p.count = n;
+      if (typeof p.sub === 'string') p.sub = p.sub.replace(/ · \d+ songs?$/, '') + (n ? ' · ' + n + (n === 1 ? ' song' : ' songs') : '');
+    }
     [libraryPlaylist(id), isEditDetail(d, id) ? d.item : null].forEach(function (p) {
       if (!p || seen.indexOf(p) !== -1) return;
       seen.push(p);
-      p.count = n;
-      if (typeof p.sub === 'string') p.sub = p.sub.replace(/ · \d+ songs?$/, '') + (n ? ' · ' + n + (n === 1 ? ' song' : ' songs') : '');
+      put(p);
     });
+    libChange(function (lib) { (lib.playlists || []).forEach(function (p) { if (p && p.id === id) put(p); }); });   // v2.64
     if (state.data && (state.data.playlists || []).some(function (p) { return p.id === id; })) set(K.cache, state.data);
   }
   function editRefused(r, prefix, btn) {
@@ -10834,6 +10858,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       return on ? [followRecord(item)].concat(rest) : rest;
     }
     if (followKnown()) state.data.artists = apply(state.data.artists);
+    libChange(function (d) { if (Array.isArray(d.artists)) d.artists = apply(d.artists); });   // v2.64: kept through a load in flight
     var c = get(K.cache);
     if (c && Array.isArray(c.artists)) { c.artists = apply(c.artists); set(K.cache, c); }
   }
