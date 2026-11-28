@@ -1080,7 +1080,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     byYou: 'lib-pl-byyou',       // v2.56: true: Playlists shows only playlists you own (By you)
     homeLayout: 'lib-home-layout', // v2.57: {order: [section ids], hidden: [section ids]}: Edit Home, this phone only
     ctxLast: 'lib-ctx-last',     // v2.23: {album or playlist URI | 'liked': {uri, id, name, positionMs, durMs, at}}: the last song heard in each list (40, 30 days)
-    bookmarks: 'lib-bookmarks',  // v2.32: [{uri, id, kind: 'track'|'episode', name, by, img, url, pos, at}], newest first: Bookmarks saved on Now Playing (200, 2 years; v2.47: name 200 and by 100 characters at most); local only
+    bookmarks: 'lib-bookmarks',  // v2.32: [{uri, id, kind: 'track'|'episode', name, by, img, url, pos, at}], newest first: Bookmarks saved on Now Playing (200, 2 years; v2.60: name 200 and by 100 characters at most); local only
     introSkip: 'lib-intro-skip', // v2.33: {show URI: {s, at}}: Skip intro per podcast, s = 15|30|45|60|90|120 seconds, at = last set or used (100 shows, 365 days)
     plSaved: 'lib-pl-saved',     // v2.37: {playlist id: {s: snapshot_id, at, o: last opened, t: total, n: [{i, n, a, l, r, d, c, t[, e, u]} | 0 (local file)]}}: songs loaded in your own and collaborative playlists (25 playlists, 1,000 songs each, ≈ 500,000 characters in all, 90 days unopened; least recently opened go first); a change made on the page removes that playlist's copy
     // v2.13 rate limits. Shared by every copy of the page that shares this storage (Safari tabs on one origin).
@@ -1216,16 +1216,99 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   var refreshing = null;
 
   // ---------- storage helpers ----------
-  function get(k) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch (e) { return null; } }
-  var setFail = null;   // v2.47: why the last set() failed, for saveFailWhy
-  function set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { setFail = e; return false; } }   // v2.38: true when stored
-  // v2.47: why the last set() failed, for a message: "Couldn’t save …: " + saveFailWhy() + '.'
-  function saveFailWhy() {
-    var e = setFail, n = e && e.name, c = e && e.code;
-    if (n === 'QuotaExceededError' || n === 'NS_ERROR_DOM_QUOTA_REACHED' || c === 22 || c === 1014) return 'your phone’s storage for this page is full';
-    return 'this browser isn’t letting the page save right now';
+  // Storage guard: Safari keeps about 5 MB per site and counts 2 bytes per character. When a write is refused for
+  // lack of room, makeRoom() frees space from copies Spotify can send again (ROOM_STEPS, nothing else) and the
+  // write is tried once more. Never removed or cut: anything only this phone has (sign-in, Client ID, settings,
+  // pins, marks, bookmarks, the listening log, podcast history, copies, last heard, searches, a waiting tap) and
+  // the library list (lib-cache), which the page starts from.
+  var ROOM_MIN = 32 * 1024;   // characters freed at least (≈ 64 KB in Safari), so the next small writes fit too
+  var ROOM_SHOW = 'lib-cache-show:', ROOM_ALBUM = 'lib-cache-album:';   // = SL_SHOW, SL_ALBUM (saved lists)
+  var storeErr = '';          // why the last refused write failed: 'full' or 'blocked' (for the messages)
+  var tokenHeld = null;       // a sign-in storage refused: used for the rest of this visit (see set)
+  function isQuota(e) { return !!e && (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e.code === 22 || e.code === 1014); }
+  function roomSize(k) { try { var v = localStorage.getItem(k); return v == null ? 0 : k.length + v.length; } catch (e) { return 0; } }
+  function roomDel(k) { var n = roomSize(k); del(k); return n - roomSize(k); }
+  // The lists open now (and under it) keep their saved copy.
+  function roomOpen() {
+    var o = {};
+    [state.detail].concat(state.detailStack || []).forEach(function (d) { if (d && d.item && d.item.id) o[d.item.id] = true; });
+    return o;
   }
-  function del(k) { try { localStorage.removeItem(k); } catch (e) {} }
+  // Saved album or podcast lists: drops `part` of them, oldest first (lists from the library answer first, as slPut).
+  function roomLists(prefix, part, skip) {
+    var open = roomOpen(), keys = [];
+    try { for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); if (k && k.indexOf(prefix) === 0 && k !== skip && !open[k.slice(prefix.length)]) keys.push(k); } } catch (e) { return 0; }
+    var list = keys.map(function (k) { var v = get(k); return { k: k, at: v && typeof v.at === 'number' ? v.at : 0, lib: !!(v && v.lib) }; })
+      .sort(function (a, b) { return (b.lib - a.lib) || a.at - b.at; });
+    var freed = 0;
+    list.slice(0, Math.ceil(list.length * part)).forEach(function (x) { freed += roomDel(x.k); });
+    return freed;
+  }
+  // #53 saved playlists: drops the least recently opened third (not the open one); `all` drops the key.
+  function roomPl(all) {
+    var m = get(K.plSaved), open = roomOpen();
+    if (all || !m || typeof m !== 'object' || Array.isArray(m)) return roomDel(K.plSaved);
+    var ids = Object.keys(m).filter(function (id) { return !open[id]; })
+      .sort(function (a, b) { return ((m[a] && m[a].o) || 0) - ((m[b] && m[b].o) || 0); });
+    if (!ids.length) return 0;
+    var before = roomSize(K.plSaved);
+    ids.slice(0, Math.ceil(ids.length / 3)).forEach(function (id) { delete m[id]; });
+    try { localStorage.setItem(K.plSaved, JSON.stringify(m)); } catch (e) { del(K.plSaved); }   // smaller: fits
+    return before - roomSize(K.plSaved);
+  }
+  // Episode notes (Spotify's text, newest first): keeps the newer half; `all` drops the key.
+  function roomNotes(all) {
+    var a = get(K.epNotes);
+    if (all || !Array.isArray(a) || a.length < 2) return roomDel(K.epNotes);
+    var before = roomSize(K.epNotes);
+    try { localStorage.setItem(K.epNotes, JSON.stringify(a.slice(0, Math.floor(a.length / 2)))); } catch (e) { del(K.epNotes); }
+    return before - roomSize(K.epNotes);
+  }
+  // In order, until enough is free: [key or prefix it touches, how]. Only copies of what Spotify sends.
+  var ROOM_STEPS = [
+    [K.playerCache, function () { return roomDel(K.playerCache); }],   // the last player answer, for other tabs
+    [ROOM_SHOW, function (s) { return roomLists(ROOM_SHOW, 0.5, s); }],
+    [ROOM_ALBUM, function (s) { return roomLists(ROOM_ALBUM, 0.5, s); }],
+    [K.plSaved, function () { return roomPl(false); }],
+    [K.epNotes, function () { return roomNotes(false); }],
+    [ROOM_SHOW, function (s) { return roomLists(ROOM_SHOW, 1, s); }],
+    [ROOM_ALBUM, function (s) { return roomLists(ROOM_ALBUM, 1, s); }],
+    [K.plSaved, function () { return roomPl(true); }],
+    [K.epNotes, function () { return roomNotes(true); }],
+    [K.latest, function () { return roomDel(K.latest); }]   // Latest episodes (asked again when opened)
+  ];
+  // skip: the key being written (a step for that key itself frees nothing). Returns characters freed.
+  function makeRoom(skip, need) {
+    var want = Math.max(ROOM_MIN, need || 0), freed = 0;
+    for (var i = 0; i < ROOM_STEPS.length && freed < want; i++) {
+      var s = ROOM_STEPS[i];
+      if (s[0] === skip) continue;   // (the saved-list steps leave out `skip` themselves)
+      try { freed += s[1](skip) || 0; } catch (e) {}
+    }
+    return freed;
+  }
+  // One write of text; if storage is full, makeRoom() and one more try. True when stored.
+  function store(k, txt) {
+    try { localStorage.setItem(k, txt); storeErr = ''; return true; } catch (e) { storeErr = isQuota(e) ? 'full' : 'blocked'; }
+    if (storeErr !== 'full' || !makeRoom(k, k.length + txt.length)) return false;
+    try { localStorage.setItem(k, txt); storeErr = ''; return true; } catch (e) { return false; }
+  }
+  // Words for a refused write, after "Couldn’t save …: ".
+  // One wording for a refused write (v2.60's storage-full warnings), used by both names below.
+  function saveFailWhy() { return storeErr === 'full' ? 'your phone’s storage for this page is full' : 'this browser isn’t letting the page save right now'; }
+  function storeWhy() { return saveFailWhy(); }
+  function get(k) {
+    if (k === K.token && tokenHeld) return JSON.parse(JSON.stringify(tokenHeld));
+    try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : null; } catch (e) { return null; }
+  }
+  function set(k, v) {   // v2.38: true when stored
+    var txt;
+    try { txt = String(JSON.stringify(v)); } catch (e) { return false; }
+    var ok = store(k, txt);
+    if (k === K.token) tokenHeld = ok ? null : v;   // storage-guard: a sign-in that can't be saved still works this visit
+    return ok;
+  }
+  function del(k) { if (k === K.token) tokenHeld = null; try { localStorage.removeItem(k); } catch (e) {} }
 
   function $(id) { return document.getElementById(id); }
   function el(tag, attrs, kids) {
@@ -1472,8 +1555,8 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     if (!client) return renderSetup();
     var verifier = randomString(64);
     var st = randomString(16);
-    set(K.verifier, verifier);
-    set(K.state, st);
+    // storage-guard: Spotify sends you back here with only `state`; without both saved, sign-in can't finish
+    if (!set(K.verifier, verifier) || !set(K.state, st)) { toast('Couldn’t start sign-in: ' + storeWhy() + '.'); return; }
     crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)).then(function (hash) {
       var p = new URLSearchParams({
         response_type: 'code',
@@ -1500,10 +1583,14 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     if (fresh) tok.authAt = Date.now();
     else if (typeof old.authAt === 'number') tok.authAt = old.authAt;
     else tok.authSeen = typeof old.authSeen === 'number' ? old.authSeen : Date.now();
-    set(K.token, tok);
+    var ok = set(K.token, tok);
     if (fresh) { state.scopeProblem = false; del(K.signedOut); }
+    // storage-guard: set() keeps it for this visit; say so once, since a reload would need a new sign-in
+    if (!ok && !tokenWarned) { tokenWarned = true; logError('Sign-in', 'storage', storeErr || 'refused'); toast('Couldn’t save your sign-in on this phone: ' + storeWhy() + '. You may need to sign in again after a reload.'); }
+    if (ok) tokenWarned = false;
     updateBanner();
   }
+  var tokenWarned = false;
   // v2.65: when this sign-in ends: {at, end, known}. known is false for a sign-in from before v2.65 (at = authSeen),
   // which ends no later than that. null while unknown (an older sign-in not renewed since the update).
   function authEnd(t) {
@@ -2368,7 +2455,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   var hideMem = null;                                  // v2.40: Hide played, if storage is blocked
   var epfStale = false, hideStale = false;             // v2.40: the last write failed (quota/blocked): memory wins over storage
   // set() that says whether the write went through (set() itself returns that since v2.38).
-  function setOk(k, v) { return set(k, v); }
+  function setOk(k, v) { return set(k, v); }   // storage-guard: set() also makes room first
   function epfRead() {
     if (epfStale && epfMem) return epfMem;
     var o = get(K.epFilters);
@@ -2733,7 +2820,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     loadMarks();
     if (m) epMarks[uri] = m; else delete epMarks[uri];
     pruneMarks();
-    set(K.epMarks, epMarks);
+    return set(K.epMarks, epMarks);   // storage-guard: true when stored (memory keeps it for this visit either way)
   }
   // played and pos as known (Spotify's or the page's own), with this phone's mark on top.
   function withMark(uri, played, pos) {
@@ -3034,9 +3121,9 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     var m = { played: played, at: Date.now() };
     var p = state.player;
     if (p && p.item && p.item.uri === ep.uri) m.pos = Math.round(curPos());   // on screen now: only a play away from here clears it
-    writeMark(ep.uri, m);
+    var saved = writeMark(ep.uri, m);
     marksChanged();
-    toast('Marked “' + (ep.name || 'Untitled') + '” as ' + (played ? 'played' : 'unplayed') + ' on this phone', null,
+    toast('Marked “' + (ep.name || 'Untitled') + '” as ' + (played ? 'played' : 'unplayed') + (saved ? ' on this phone' : ' until you reload. Couldn’t save it: ' + storeWhy() + '.'), null,
       { text: 'Undo', fn: function () { writeMark(ep.uri, before); marksChanged(); } });
   }
   // The page saw this episode playing (a player answer from `at`): played again after the mark, so the mark goes.
@@ -3675,12 +3762,10 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   }
   // Storage full: saves the newer half instead (memory keeps every play for this visit); blocked: memory only.
   function logSave(L) {
-    try { localStorage.setItem(K.playLog, JSON.stringify(L)); }
-    catch (err) {
-      var h = { e: L.e.slice(0, Math.floor(L.e.length / 2)), t: L.t };
-      logPrune(h);
-      try { localStorage.setItem(K.playLog, JSON.stringify(h)); } catch (e2) {}
-    }
+    if (store(K.playLog, JSON.stringify(L))) return;   // storage-guard: Spotify's copies make room first, never this log
+    var h = { e: L.e.slice(0, Math.floor(L.e.length / 2)), t: L.t };
+    logPrune(h);
+    try { localStorage.setItem(K.playLog, JSON.stringify(h)); } catch (e2) {}
   }
   // rItems: the items of a GET /me/player/recently-played answer the page already asked for.
   function logMerge(rItems) {
@@ -3825,7 +3910,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     introMap = introPrune(st && typeof st === 'object' && !Array.isArray(st) ? st : (introMap || {}));
     return introMap;
   }
-  function saveIntro(m) { introMap = introPrune(m); return set(K.introSkip, introMap); }   // v2.47: false when not saved
+  function saveIntro(m) { introMap = introPrune(m); return set(K.introSkip, introMap); }   // v2.60: false when not saved
   function showKey(id) { return id ? 'spotify:show:' + id : ''; }
   function introSecs(key) { var e = key ? readIntro()[key] : null; return e ? e.s : 0; }
   function setIntro(key, s) {
@@ -3833,7 +3918,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     var m = readIntro();
     if (INTRO_STEPS.indexOf(s) !== -1) m[key] = { s: s, at: Date.now() };
     else delete m[key];
-    return saveIntro(m);   // v2.47
+    return saveIntro(m);   // v2.60
   }
   // An episode's show and length, from the item or what the page already holds (no request).
   function introFacts(item) {
@@ -3873,7 +3958,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     sel.addEventListener('change', function () {
       var n = +sel.value;
       if (!setIntro(key, n)) {
-        // v2.47: not saved. Storage that still holds the old setting wins on the next read, so the picker shows what
+        // v2.60: not saved. Storage that still holds the old setting wins on the next read, so the picker shows what
         // will actually happen; with nothing stored (or storage blocked) the memory copy applies until the page closes.
         var now = introSecs(key);
         sel.value = String(now);
@@ -4403,7 +4488,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   }
   function writeSeen(v) {
     seenMem = v;
-    try { localStorage.setItem(K.showSeen, JSON.stringify(v)); seenUnsaved = false; } catch (e) { seenUnsaved = true; }
+    seenUnsaved = !store(K.showSeen, JSON.stringify(v));   // storage-guard: makes room if full
   }
   var libTotMemo = { list: null, map: {} };
   function libShowTotals() {
@@ -4676,10 +4761,10 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
         typeof b.at === 'number' && now - b.at < BM_MS && b.at < now + 60000;
     }).sort(function (x, y) { return y.at - x.at; }).slice(0, BM_MAX);
   }
-  // True when saved; false when storage refused it (the caller says so). v2.47
+  // True when saved; false when storage refused it (the caller says so). v2.60
   function writeBookmarks(a) {
     a.sort(function (x, y) { return y.at - x.at; });
-    return set(K.bookmarks, a.slice(0, BM_MAX));
+    return set(K.bookmarks, a.slice(0, BM_MAX));   // storage-guard: true when stored
   }
   function addBookmark() {
     var p = state.player, it = p && p.item;
@@ -4689,13 +4774,13 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     var at = Date.now();
     if (a.length && a[0].at >= at) at = a[0].at + 1;   // each bookmark has its own time; Remove finds it by that
     var b = {
-      uri: it.uri, id: it.id, kind: it.type, name: String(it.name || 'Untitled').slice(0, 200),   // v2.47: caps
+      uri: it.uri, id: it.id, kind: it.type, name: String(it.name || 'Untitled').slice(0, 200),   // v2.60: caps
       by: String(ep ? ((it.show && it.show.name) || 'Podcast') : names(it.artists)).slice(0, 100),
       img: img(ep ? (it.images || (it.show && it.show.images)) : (it.album && it.album.images)),
       url: spotifyUrl(it), pos: bmPos(it), at: at
     };
     a.unshift(b);
-    if (!writeBookmarks(a)) { toast('Couldn’t save the bookmark: ' + saveFailWhy() + '.'); return; }   // v2.47
+    if (!writeBookmarks(a)) { toast('Couldn’t save the bookmark: ' + saveFailWhy() + '.'); return; }   // v2.60
     toast('Bookmarked “' + b.name + '” at ' + fmtTime(b.pos));
     bmChanged();
   }
@@ -4709,7 +4794,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   var bmRemoved = [], bmToastMsg = null;
   function removeBookmark(b) {
     if (!writeBookmarks(readBookmarks().filter(function (x) { return !(x.at === b.at && x.uri === b.uri); }))) {
-      toast('Couldn’t remove the bookmark: ' + saveFailWhy() + '.');   // v2.47: it stays, so no Undo
+      toast('Couldn’t remove the bookmark: ' + saveFailWhy() + '.');   // v2.60: it stays, so no Undo
       return;
     }
     var t = $('toast');
@@ -4720,7 +4805,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       bmRemoved = []; bmToastMsg = null;
       var a = readBookmarks();
       gone.forEach(function (g) { if (!a.some(function (x) { return x.at === g.at && x.uri === g.uri; })) a.push(g); });
-      if (!writeBookmarks(a)) { toast('Couldn’t bring back ' + (gone.length > 1 ? 'the bookmarks' : 'the bookmark') + ': ' + saveFailWhy() + '.'); return; }   // v2.47
+      if (!writeBookmarks(a)) { toast('Couldn’t bring back ' + (gone.length > 1 ? 'the bookmarks' : 'the bookmark') + ': ' + saveFailWhy() + '.'); return; }   // v2.60
       bmChanged();
       // Focus the × of the newest bookmark brought back (Show all if it's past the first few).
       var top = gone.slice().sort(function (x, y) { return y.at - x.at; })[0];
@@ -5247,7 +5332,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     return 'wait';   // default: wait for a press of play in Control Center or on the lock screen
   }
   function setWakeMode(m) {
-    try { localStorage.setItem(K.wake, (m === 'shortcut' || m === 'link') ? m : 'wait'); } catch (e) {}
+    return store(K.wake, (m === 'shortcut' || m === 'link') ? m : 'wait');   // storage-guard: true when stored
   }
   // Test hook: a harness can define window.libNavigate to catch the jump instead of leaving the page.
   function navigate(url) {
@@ -5263,7 +5348,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     };
     if (item.uris) p.item.uris = item.uris.slice(0, LIKEDBY_PLAY);   // v2.31: a song list (Liked songs by an artist), 100 at most
     if (typeof item.rwHeardAt === 'number') p.item.rwHeardAt = item.rwHeardAt;   // v2.44
-    set(K.pending, p);
+    if (!set(K.pending, p)) { del(K.pending); return null; }   // storage-guard: an older waiting tap must not play instead
     return p;
   }
   function readPending() {
@@ -5287,7 +5372,8 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   // or on the lock screen, Spotify starts in the background and shows up as a device.
   function waitForPlay(item, opts) {
     stopWake();
-    savePending(item, opts, 'wait');
+    // storage-guard (IPHONE-2): a tap that can't be remembered would wait for nothing; say so instead
+    if (!savePending(item, opts, 'wait')) { toast('Couldn’t hold “' + (item.name || 'this') + '” until Spotify wakes: ' + storeWhy() + '. Open Spotify first, then tap it again.'); return; }
     resumePending(false);
   }
   // text: the status line, or null to hide it. o: {pulse, retry, open} picks the dot and buttons.
@@ -5691,7 +5777,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   }
 
   // ---------- diagnostics ----------
-  var VERSION = 'v2.72 (2026-11-27)';
+  var VERSION = 'v2.73 (2026-11-27)';
   var SHORTCUT_STANDALONE_NOTE = 'Not available from the Home Screen icon: the shortcut comes back in Safari, which keeps its own storage. Use the page in a Safari tab for this option.';
   function paintWakeModes() {
     var m = wakeMode(), sa = isStandalone();
@@ -7326,7 +7412,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
     var was = pins.some(function (p) { return p.uri === item.uri; });
     if (!was && pins.length >= PINS_MAX) { toast('You can pin up to ' + PINS_MAX + '. Unpin one first.'); return; }
     pins = was ? pins.filter(function (p) { return p.uri !== item.uri; }) : pins.concat([pinRecord(item)]);
-    set(K.pins, pins);
+    if (!set(K.pins, pins)) { toast('Couldn’t ' + (was ? 'unpin' : 'pin') + ' “' + item.name + '”: ' + storeWhy() + '.'); return; }   // storage-guard
     toast((was ? 'Unpinned “' : 'Pinned “') + item.name + '”');
     var bs = document.querySelectorAll('.pinbtn');
     for (var i = 0; i < bs.length; i++) { if (bs[i].getAttribute('data-pin') === item.uri) paintPin(bs[i]); }
@@ -11386,7 +11472,8 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
       // audit AUTH-6: the error is a role=alert region and focus moves to the field, so VoiceOver speaks it
       if (!/^[0-9a-f]{32}$/i.test(v)) { err.textContent = 'That doesn’t look like a Client ID. It’s 32 letters and numbers, from your app’s Settings page.'; input.setAttribute('aria-invalid', 'true'); input.focus(); return; }
       input.removeAttribute('aria-invalid');
-      set(K.client, v); login();
+      if (!set(K.client, v)) { err.textContent = 'Couldn’t save the Client ID: ' + storeWhy() + '.'; return; }   // storage-guard
+      login();
     });
     var err = el('p', { class: 'err', id: 'clientIdErr', role: 'alert', text: errMsgText || '' });
     main.appendChild(el('section', { class: 'card' }, [
@@ -11935,7 +12022,7 @@ body.compact-player.has-player .toast { bottom: calc(84px + env(safe-area-inset-
   document.querySelectorAll('input[name="wakeMode"]').forEach(function (r) {
     r.addEventListener('change', function () {
       if (!r.checked) return;
-      setWakeMode(r.value);
+      if (!setWakeMode(r.value)) { toast('Couldn’t save this choice: ' + storeWhy() + '.'); return; }   // storage-guard
       toast(r.value === 'shortcut' ? 'Taps will run your Wake Spotify shortcut when Spotify isn’t running'
         : r.value === 'link' ? 'Taps will open the item in Spotify when Spotify isn’t running'
         : 'Taps will wait for you to press play in Control Center when Spotify isn’t running');
