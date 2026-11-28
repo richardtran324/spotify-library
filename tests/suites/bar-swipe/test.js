@@ -168,13 +168,15 @@ tests.push(function () {
     click(tab, $(tab, 'pInfo'));
     check('6 tap opens Now Playing', npOpen(tab));
     tab.t().closeNp();
-    left(tab);
-    click(tab, $(tab, 'pInfo'));
-    check('6 click right after a skip swipe does not open Now Playing', !npOpen(tab));
-    click(tab, $(tab, 'pInfo'));
-    check('6 the next tap opens it', npOpen(tab));
-    tab.t().closeNp();
-    return H.wait(100).then(function () {
+    return H.wait(50).then(function () {   // NAV-2: closing steps back once, and a tap waits for that Back
+      left(tab);
+      click(tab, $(tab, 'pInfo'));
+      check('6 click right after a skip swipe does not open Now Playing', !npOpen(tab));
+      click(tab, $(tab, 'pInfo'));
+      check('6 the next tap opens it', npOpen(tab));
+      tab.t().closeNp();
+      return H.wait(100);
+    }).then(function () {
       check('6 only the skip was sent', tab.calls.length === 1 && tab.calls[0].path === '/me/player/next', tab.calls);
       left(tab);
       return H.wait(700);
@@ -394,6 +396,8 @@ tests.push(function () {
       click(tab, $(tab, 'pInfo'));
       check('18 tap 300 ms after a swipe opens Now Playing', npOpen(tab));
       t.closeNp();
+      return H.wait(50);   // NAV-2: closing steps back once, and a tap waits for that Back
+    }).then(function () {
       left(tab);
       click(tab, $(tab, 'pInfo'));   // the click fired right after the swipe's touchend
       check('18 click right after touchend is suppressed', !npOpen(tab));
@@ -402,6 +406,8 @@ tests.push(function () {
       click(tab, $(tab, 'pInfo'));
       check('18 a tap straight after a swipe (new touch) opens Now Playing', npOpen(tab));
       t.closeNp();
+      return H.wait(50);
+    }).then(function () {
       swipe(tab, $(tab, 'pTitle'), [[4, 3], [8, 5]]);   // moved under 10 px: a tap
       click(tab, $(tab, 'pInfo'));
       check('18 a slightly moving tap opens Now Playing', npOpen(tab));
